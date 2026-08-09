@@ -16,6 +16,7 @@ Date: 2026-08-09
 - Browser: desktop and mobile operator flows rendered and interacted successfully with no console warnings/errors.
 - Performance: 1,000 scheduling records at 601.5 records/second; dashboard median 4.792 ms and p95 12.036 ms; 500-item HAI page 22.131 ms.
 - Repository truth scan: no private-key/token signatures or encoding corruption; runtime secrets/data/build outputs are ignored.
+- Publication: fresh remote clone at commit `650cccf` passed 25 tests; both GitHub CI checks passed; draft PR #1 opened against `main`.
 
 ## Provider/account gate
 

@@ -96,12 +96,12 @@ Status is evidence-based as of 2026-08-09. `Implemented` means locally wired and
 | 089 | Stabilization gates | Implemented | Config -> tests -> UI -> Docker -> real-provider sequence |
 | 090 | No vanity work | Implemented | Dominant work is wired critical path/operations |
 | 091 | Feature definition of done | Implemented | Implemented status requires wired/tested/documented behavior |
-| 092 | Fresh-clone dry run | Partial | Locked install/test performed locally; remote clone awaits publish |
+| 092 | Fresh-clone dry run | Implemented | Remote branch cloned at release commit; 25 tests passed; clean GitHub CI passed |
 | 093 | Manual verification evidence | Implemented | Desktop/mobile browser, Docker, source launcher, packaged executable, backup/restore evidence |
 | 094 | Final no-excuses search | Implemented | Secret signatures, TODO markers, encoding, ignores, and action truth scanned before publication |
 | 095 | Completion matrix | Implemented | This document |
 | 096 | Final verification report | Implemented | `docs/RELEASE_VERIFICATION.md` records commands, results, checksum, and external gate |
-| 097 | Final response requirements | Pending | Supplied in final handoff after commit/publish decision |
+| 097 | Final response requirements | Implemented | Final handoff reports outcome, evidence, artifacts, PR, and external gates |
 | 098 | Maintenance plan | Implemented | `docs/MAINTENANCE.md` |
 | 099 | Roadmap/blocked items | Implemented | Maintenance roadmap and explicit external gates |
 | 100 | Real-provider cleanup/account safety | Blocked | Requires authorized Meta/Google accounts and test data cleanup |
