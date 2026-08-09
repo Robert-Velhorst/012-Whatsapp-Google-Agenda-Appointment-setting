@@ -3,6 +3,15 @@ name: Windows package
 on:
   workflow_dispatch:
   pull_request:
+    paths:
+      - ".github/workflows/windows-package.yml"
+      - "agenda-relay.spec"
+      - "pyproject.toml"
+      - "requirements*.txt"
+      - "run.py"
+      - "scheduler/**"
+      - "tests/**"
+      - "windows/**"
   push:
     tags: ["v*"]
 

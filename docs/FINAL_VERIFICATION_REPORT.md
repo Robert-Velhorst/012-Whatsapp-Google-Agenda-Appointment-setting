@@ -17,6 +17,7 @@ Date: 2026-08-09
 - Performance: 1,000 scheduling records at 601.5 records/second; dashboard median 4.792 ms and p95 12.036 ms; 500-item HAI page 22.131 ms.
 - Repository truth scan: no private-key/token signatures or encoding corruption; runtime secrets/data/build outputs are ignored.
 - Publication: fresh remote clone at commit `650cccf` passed 25 tests; both GitHub CI checks passed; draft PR #1 opened against `main`.
+- Clean Windows GitHub Actions package run `31286696078` passed in 1m29s. It built and launch-tested the executable and uploaded the 33,129,913-byte `AgendaRelay-Windows-x64` artifact with GitHub digest `sha256:e8b5dfcafb8d4ed8a4e379a3f8fa784d33eac651031c122a56a3c65a76a3a703`.
 
 ## Provider/account gate
 
