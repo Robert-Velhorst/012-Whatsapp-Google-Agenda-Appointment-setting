@@ -5,19 +5,19 @@ Date: 2026-08-09
 ## Passed locally
 
 - Python compilation and dependency consistency: passed.
-- Automated suite: 25 passed.
-- Dependency vulnerability audit: no known vulnerabilities.
+- Automated suite: 37 passed, including concurrent SQLite send, confirmation, and rate-limit tests.
+- Dependency vulnerability audit: no known vulnerabilities in the exact commit's two Linux CI runs and Windows package run.
 - PowerShell syntax: all Windows launch/build/test scripts parsed successfully.
 - Windows source runtime: installer, web/worker start, health response, resource readout, and exact-process stop passed.
 - Windows packaged runtime: health 200, branded login 200, 65.5 MiB idle working set, and exact-process shutdown passed.
 - Windows ZIP: 1,315 entries, CRC check clean, executable and README present.
 - ZIP SHA-256: `08163085D541B8B83A71D3A2160B8A8E0F345B6B4106FF176955F7153458AAC7`.
-- Docker: configuration valid; final image built with a 45.28 KiB context after excluding 181 MiB of package artifacts, ran as uid/gid 10001 `agenda`, returned health 200, and refused unsafe production configuration with exit code 1.
+- Docker: configuration valid; final hardened image built from a 249.13 KiB context with package artifacts excluded, ran as uid/gid 10001 `agenda`, returned health 200, and refused unsafe production configuration with exit code 1.
 - Browser: desktop and mobile operator flows rendered and interacted successfully with no console warnings/errors.
-- Performance: 1,000 scheduling records at 601.5 records/second; dashboard median 4.792 ms and p95 12.036 ms; 500-item HAI page 22.131 ms.
+- Performance: established 1,000-record baseline remains 601.5 records/second with 4.792 ms median dashboard reads. A final contention-heavy 500-record rerun measured 3.036 ms median, 4.799 ms p95, a 10.763 ms 500-item HAI page, and 0.64 MiB peak Python allocation.
 - Repository truth scan: no private-key/token signatures or encoding corruption; runtime secrets/data/build outputs are ignored.
-- Publication: fresh remote clone at commit `650cccf` passed 25 tests; both GitHub CI checks passed; draft PR #1 opened against `main`.
-- Clean Windows GitHub Actions package run `31286696078` passed in 1m29s. It built and launch-tested the executable and uploaded the 33,129,913-byte `AgendaRelay-Windows-x64` artifact with GitHub digest `sha256:e8b5dfcafb8d4ed8a4e379a3f8fa784d33eac651031c122a56a3c65a76a3a703`.
+- Publication: hardened commit `21c6976` is pushed to draft PR #1 against `main`; both independent Linux CI checks passed on that exact SHA.
+- Final Windows GitHub Actions package run `31288093704` passed in 1m33s. It ran all 37 tests, audited dependencies, built and launch-tested the executable, and uploaded the 33,136,022-byte `AgendaRelay-Windows-x64` artifact with GitHub digest `sha256:816349fa6fc2c15bf43731528b25a4b10ec1d250ccd1bd475c3a9a72f0332399`.
 
 ## Provider/account gate
 
