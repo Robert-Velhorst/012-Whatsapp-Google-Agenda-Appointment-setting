@@ -9,7 +9,9 @@ from .config import Settings
 
 
 class WhatsAppUnavailable(RuntimeError):
-    pass
+    def __init__(self, message: str, *, retry_safe: bool = False):
+        super().__init__(message)
+        self.retry_safe = retry_safe
 
 
 def signature_is_valid(raw_body: bytes, signature: str | None, app_secret: str) -> bool:
@@ -48,7 +50,7 @@ class WhatsAppClient:
 
     def _post(self, payload: dict) -> dict:
         if not self.configured():
-            raise WhatsAppUnavailable("WhatsApp Cloud API credentials are not configured.")
+            raise WhatsAppUnavailable("WhatsApp Cloud API credentials are not configured.", retry_safe=True)
         try:
             response = requests.post(
                 f"https://graph.facebook.com/{self.settings.whatsapp_graph_api_version}/{self.settings.whatsapp_phone_number_id}/messages",
@@ -56,10 +58,31 @@ class WhatsAppClient:
                 json=payload,
                 timeout=(5, 20),
             )
-            response.raise_for_status()
-            data = response.json()
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            raise WhatsAppUnavailable(
+                "WhatsApp delivery is ambiguous after a network failure; verify the provider before any manual resend.",
+                retry_safe=False,
+            ) from exc
         except requests.RequestException as exc:
-            raise WhatsAppUnavailable(f"WhatsApp request failed: {exc}") from exc
+            raise WhatsAppUnavailable(f"WhatsApp request failed before a verified response: {exc}", retry_safe=False) from exc
+        try:
+            response.raise_for_status()
+        except requests.HTTPError as exc:
+            status = response.status_code
+            raise WhatsAppUnavailable(
+                f"WhatsApp rejected the request with HTTP {status}.",
+                retry_safe=400 <= status < 500,
+            ) from exc
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise WhatsAppUnavailable(
+                "WhatsApp returned an unreadable success response; verify delivery before any manual resend.",
+                retry_safe=False,
+            ) from exc
         if not data.get("messages"):
-            raise WhatsAppUnavailable("WhatsApp accepted no message; inspect provider response")
+            raise WhatsAppUnavailable(
+                "WhatsApp returned no message identifier; verify delivery before any manual resend.",
+                retry_safe=False,
+            )
         return data

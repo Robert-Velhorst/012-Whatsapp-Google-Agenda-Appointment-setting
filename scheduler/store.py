@@ -123,6 +123,11 @@ class Store:
             self.audit(workspace_id, "operator", "contact.updated", "contact", contact_id, {"consent_status": consent_status})
         return cursor.rowcount == 1
 
+    def get_contact(self, workspace_id: str, contact_id: int) -> dict[str, Any] | None:
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM contacts WHERE workspace_id=? AND id=?", (workspace_id, contact_id)).fetchone()
+        return dict(row) if row else None
+
     def record_inbound(self, workspace_id: str, external_id: str, sender: str, body: str, received_at: str) -> bool:
         with self.connect() as db:
             try:
@@ -185,7 +190,7 @@ class Store:
     def get_proposal(self, workspace_id: str, proposal_id: int) -> dict[str, Any] | None:
         with self.connect() as db:
             row = db.execute(
-                "SELECT p.*,r.title,r.duration_minutes,r.contact_id,c.sender,c.display_name,c.email,c.language,c.consent_status "
+                "SELECT p.*,r.title,r.duration_minutes,r.contact_id,r.timezone request_timezone,c.sender,c.display_name,c.email,c.language,c.consent_status,c.timezone contact_timezone "
                 "FROM proposals p JOIN scheduling_requests r ON r.id=p.request_id JOIN contacts c ON c.id=r.contact_id "
                 "WHERE p.workspace_id=? AND p.id=?",
                 (workspace_id, proposal_id),
@@ -196,35 +201,79 @@ class Store:
         token_hash = hashlib.sha256(token.encode()).hexdigest()
         with self.connect() as db:
             row = db.execute(
-                "SELECT p.*,r.title,r.duration_minutes,r.contact_id,c.sender,c.display_name,c.email,c.language,c.consent_status "
+                "SELECT p.*,r.title,r.duration_minutes,r.contact_id,r.timezone request_timezone,c.sender,c.display_name,c.email,c.language,c.consent_status,c.timezone contact_timezone "
                 "FROM proposals p JOIN scheduling_requests r ON r.id=p.request_id JOIN contacts c ON c.id=r.contact_id "
                 "WHERE p.booking_token_hash=?",
                 (token_hash,),
             ).fetchone()
         return self._proposal(row) if row else None
 
-    def latest_sent_proposal(self, workspace_id: str, sender: str) -> dict[str, Any] | None:
+    def latest_sent_proposal(self, workspace_id: str, sender: str, minimum_sent_at: str | None = None) -> dict[str, Any] | None:
         with self.connect() as db:
             row = db.execute(
-                "SELECT p.*,r.title,r.duration_minutes,r.contact_id,c.sender,c.display_name,c.email,c.language,c.consent_status "
+                "SELECT p.*,r.title,r.duration_minutes,r.contact_id,r.timezone request_timezone,c.sender,c.display_name,c.email,c.language,c.consent_status,c.timezone contact_timezone "
                 "FROM proposals p JOIN scheduling_requests r ON r.id=p.request_id JOIN contacts c ON c.id=r.contact_id "
-                "WHERE p.workspace_id=? AND c.sender=? AND p.status='sent' ORDER BY p.id DESC LIMIT 1",
-                (workspace_id, sender),
+                "WHERE p.workspace_id=? AND c.sender=? AND p.status='sent' AND (? IS NULL OR COALESCE(p.sent_at,p.created_at)>=?) ORDER BY p.id DESC LIMIT 1",
+                (workspace_id, sender, minimum_sent_at, minimum_sent_at),
             ).fetchone()
         return self._proposal(row) if row else None
+
+    def expire_stale_proposals(self, workspace_id: str, cutoff_iso: str) -> int:
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT id,request_id FROM proposals WHERE workspace_id=? AND status='sent' AND COALESCE(sent_at,created_at)<?",
+                (workspace_id, cutoff_iso),
+            ).fetchall()
+            if not rows:
+                return 0
+            db.executemany("UPDATE proposals SET status='expired' WHERE workspace_id=? AND id=?", [(workspace_id, row["id"]) for row in rows])
+            db.executemany(
+                "UPDATE scheduling_requests SET status='needs_clarification',updated_at=? WHERE workspace_id=? AND id=? AND status='awaiting_confirmation'",
+                [(now, workspace_id, row["request_id"]) for row in rows],
+            )
+        self.audit(workspace_id, "scheduler", "proposals.expired", "proposal", None, {"count": len(rows), "cutoff": cutoff_iso})
+        return len(rows)
+
+    def claim_proposal_send(self, workspace_id: str, proposal_id: int) -> bool:
+        with self.connect() as db:
+            cursor = db.execute(
+                "UPDATE proposals SET status='sending',sent_at=?,error_text=NULL WHERE workspace_id=? AND id=? AND status IN ('pending_approval','send_failed')",
+                (utc_now().isoformat(), workspace_id, proposal_id),
+            )
+        return cursor.rowcount == 1
+
+    def recover_stale_proposal_sends(self, workspace_id: str, cutoff_iso: str) -> int:
+        message = "The process stopped during WhatsApp delivery; verify provider state before any resend"
+        with self.connect() as db:
+            cursor = db.execute(
+                "UPDATE proposals SET status='manual_required',error_text=? WHERE workspace_id=? AND status='sending' AND sent_at<?",
+                (message, workspace_id, cutoff_iso),
+            )
+        if cursor.rowcount:
+            self.audit(workspace_id, "worker", "proposals.stale_send_recovered", "proposal", None, {"count": cursor.rowcount, "cutoff": cutoff_iso})
+        return cursor.rowcount
 
     def mark_proposal_sent(self, workspace_id: str, proposal_id: int, provider_message_id: str | None) -> None:
         with self.connect() as db:
             row = db.execute("SELECT request_id,status FROM proposals WHERE workspace_id=? AND id=?", (workspace_id, proposal_id)).fetchone()
-            if not row or row["status"] not in {"pending_approval", "send_failed"}:
+            if not row or row["status"] != "sending":
                 raise ValueError("Proposal is not sendable")
             db.execute("UPDATE proposals SET status='sent',provider_message_id=?,sent_at=?,error_text=NULL WHERE id=?", (provider_message_id, utc_now().isoformat(), proposal_id))
         self.transition_request(workspace_id, int(row["request_id"]), "awaiting_confirmation", "operator", {"proposal_id": proposal_id})
 
     def mark_proposal_failed(self, workspace_id: str, proposal_id: int, error: str) -> None:
         with self.connect() as db:
-            db.execute("UPDATE proposals SET status='send_failed',error_text=? WHERE workspace_id=? AND id=?", (error[:500], workspace_id, proposal_id))
+            db.execute("UPDATE proposals SET status='send_failed',error_text=? WHERE workspace_id=? AND id=? AND status='sending'", (error[:500], workspace_id, proposal_id))
         self.audit(workspace_id, "scheduler", "proposal.send_failed", "proposal", proposal_id, {"error": error[:200]})
+
+    def mark_proposal_manual_required(self, workspace_id: str, proposal_id: int, error: str) -> None:
+        with self.connect() as db:
+            db.execute(
+                "UPDATE proposals SET status='manual_required',error_text=? WHERE workspace_id=? AND id=? AND status='sending'",
+                (error[:500], workspace_id, proposal_id),
+            )
+        self.audit(workspace_id, "scheduler", "proposal.manual_required", "proposal", proposal_id, {"error": error[:200]})
 
     def confirm_proposal(self, workspace_id: str, proposal_id: int, slot_index: int, actor: str) -> int:
         now = utc_now().isoformat()
@@ -238,7 +287,12 @@ class Store:
             request_row = db.execute("SELECT duration_minutes,timezone FROM scheduling_requests WHERE id=?", (row["request_id"],)).fetchone()
             start = datetime.fromisoformat(slots[slot_index])
             end = start + timedelta(minutes=int(request_row["duration_minutes"]))
-            db.execute("UPDATE proposals SET status='confirmed',confirmed_at=?,selected_slot=? WHERE id=?", (now, slot_index, proposal_id))
+            cursor = db.execute(
+                "UPDATE proposals SET status='confirmed',confirmed_at=?,selected_slot=? WHERE workspace_id=? AND id=? AND status='sent'",
+                (now, slot_index, workspace_id, proposal_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Proposal was already confirmed")
             cursor = db.execute(
                 "INSERT INTO appointments(workspace_id,request_id,proposal_id,start_at,end_at,timezone,status,created_at,updated_at) VALUES(?,?,?,?,?,?,'pending_approval',?,?)",
                 (workspace_id, row["request_id"], proposal_id, start.isoformat(), end.isoformat(), request_row["timezone"], now, now),
@@ -251,7 +305,7 @@ class Store:
     def get_appointment(self, workspace_id: str, appointment_id: int) -> dict[str, Any] | None:
         with self.connect() as db:
             row = db.execute(
-                "SELECT a.*,r.title,r.duration_minutes,r.contact_id,c.sender,c.display_name,c.email,c.language,c.consent_status "
+                "SELECT a.*,r.title,r.duration_minutes,r.contact_id,c.sender,c.display_name,c.email,c.language,c.consent_status,c.timezone contact_timezone "
                 "FROM appointments a JOIN scheduling_requests r ON r.id=a.request_id JOIN contacts c ON c.id=r.contact_id "
                 "WHERE a.workspace_id=? AND a.id=?",
                 (workspace_id, appointment_id),
@@ -327,6 +381,40 @@ class Store:
             db.execute("UPDATE background_jobs SET status=?,last_error=?,updated_at=? WHERE workspace_id=? AND id=?", (status, error, utc_now().isoformat(), workspace_id, job_id))
         self.audit(workspace_id, "worker", f"job.{status}", "job", job_id, {"error": error} if error else {})
 
+    def recover_stale_jobs(self, workspace_id: str, cutoff_iso: str) -> int:
+        message = "Worker stopped while this job was running; verify provider state before handling it manually"
+        with self.connect() as db:
+            cursor = db.execute(
+                "UPDATE background_jobs SET status='manual_required',last_error=?,updated_at=? "
+                "WHERE workspace_id=? AND status='running' AND updated_at<?",
+                (message, utc_now().isoformat(), workspace_id, cutoff_iso),
+            )
+        count = cursor.rowcount
+        if count:
+            self.audit(workspace_id, "worker", "jobs.stale_recovered", "job", None, {"count": count, "cutoff": cutoff_iso})
+        return count
+
+    def recover_stale_bookings(self, workspace_id: str, cutoff_iso: str) -> int:
+        message = "The process stopped during calendar booking; verify Google Calendar before any retry"
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT id,request_id FROM appointments WHERE workspace_id=? AND status='booking' AND updated_at<?",
+                (workspace_id, cutoff_iso),
+            ).fetchall()
+            if not rows:
+                return 0
+            db.executemany(
+                "UPDATE appointments SET status='manual_required',error_text=?,updated_at=? WHERE workspace_id=? AND id=? AND status='booking'",
+                [(message, now, workspace_id, row["id"]) for row in rows],
+            )
+            db.executemany(
+                "UPDATE scheduling_requests SET status='failed',updated_at=? WHERE workspace_id=? AND id=? AND status='booking_pending'",
+                [(now, workspace_id, row["request_id"]) for row in rows],
+            )
+        self.audit(workspace_id, "worker", "bookings.stale_recovered", "appointment", None, {"count": len(rows), "cutoff": cutoff_iso})
+        return len(rows)
+
     def outbound_allowed(self, workspace_id: str, subject: str, max_per_hour: int) -> bool:
         cutoff = (utc_now() - timedelta(hours=1)).isoformat()
         with self.connect() as db:
@@ -352,6 +440,19 @@ class Store:
                 "INSERT INTO rate_events(workspace_id,subject,action,created_at) VALUES(?,?,?,?)",
                 (workspace_id, subject, action, utc_now().isoformat()),
             )
+
+    def reserve_rate_event(self, workspace_id: str, subject: str, action: str, maximum: int, window_minutes: int) -> bool:
+        """Atomically reserve one bounded action so concurrent requests cannot exceed the limit."""
+        cutoff = (utc_now() - timedelta(minutes=window_minutes)).isoformat()
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            cursor = db.execute(
+                "INSERT INTO rate_events(workspace_id,subject,action,created_at) "
+                "SELECT ?,?,?,? WHERE (SELECT COUNT(*) FROM rate_events "
+                "WHERE workspace_id=? AND subject=? AND action=? AND created_at>=?) < ?",
+                (workspace_id, subject, action, now, workspace_id, subject, action, cutoff, maximum),
+            )
+        return cursor.rowcount == 1
 
     def dashboard(self, workspace_id: str, query: str = "", status: str = "", page: int = 1, per_page: int = 25) -> dict[str, Any]:
         page = max(page, 1)

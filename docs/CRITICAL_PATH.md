@@ -22,9 +22,9 @@ Google FreeBusy is queried for business-hour gaps in the configured timezone. Th
 
 ## 4. User confirms
 
-After the proposal is sent through official WhatsApp Cloud API, the contact can reply with 1, 2, or 3. The app resolves that reply only against the contact's most recent sent proposal. The contact can alternatively choose through `/book/<private-token>` and must check an explicit consent box.
+After the proposal is sent through official WhatsApp Cloud API, the contact can reply with 1, 2, or 3. The app resolves that reply only against the contact's most recent unexpired sent proposal. The contact can alternatively choose through `/book/<private-token>` and must check an explicit consent box. The public form is CSRF-protected and displays slots in the saved contact timezone.
 
-Confirmation creates exactly one pending appointment for the request.
+Confirmation atomically closes the proposal and creates exactly one pending appointment for the request, including under concurrent replies.
 
 ## 5. Google Calendar event
 
@@ -38,7 +38,7 @@ The booking confirmation is sent after the event write. A reminder job is queued
 
 ## 7. Audit and recovery
 
-All state transitions, authentication events, provider success/failure, pause changes, reminder outcomes, privacy operations, and retention purges are timestamped. Ambiguous provider timeouts are not automatically retried. The operator reviews and resolves them to avoid duplicate external actions.
+All state transitions, authentication events, provider success/failure, pause changes, reminder outcomes, privacy operations, and retention purges are timestamped. Ambiguous provider timeouts are not automatically retried. Stale send, booking, and worker claims are recovered to manual review after 15 minutes so a process crash cannot silently strand or replay external work.
 
 ## Smoke-test evidence
 

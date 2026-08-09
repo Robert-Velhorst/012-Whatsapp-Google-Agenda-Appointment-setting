@@ -33,9 +33,11 @@ Every domain table carries `workspace_id`; store queries require it. The shipped
 
 - Unique inbound message ID per workspace.
 - Unique request source, proposal/request, appointment/request, booking token hash, job dedupe key, and Google event ID.
-- Per-contact outbound WhatsApp count per hour.
+- Atomic per-contact outbound WhatsApp reservations per hour, including concurrent requests.
 - Emergency pause blocks outbound messages, calendar changes, and workers while preserving signed inbound records.
-- Provider timeouts become visible manual exceptions instead of blind retries.
+- A proposal is atomically claimed before provider delivery, so simultaneous send actions cannot call WhatsApp twice.
+- Provider timeouts and process interruption during external actions become visible manual exceptions instead of blind retries.
+- Expired booking proposals are rejected equally through the private link and WhatsApp reply path.
 
 ## Privacy controls
 
@@ -48,6 +50,6 @@ Every domain table carries `workspace_id`; store queries require it. The shipped
 
 - SQLite metadata is not field-encrypted; use full-volume encryption and host access controls.
 - Private booking links can be used by anyone who receives the URL until the configured expiry or proposal closure; keep the default seven-day TTL short for sensitive workflows.
-- SQLite-backed browser login throttling is per instance, not globally distributed; place a rate-limiting reverse proxy in front of horizontally scaled public deployments.
+- SQLite-backed browser login throttling is atomic on one host but not globally distributed; place a rate-limiting reverse proxy in front of horizontally scaled public deployments.
 - No organization SSO, hardware-backed keys, DLP, SIEM export, or independently audited cryptography deployment exists.
 - Provider delivery acceptance does not prove WhatsApp delivery/read status; current UI reports only API acceptance.

@@ -10,7 +10,8 @@
     <p>Select one available time for {{ proposal.title }}. The operator will create the calendar event after confirmation.</p>
     {% if error %}<div class="flash error" role="alert">{{ error }}</div>{% endif %}
     <form method="post" class="booking-form">
-      <fieldset><legend>Available times</legend>{% for slot in proposal.slots %}<label class="booking-slot"><input type="radio" name="slot" value="{{ loop.index0 }}" required><span><strong>{{ slot[:10] }}</strong><small>{{ slot[11:16] }} &middot; {{ timezone_name }}</small></span></label>{% endfor %}</fieldset>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <fieldset><legend>Available times</legend>{% for slot in display_slots %}<label class="booking-slot"><input type="radio" name="slot" value="{{ slot.index }}" required><span><strong>{{ slot.date }}</strong><small>{{ slot.time }} &middot; {{ timezone_name }}</small></span></label>{% endfor %}</fieldset>
       <label class="consent-check"><input type="checkbox" name="consent" value="yes" required><span>I consent to using these scheduling details to prepare a calendar appointment.</span></label>
       <button class="primary-button" type="submit">Confirm selected time</button>
     </form>

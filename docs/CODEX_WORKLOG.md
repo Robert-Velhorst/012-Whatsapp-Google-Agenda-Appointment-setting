@@ -26,4 +26,13 @@ Checkpoint at that time: browser QA, Docker/config checks, final reports/publica
 - Fixed booking-link activation expiry, Windows port collision handling, package spec/CI defects, and a 181 MiB irrelevant Docker context.
 - Reverified 25 tests, locked dependency consistency, live vulnerability audit, Docker non-root health, unsafe-production refusal, and the Windows package.
 
+## 2026-08-09 - Final adversarial hardening
+
+- Closed open-redirect, public booking CSRF, and CSV spreadsheet-formula injection paths.
+- Made outbound and HAI rate reservations atomic and added atomic proposal-send and confirmation claims.
+- Distinguished verified-rejected WhatsApp calls from ambiguous network delivery; only verified-safe failures can be resent.
+- Added crash recovery for stale jobs, proposal sends, and calendar bookings, plus idempotent Google 404 cancellation and atomic OAuth token replacement.
+- Preserved contact timezones throughout proposals, private booking, confirmations, and reminders; rejected expired WhatsApp confirmations.
+- Expanded the automated suite from 25 to 37 tests, including real SQLite contention checks.
+
 Remaining external gate: authorized Meta/Google credentials and approvals, a stable available ngrok endpoint, and real-provider acceptance/cleanup.

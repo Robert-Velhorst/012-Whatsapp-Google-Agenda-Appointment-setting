@@ -29,6 +29,17 @@ def test_browser_login_and_csrf(app_bundle):
     assert client.post("/actions/automation/toggle").status_code == 403
 
 
+def test_browser_login_rejects_external_next_redirect(app_bundle):
+    app, _, _ = app_bundle
+    client = app.test_client()
+    client.get("/login")
+    with client.session_transaction() as current:
+        csrf = current["csrf_token"]
+    response = client.post("/login?next=https://evil.example/steal", data={"csrf_token": csrf, "password": "correct horse battery staple"})
+    assert response.status_code == 302
+    assert response.headers["Location"] == "/"
+
+
 def test_browser_login_throttles_repeated_failures(app_bundle):
     app, _, _ = app_bundle
     client = app.test_client()
@@ -71,6 +82,16 @@ def test_csv_export_is_not_limited_to_dashboard_page(app_bundle, auth_headers):
     response = app.test_client().get("/api/export/requests.csv", headers=auth_headers)
     assert response.status_code == 200
     assert len(response.data.decode().splitlines()) == 126
+
+
+def test_csv_export_neutralizes_spreadsheet_formulas(app_bundle, auth_headers):
+    app, _, _ = app_bundle
+    store = app.extensions["store"]
+    contact_id = store.upsert_contact("default", "31600000001", "Europe/Amsterdam", display_name="=HYPERLINK(\"https://evil.example\")")
+    store.create_request("default", contact_id, "csv-formula", "+CMD|' /C calc'!A0", 30, "Europe/Amsterdam", "2026-08-09", 0.8)
+    csv_data = app.test_client().get("/api/export/requests.csv", headers=auth_headers).data.decode()
+    assert "'=HYPERLINK" in csv_data
+    assert "'+CMD" in csv_data
 
 
 def test_contact_export_delete_and_workspace_isolation(app_bundle, auth_headers):

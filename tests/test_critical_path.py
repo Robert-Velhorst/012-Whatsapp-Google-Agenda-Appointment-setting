@@ -41,9 +41,12 @@ def test_public_booking_link_requires_consent(app_bundle, auth_headers):
     proposal = store.get_proposal("default", item["proposal_id"])
     token = proposal["booking_token"]
     assert client.get(f"/book/{token}").status_code == 200
-    rejected = client.post(f"/book/{token}", data={"slot": "0"})
+    with client.session_transaction() as current:
+        csrf = current["csrf_token"]
+    assert client.post(f"/book/{token}", data={"slot": "0"}).status_code == 403
+    rejected = client.post(f"/book/{token}", data={"csrf_token": csrf, "slot": "0"})
     assert rejected.status_code == 400
-    accepted = client.post(f"/book/{token}", data={"slot": "0", "consent": "yes"})
+    accepted = client.post(f"/book/{token}", data={"csrf_token": csrf, "slot": "0", "consent": "yes"})
     assert accepted.status_code == 200
     assert b"Your time is confirmed" in accepted.data
 

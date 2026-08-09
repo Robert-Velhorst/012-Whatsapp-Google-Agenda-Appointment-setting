@@ -16,7 +16,7 @@ REQUEST_TRANSITIONS = {
     "detected": {"needs_clarification", "proposal_pending", "failed", "cancelled"},
     "needs_clarification": {"proposal_pending", "cancelled", "failed"},
     "proposal_pending": {"awaiting_confirmation", "cancelled", "failed"},
-    "awaiting_confirmation": {"slot_confirmed", "proposal_pending", "cancelled", "failed"},
+    "awaiting_confirmation": {"slot_confirmed", "proposal_pending", "needs_clarification", "cancelled", "failed"},
     "slot_confirmed": {"booking_pending", "cancelled", "failed"},
     "booking_pending": {"booked", "cancelled", "failed"},
     "booked": {"cancelled", "failed"},

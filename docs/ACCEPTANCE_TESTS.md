@@ -14,9 +14,12 @@
 | Cancellation | `test_cancel_is_idempotent_and_calls_calendar` | Provider event cancelled and local jobs stopped |
 | Production guard | `test_production_configuration_fails_closed` | Unsafe production startup raises |
 | Auth/CSRF | `test_api_requires_authentication`, `test_browser_login_and_csrf` | Protected data inaccessible; session mutations require CSRF |
+| Redirect/CSV safety | `test_browser_login_rejects_external_next_redirect`, `test_csv_export_neutralizes_spreadsheet_formulas` | External redirects refused; spreadsheet formulas neutralized |
 | Privacy/isolation | `test_contact_export_delete_and_workspace_isolation` | Export/deletion work; other workspace sees zero records |
 | Encryption | `test_sensitive_message_is_encrypted_in_database` | Plain conversation absent from SQLite field |
 | Jobs | `tests/test_worker.py` | Missing/unknown reminders are never reported sent |
+| Concurrency/recovery | `tests/test_provider_safety.py` | Atomic rate/send/confirmation claims; ambiguous delivery and stale work require manual review |
+| Calendar/token safety | `tests/test_calendar_safety.py` | Missing event cancellation is idempotent; OAuth token replacement is atomic and encrypted |
 | HAI | `tests/test_hai_integration.py` | Disabled by default; local/cursor-bounded/PII-minimized; external and invalid cursor rejected |
 
 ## Runtime/package evidence
@@ -43,4 +46,4 @@ These steps must be completed by an authorized operator and cannot be simulated 
 9. Pause automation and repeat inbound; expected: message recorded, no outbound/calendar action.
 10. Export and delete the test contact; expected: personal records removed and minimal deletion audit remains.
 
-Actual result in this workspace: 25 automated tests and the local runtime/package matrix passed; the real-provider matrix remains blocked by credentials, approvals, an available assigned ngrok endpoint, and authorized account actions.
+Actual result in this workspace: 37 automated tests and the local runtime/package matrix passed; the real-provider matrix remains blocked by credentials, approvals, an available assigned ngrok endpoint, and authorized account actions.

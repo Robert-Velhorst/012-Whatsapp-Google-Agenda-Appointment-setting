@@ -76,6 +76,9 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX IF NOT EXISTS idx_appointments_workspace_status ON appointments(workspace_id, status, start_at);
         CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_events(workspace_id, entity_type, entity_id, id DESC);
     """),
+    (4, """
+        CREATE INDEX IF NOT EXISTS idx_jobs_stale ON background_jobs(workspace_id, status, updated_at);
+    """),
 ]
 
 

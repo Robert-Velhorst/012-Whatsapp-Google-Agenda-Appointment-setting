@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -116,7 +117,12 @@ class GoogleCalendar:
         return service.events().update(calendarId=self.settings.google_calendar_id, eventId=event_id, body=event, sendUpdates="all").execute()
 
     def cancel_event(self, event_id: str) -> None:
-        self._service().events().delete(calendarId=self.settings.google_calendar_id, eventId=event_id, sendUpdates="all").execute()
+        try:
+            self._service().events().delete(calendarId=self.settings.google_calendar_id, eventId=event_id, sendUpdates="all").execute()
+        except HttpError as exc:
+            if getattr(exc, "resp", None) is not None and exc.resp.status == 404:
+                return
+            raise
 
     def _credentials(self) -> Credentials:
         token_path = Path(self.settings.google_token_file)
@@ -134,11 +140,13 @@ class GoogleCalendar:
     def _write_token(self, serialized: str) -> None:
         token_path = Path(self.settings.google_token_file)
         token_path.parent.mkdir(parents=True, exist_ok=True)
-        token_path.write_text(self.crypto.encrypt(serialized), encoding="utf-8")
+        temporary = token_path.with_name(f".{token_path.name}.{os.getpid()}.tmp")
+        temporary.write_text(self.crypto.encrypt(serialized), encoding="utf-8")
         try:
-            token_path.chmod(0o600)
+            temporary.chmod(0o600)
         except OSError:
             pass
+        os.replace(temporary, token_path)
 
     def _service(self):
         return build("calendar", "v3", credentials=self._credentials(), cache_discovery=False)

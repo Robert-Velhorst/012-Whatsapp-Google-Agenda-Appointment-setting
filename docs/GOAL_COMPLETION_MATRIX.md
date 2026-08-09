@@ -11,7 +11,7 @@ Status is evidence-based as of 2026-08-09. `Implemented` means locally wired and
 | 004 | Architecture validation | Implemented | Fail-closed production and labelled modes |
 | 005 | Data model/persistence | Implemented | Migrated domain tables, FKs, indexes, state transitions |
 | 006 | Configuration guards | Implemented | `Settings.validation`, production startup refusal |
-| 007 | Authentication/session | Implemented | Password-hash session and bearer API, CSRF |
+| 007 | Authentication/session | Implemented | Password-hash session and bearer API, CSRF on operator and public booking forms |
 | 008 | Authorization/ownership | Partial | Workspace-scoped single operator; no team RBAC/SSO |
 | 009 | API/error envelope | Implemented | Protected JSON endpoints and structured errors |
 | 010 | Frontend/navigation | Implemented | Server-rendered accessible application shell |
@@ -20,9 +20,9 @@ Status is evidence-based as of 2026-08-09. `Implemented` means locally wired and
 | 013 | Compliance boundaries | Implemented | Official APIs only; reminder-template/manual boundary |
 | 014 | No fake production success | Implemented | Fakes confined to tests; truthful provider states |
 | 015 | Upload/media safety | Not applicable | Product exposes no upload/media routes |
-| 016 | Jobs/workers | Implemented | Claimed reminder jobs, terminal/manual states, retention |
+| 016 | Jobs/workers | Implemented | Claimed reminder jobs, terminal/manual states, retention, stale-claim recovery |
 | 017 | Idempotency | Implemented | Unique inbound/domain/job/event keys and atomic claims |
-| 018 | Rate/provider quotas | Implemented | Per-contact hourly outbound guard; provider errors surfaced |
+| 018 | Rate/provider quotas | Implemented | Atomic per-contact hourly outbound reservations; provider errors surfaced |
 | 019 | Audit history | Implemented | Workspace-scoped audit events and UI/API |
 | 020 | Dashboard/next action | Implemented | Exception queue and contextual actions |
 | 021 | Forms/validation/autosave | Partial | Forms validate and save; autosave intentionally absent |
@@ -49,10 +49,10 @@ Status is evidence-based as of 2026-08-09. `Implemented` means locally wired and
 | 042 | Worker tests | Implemented | Unknown/missing reminder outcomes tested |
 | 043 | End-to-end tests | Implemented | Full local critical path with provider boundaries |
 | 044 | Acceptance matrix | Implemented | `docs/ACCEPTANCE_TESTS.md` |
-| 045 | Adversarial tests | Partial | Signature, size, auth, CSRF, state/retry tests; no external pentest |
+| 045 | Adversarial tests | Partial | Signature, size, auth, CSRF, redirect, CSV, concurrency, state/retry tests; no external pentest |
 | 046 | Cross-user isolation | Partial | Workspace isolation tested; multiple interactive users absent |
 | 047 | File/path traversal tests | Not applicable | No user-selected file paths or uploads |
-| 048 | Provider failure simulation | Implemented | Fakes and failed/manual states; ambiguous retries prohibited |
+| 048 | Provider failure simulation | Implemented | Verified rejection versus ambiguous delivery states tested; ambiguous retries prohibited |
 | 049 | Accessibility | Partial | Semantic labels/focus/responsive/reduced motion; formal audit pending |
 | 050 | Responsive/browser compatibility | Implemented | Desktop and mobile browser QA passed with zero console warnings/errors |
 | 051 | Performance/indexing | Implemented | WAL/persistent connections/indexes plus repeatable 1,000-record benchmark |
@@ -81,7 +81,7 @@ Status is evidence-based as of 2026-08-09. `Implemented` means locally wired and
 | 074 | API usage audit | Implemented | Public/operator/provider surfaces mapped |
 | 075 | Documentation truthfulness | Implemented | Partial/blocked status stated throughout |
 | 076 | Debt register | Implemented | `docs/MAINTENANCE.md` |
-| 077 | Bug hunt log | Implemented | Worklog records found/fixed template issue and QA issues |
+| 077 | Bug hunt log | Implemented | Worklog records template, security, provider ambiguity, concurrency, and timezone fixes |
 | 078 | Red-team loop one | Partial | Automated auth/signature/CSRF/size/state review; independent review absent |
 | 079 | Red-team loop two | Partial | Privacy/isolation/encryption review; independent review absent |
 | 080 | Red-team loop three | Partial | Provider ambiguity/idempotency review; real-provider chaos test blocked |
@@ -96,7 +96,7 @@ Status is evidence-based as of 2026-08-09. `Implemented` means locally wired and
 | 089 | Stabilization gates | Implemented | Config -> tests -> UI -> Docker -> real-provider sequence |
 | 090 | No vanity work | Implemented | Dominant work is wired critical path/operations |
 | 091 | Feature definition of done | Implemented | Implemented status requires wired/tested/documented behavior |
-| 092 | Fresh-clone dry run | Implemented | Remote branch cloned at release commit; 25 tests passed; clean GitHub CI passed |
+| 092 | Fresh-clone dry run | Implemented | Remote branch and package workflow verified; final 37-test CI evidence recorded in final report |
 | 093 | Manual verification evidence | Implemented | Desktop/mobile browser, Docker, source launcher, packaged executable, backup/restore evidence |
 | 094 | Final no-excuses search | Implemented | Secret signatures, TODO markers, encoding, ignores, and action truth scanned before publication |
 | 095 | Completion matrix | Implemented | This document |
@@ -114,7 +114,7 @@ Status is evidence-based as of 2026-08-09. `Implemented` means locally wired and
 | 107 | Quality/confidence | Implemented | Deterministic confidence stored and displayed |
 | 108 | Human decision minimization | Implemented | Only proposal/booking exceptions gated; opt-in automation flags |
 | 109 | Exception dashboard | Implemented | Queue organized by next action and provider attention |
-| 110 | Safe retry/recovery | Implemented | Local idempotency; ambiguous sends become manual |
+| 110 | Safe retry/recovery | Implemented | Atomic claims, stale-work recovery, and ambiguous sends become manual |
 | 111 | Ambiguous external action | Implemented | Calendar ID recovery; WhatsApp timeout is not blindly retried |
 | 112 | Version/changelog | Implemented | Versioned health/package and `CHANGELOG.md` |
 | 113 | Regression baseline | Implemented | Automated suite covers critical invariants |

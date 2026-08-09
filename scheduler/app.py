@@ -8,6 +8,8 @@ import os
 import secrets
 from datetime import datetime, timezone
 from functools import wraps
+from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo
 
 from flask import Flask, abort, flash, jsonify, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash
@@ -54,6 +56,25 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
         supplied = request.form.get("csrf_token") or request.headers.get("X-CSRF-Token")
         expected = session.get("csrf_token")
         return bool(supplied and expected and secrets.compare_digest(supplied, expected))
+
+    def safe_next_url(candidate: str | None) -> str:
+        if candidate and candidate.startswith("/") and not candidate.startswith("//"):
+            return candidate
+        if candidate:
+            parsed = urlsplit(candidate)
+            if parsed.scheme in {"http", "https"} and parsed.netloc == request.host:
+                return parsed.path + (f"?{parsed.query}" if parsed.query else "")
+        return url_for("dashboard")
+
+    def booking_slots(proposal: dict | None) -> list[dict[str, str | int]]:
+        if not proposal or not proposal.get("slots"):
+            return []
+        timezone_name = proposal.get("contact_timezone") or settings.timezone
+        target = ZoneInfo(timezone_name)
+        return [
+            {"index": index, "date": datetime.fromisoformat(value).astimezone(target).strftime("%Y-%m-%d"), "time": datetime.fromisoformat(value).astimezone(target).strftime("%H:%M")}
+            for index, value in enumerate(proposal["slots"])
+        ]
 
     def is_api_authorized() -> bool:
         token = request.headers.get("Authorization", "").removeprefix("Bearer ")
@@ -120,7 +141,8 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             return redirect(url_for("login"))
         password = request.form.get("password", "")
         if not check_password_hash(settings.admin_password_hash, password):
-            store.record_rate_event(settings.workspace_id, login_subject, "auth.login_failed")
+            if not store.reserve_rate_event(settings.workspace_id, login_subject, "auth.login_failed", 5, 15):
+                return render_template("login.html", login_enabled=bool(settings.admin_password_hash), mode=settings.app_env, error="Too many failed sign-in attempts. Try again in 15 minutes."), 429
             store.audit(settings.workspace_id, "anonymous", "auth.login_failed", "operator", None, {"remote": request.remote_addr})
             flash("The password is incorrect.", "error")
             return redirect(url_for("login"))
@@ -129,7 +151,7 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
         session["csrf_token"] = secrets.token_urlsafe(32)
         session.permanent = True
         store.audit(settings.workspace_id, settings.operator_name, "auth.login", "operator")
-        return redirect(request.args.get("next") or url_for("dashboard"))
+        return redirect(safe_next_url(request.args.get("next")))
 
     @app.post("/logout")
     @operator_required
@@ -165,7 +187,7 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
         value = "false" if scheduling.is_paused() else "true"
         store.set_state(settings.workspace_id, "automation_paused", value, settings.operator_name)
         flash("Automation resumed." if value == "false" else "Automation paused. Incoming messages will still be recorded.", "success")
-        return redirect(request.referrer or url_for("dashboard"))
+        return redirect(safe_next_url(request.referrer))
 
     @app.post("/actions/proposals/<int:proposal_id>/send")
     @operator_required
@@ -177,7 +199,7 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             flash("The proposal was sent through WhatsApp Cloud API.", "success")
         except Exception as exc:
             flash(f"Proposal not sent: {exc}", "error")
-        return redirect(request.referrer or url_for("dashboard"))
+        return redirect(safe_next_url(request.referrer))
 
     @app.post("/actions/appointments/<int:appointment_id>/book")
     @operator_required
@@ -189,7 +211,7 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             flash(result.get("warning") or "The confirmed slot was booked in Google Calendar.", "success")
         except Exception as exc:
             flash(f"Calendar booking failed safely: {exc}", "error")
-        return redirect(request.referrer or url_for("dashboard"))
+        return redirect(safe_next_url(request.referrer))
 
     @app.post("/actions/appointments/<int:appointment_id>/cancel")
     @operator_required
@@ -201,7 +223,7 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             flash("The appointment was cancelled and queued reminders were stopped.", "success")
         except Exception as exc:
             flash(f"Cancellation failed safely: {exc}", "error")
-        return redirect(request.referrer or url_for("dashboard"))
+        return redirect(safe_next_url(request.referrer))
 
     @app.post("/actions/contacts/<int:contact_id>/update")
     @operator_required
@@ -229,11 +251,14 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
         except KeyError:
             abort(404)
         except ValueError as exc:
-            return render_template("booking.html", proposal={"status": "expired"}, token=token, timezone_name=settings.timezone, error=str(exc)), 410
-        return render_template("booking.html", proposal=proposal, token=token, timezone_name=settings.timezone)
+            return render_template("booking.html", proposal={"status": "expired"}, token=token, timezone_name=settings.timezone, display_slots=[], error=str(exc)), 410
+        timezone_name = proposal.get("contact_timezone") or settings.timezone
+        return render_template("booking.html", proposal=proposal, token=token, timezone_name=timezone_name, display_slots=booking_slots(proposal))
 
     @app.post("/book/<token>")
     def booking_confirm(token: str):
+        if not valid_csrf():
+            abort(403)
         try:
             slot_index = int(request.form.get("slot", "-1"))
             appointment_id = scheduling.confirm_public(token, slot_index, request.form.get("consent") == "yes")
@@ -242,7 +267,8 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             abort(404)
         except Exception as exc:
             proposal = store.get_proposal_by_token(token)
-            return render_template("booking.html", proposal=proposal, token=token, timezone_name=settings.timezone, error=str(exc)), 400
+            timezone_name = (proposal or {}).get("contact_timezone") or settings.timezone
+            return render_template("booking.html", proposal=proposal, token=token, timezone_name=timezone_name, display_slots=booking_slots(proposal), error=str(exc)), 400
 
     @app.get("/webhook/whatsapp")
     def verify_webhook():
@@ -280,13 +306,12 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
         if not hai_client_allowed():
             return _error("connector_network_denied", "HAI connector access is not allowed from this network", 403)
         subject = request.remote_addr or "unknown"
-        if not store.rate_allowed(settings.workspace_id, subject, "hai.feed", 60, 1):
+        if not store.reserve_rate_event(settings.workspace_id, subject, "hai.feed", 60, 1):
             return _error("connector_rate_limited", "HAI feed rate limit reached", 429)
         try:
             rows, next_cursor = store.hai_feed(settings.workspace_id, request.args.get("cursor", "")[:500], settings.hai_feed_page_size)
         except ValueError as exc:
             return _error("invalid_cursor", str(exc), 400)
-        store.record_rate_event(settings.workspace_id, subject, "hai.feed")
         items = []
         for row in rows:
             metadata = {
@@ -393,11 +418,17 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
         writer = csv.writer(output)
         writer.writerow(["id", "contact", "title", "status", "confidence", "created_at"])
         for item in items:
-            writer.writerow([item["id"], item.get("display_name") or item["sender"], item["title"], item["status"], item["confidence"], item["created_at"]])
+            writer.writerow([item["id"], _csv_safe(item.get("display_name") or item["sender"]), _csv_safe(item["title"]), item["status"], item["confidence"], item["created_at"]])
         return app.response_class(output.getvalue(), mimetype="text/csv", headers={"Content-Disposition": "attachment; filename=scheduling-requests.csv"})
 
     return app
 
 
 def _error(code: str, message: str, status: int):
-    return jsonify({"error": {"code": code, "message": message, "retryable": status >= 500}}), status
+    return jsonify({"error": {"code": code, "message": message, "retryable": status >= 500 or status == 429}}), status
+
+
+def _csv_safe(value: object) -> object:
+    if isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\t", "\r")):
+        return "'" + value
+    return value
