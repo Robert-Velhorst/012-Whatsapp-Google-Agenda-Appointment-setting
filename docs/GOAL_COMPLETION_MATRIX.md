@@ -100,7 +100,7 @@ Status is evidence-based as of 2026-08-09. `Implemented` means locally wired and
 | 093 | Manual verification evidence | Implemented | Desktop/mobile browser, Docker, source launcher, packaged executable, backup/restore evidence |
 | 094 | Final no-excuses search | Implemented | Secret signatures, TODO markers, encoding, ignores, and action truth scanned before publication |
 | 095 | Completion matrix | Implemented | This document |
-| 096 | Final verification report | Implemented | `docs/RELEASE_VERIFICATION.md` records commands, results, checksum, and external gate |
+| 096 | Final verification report | Implemented | `docs/FINAL_VERIFICATION_REPORT.md` records commands, results, checksum, and external gate |
 | 097 | Final response requirements | Implemented | Final handoff reports outcome, evidence, artifacts, PR, and external gates |
 | 098 | Maintenance plan | Implemented | `docs/MAINTENANCE.md` |
 | 099 | Roadmap/blocked items | Implemented | Maintenance roadmap and explicit external gates |
