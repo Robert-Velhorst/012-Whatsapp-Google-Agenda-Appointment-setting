@@ -1,0 +1,32 @@
+name: Windows package
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: python -m venv .venv
+      - run: .\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-build.txt pip-audit==2.9.0
+      - run: .\.venv\Scripts\python.exe -m pip_audit -r requirements.lock
+      - run: .\.venv\Scripts\python.exe -m pytest -q
+      - shell: powershell
+        run: .\windows\Build-Windows.ps1
+      - shell: powershell
+        run: .\windows\Test-Package.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AgendaRelay-Windows-x64
+          path: |
+            dist/AgendaRelay-Windows-x64.zip

@@ -1,0 +1,14 @@
+[project]
+name = "agenda-relay"
+version = "1.0.0"
+description = "Approval-first WhatsApp Cloud API to Google Calendar scheduling assistant"
+requires-python = ">=3.11,<3.14"
+license = { text = "Proprietary" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.coverage.run]
+source = ["scheduler"]
+omit = ["scheduler/templates/*", "scheduler/static/*"]

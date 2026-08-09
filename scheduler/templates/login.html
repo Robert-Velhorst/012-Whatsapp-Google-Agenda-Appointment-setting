@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Operator login - Agenda Relay{% endblock %}
+{% block body_class %}auth-page{% endblock %}
+{% block body %}
+<main class="auth-shell">
+  <section class="auth-panel" aria-labelledby="login-title">
+    <a class="wordmark" href="/">Agenda Relay</a>
+    <h1 id="login-title">Operator login</h1>
+    <p>Access scheduling requests, calendar actions, reminders, and the audit trail.</p>
+    <div class="mode-notice"><span class="mode-dot"></span>{{ mode|capitalize }} environment</div>
+    {% if error %}<div class="flash error">{{ error }}</div>{% endif %}
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}<div class="flash {{ category }}" role="alert">{{ message }}</div>{% endfor %}
+    {% endwith %}
+    {% if login_enabled %}
+    <form method="post" class="stack-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
+      <button class="primary-button" type="submit">Sign in</button>
+    </form>
+    {% else %}
+    <div class="empty-notice" role="status">
+      <strong>Browser login is not configured.</strong>
+      <span>Generate a password hash with the documented CLI command and set <code>ADMIN_PASSWORD_HASH</code>.</span>
+    </div>
+    {% endif %}
+  </section>
+</main>
+{% endblock %}

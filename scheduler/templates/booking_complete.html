@@ -1,0 +1,4 @@
+{% extends "base.html" %}
+{% block title %}Time confirmed - Agenda Relay{% endblock %}
+{% block body_class %}booking-page{% endblock %}
+{% block body %}<main class="booking-shell"><section class="booking-panel complete"><div class="success-mark">✓</div><h1>Your time is confirmed</h1><p>The scheduling operator can now create the Google Calendar event. You will receive a confirmation through the configured channel.</p><small>Reference {{ appointment_id }}</small></section></main>{% endblock %}

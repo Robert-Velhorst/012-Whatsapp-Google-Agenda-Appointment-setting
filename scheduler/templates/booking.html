@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Choose a time - Agenda Relay{% endblock %}
+{% block body_class %}booking-page{% endblock %}
+{% block body %}
+<main class="booking-shell">
+  <section class="booking-panel">
+    <a class="wordmark" href="#">Agenda Relay</a>
+    {% if proposal.status == 'sent' %}
+    <h1>Choose a time</h1>
+    <p>Select one available time for {{ proposal.title }}. The operator will create the calendar event after confirmation.</p>
+    {% if error %}<div class="flash error" role="alert">{{ error }}</div>{% endif %}
+    <form method="post" class="booking-form">
+      <fieldset><legend>Available times</legend>{% for slot in proposal.slots %}<label class="booking-slot"><input type="radio" name="slot" value="{{ loop.index0 }}" required><span><strong>{{ slot[:10] }}</strong><small>{{ slot[11:16] }} &middot; {{ timezone_name }}</small></span></label>{% endfor %}</fieldset>
+      <label class="consent-check"><input type="checkbox" name="consent" value="yes" required><span>I consent to using these scheduling details to prepare a calendar appointment.</span></label>
+      <button class="primary-button" type="submit">Confirm selected time</button>
+    </form>
+    {% else %}
+    <h1>This proposal is closed</h1>{% if error %}<div class="flash error" role="alert">{{ error }}</div>{% endif %}<p>Its current status is <strong>{{ proposal.status.replace('_',' ') }}</strong>. Return to WhatsApp if you need a different time.</p>
+    {% endif %}
+  </section>
+</main>
+{% endblock %}
