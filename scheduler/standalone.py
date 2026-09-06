@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import argparse
 
 from waitress import serve
 
@@ -10,6 +11,12 @@ from scheduler.app import create_app
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Agenda Relay standalone scheduler")
+    parser.add_argument("--setup", action="store_true", help="Create local login and security configuration")
+    args = parser.parse_args()
+    if args.setup:
+        from scheduler.setup import interactive_setup
+        raise SystemExit(interactive_setup())
     app = create_app()
     service = app.extensions["scheduling"]
     interval = max(int(os.getenv("WORKER_INTERVAL_SECONDS", "30")), 5)

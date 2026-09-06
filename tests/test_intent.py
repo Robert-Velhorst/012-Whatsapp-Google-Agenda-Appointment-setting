@@ -1,4 +1,5 @@
 from datetime import date
+import pytest
 
 from scheduler.intent import analyse, confirmation_index
 
@@ -21,3 +22,8 @@ def test_confirmation_index_is_bounded():
     assert confirmation_index("The second one works", 3) == 1
     assert confirmation_index("derde graag", 3) == 2
     assert confirmation_index("4", 3) is None
+
+
+@pytest.mark.parametrize("reply", ["not the second one", "1 or 2", "I have 2 questions", "2 doesn't work", "niet de tweede", "maybe 1", "Can we do 2 hours?", "1?", "second is unavailable"])
+def test_confirmation_requires_unambiguous_acceptance(reply):
+    assert confirmation_index(reply, 3) is None

@@ -1,5 +1,16 @@
 # Codex worklog
 
+## 2026-09-07 - Local executable and setup improvement
+
+- Added `AgendaRelay.exe --setup` and `python -m scheduler.cli setup` to create an operator password hash and independent random secrets without overwriting existing settings.
+- Reproduced and fixed false confirmations from negative, ambiguous, or incidental numbered replies (nine regression cases).
+- Reproduced and fixed missing Google availability being treated as a free calendar (three response-shape regression cases).
+- Fixed end-of-business-hour 24 handling and skipped expired daily availability windows.
+- Expanded README setup, configuration, architecture, operations, and limitations.
+- Verified 53 tests passed, rebuilt the Windows executable, checked `--help`, and passed executable health/login smoke checks at 65.4 MiB working set. ZIP CRC and repository README links passed.
+- Current local provider readiness remains false: Google OAuth, Meta access token/phone ID, and local operator password configuration are missing. HAI remains disabled. No live-provider actions were performed.
+- Publication is tracked by Git history and the matching pull-request checks; earlier published CI results do not validate this revision.
+
 ## 2026-07-25 - Initial MVP
 
 Created the small approval-first Flask MVP from an empty repository/supplied flat archive. Added HMAC, deduplication, deterministic intent, FreeBusy, proposal approval, Windows timezone support, and four tests.

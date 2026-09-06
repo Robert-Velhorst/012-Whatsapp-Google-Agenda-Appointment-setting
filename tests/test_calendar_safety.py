@@ -1,9 +1,11 @@
 from dataclasses import replace
 from types import SimpleNamespace
+from datetime import date
+import pytest
 
 from googleapiclient.errors import HttpError
 
-from scheduler.calendar import GoogleCalendar
+from scheduler.calendar import GoogleCalendar, CalendarUnavailable
 from scheduler.crypto import CryptoBox
 
 
@@ -42,3 +44,12 @@ def test_google_token_write_is_atomic_and_encrypted(app_bundle, tmp_path):
     assert stored.startswith("enc:")
     assert crypto.decrypt(stored) == '{"refresh_token":"secret"}'
     assert list(token_path.parent.glob("*.tmp")) == []
+
+
+@pytest.mark.parametrize("response", [{}, {"calendars": {}}, {"calendars": {"primary": {}}}])
+def test_missing_availability_is_not_treated_as_free(app_bundle, response):
+    app, _, _ = app_bundle
+    calendar = GoogleCalendar(app.extensions["settings"])
+    calendar._service = lambda: SimpleNamespace(freebusy=lambda: SimpleNamespace(query=lambda **kw: SimpleNamespace(execute=lambda: response)))
+    with pytest.raises(CalendarUnavailable):
+        calendar.free_slots(date(2030, 1, 7), 30)

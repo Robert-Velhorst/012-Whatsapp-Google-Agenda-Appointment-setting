@@ -18,6 +18,7 @@ from .app import create_app
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agenda-relay", description="Agenda Relay operator commands")
     sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("setup", help="Create local login and encryption configuration without overwriting existing settings")
     sub.add_parser("doctor", help="Validate configuration, storage, and provider readiness")
     sub.add_parser("migrate", help="Apply safe forward-only SQLite migrations")
     worker = sub.add_parser("worker", help="Process due reminder and retention jobs")
@@ -37,6 +38,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "setup":
+        from .setup import interactive_setup
+        return interactive_setup()
     if args.command == "hash-password":
         import getpass
         password = args.password or getpass.getpass("Operator password: ")

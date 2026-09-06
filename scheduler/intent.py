@@ -92,15 +92,24 @@ def analyse(text: str, today: date, default_duration: int) -> Intent:
 
 
 def confirmation_index(text: str, slot_count: int) -> int | None:
+    # A question or an incidental number is not authority to create an event.
+    if "?" in text:
+        return None
     normalized = re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
     ordinals = {
         "1": 0, "one": 0, "first": 0, "eerste": 0,
         "2": 1, "two": 1, "second": 1, "tweede": 1,
         "3": 2, "three": 2, "third": 2, "derde": 2,
     }
-    for word in normalized.split():
-        if word in ordinals and ordinals[word] < slot_count:
-            return ordinals[word]
+    selection = "|".join(ordinals)
+    match = re.fullmatch(
+        rf"(?:(?:the|de|option|optie|number|nummer|i choose|i pick|ik kies) )?"
+        rf"(?P<choice>{selection})(?: one)?"
+        rf"(?: please| graag| works(?: for me)?| is fine| is good| is prima| past(?: mij)?)?",
+        normalized,
+    )
+    if match and ordinals[match['choice']] < slot_count:
+        return ordinals[match['choice']]
     if slot_count == 1 and normalized in {"yes", "yes please", "ja", "akkoord", "confirm", "bevestig"}:
         return 0
     return None

@@ -58,16 +58,21 @@ class GoogleCalendar:
         for _ in range(21):
             if day.weekday() < 5:
                 lower = datetime.combine(day, time(self.settings.business_hours_start), tzinfo=tz)
-                upper = datetime.combine(day, time(self.settings.business_hours_end), tzinfo=tz)
+                upper = datetime.combine(day, time.min, tzinfo=tz) + timedelta(hours=self.settings.business_hours_end)
                 if lower.date() == now.date() and lower < now:
                     interval = self.settings.slot_interval_minutes
                     minutes = ((now.minute + interval - 1) // interval) * interval
                     lower = now.replace(minute=0, second=0, microsecond=0) + timedelta(minutes=minutes)
+                if lower >= upper or upper <= now:
+                    day += timedelta(days=1)
+                    continue
                 busy_response = service.freebusy().query(body={
                     "timeMin": lower.isoformat(), "timeMax": upper.isoformat(), "timeZone": self.settings.timezone,
                     "items": [{"id": self.settings.google_calendar_id}],
                 }).execute()
-                calendar_data = busy_response.get("calendars", {}).get(self.settings.google_calendar_id, {})
+                calendar_data = busy_response.get("calendars", {}).get(self.settings.google_calendar_id)
+                if not isinstance(calendar_data, dict) or not isinstance(calendar_data.get("busy"), list):
+                    raise CalendarUnavailable("Google Calendar did not return valid availability; no slots were proposed.")
                 if calendar_data.get("errors"):
                     raise CalendarUnavailable(f"Google Calendar FreeBusy error: {calendar_data['errors']}")
                 ranges = [
