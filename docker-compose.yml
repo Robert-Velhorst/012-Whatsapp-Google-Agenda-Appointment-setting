@@ -1,0 +1,32 @@
+services:
+  web:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5000:5000"
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ${GOOGLE_CLIENT_SECRETS_FILE_HOST:-./credentials.json}:/run/secrets/google-client.json:ro
+    environment:
+      GOOGLE_CLIENT_SECRETS_FILE: /run/secrets/google-client.json
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+  worker:
+    build: .
+    restart: unless-stopped
+    command: ["python", "-m", "scheduler.cli", "worker", "--interval", "30"]
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ${GOOGLE_CLIENT_SECRETS_FILE_HOST:-./credentials.json}:/run/secrets/google-client.json:ro
+    environment:
+      GOOGLE_CLIENT_SECRETS_FILE: /run/secrets/google-client.json
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
