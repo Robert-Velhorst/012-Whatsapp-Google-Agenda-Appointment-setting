@@ -24,3 +24,14 @@ Date: 2026-08-09
 No real WhatsApp message or Google Calendar event was created during release verification. A temporary isolated ngrok agent reached the cloud service, but the account's free endpoint was already online elsewhere and ngrok returned `ERR_NGROK_334`. Agenda Relay did not enable endpoint pooling or disturb that existing tunnel. Live production acceptance therefore still requires authorized Meta and Google credentials/approvals plus an assigned available ngrok domain/session.
 
 This distinction is intentional: local build/test/package readiness is verified; real-provider production operation is not claimed without owner-authorized accounts and cleanup.
+
+## Current branch verification addendum — 2026-09-23
+
+These checks apply to the current branch after the hardening changes; they supplement, and do not rewrite, the historical 2026-08-09 results above.
+
+- Current Python test suite: 60 passed.
+- Windows standalone package: rebuilt locally; ZIP SHA-256 `8A1999C2A72ED0E485D00A67C64F71A73573BCB7F7C7D4341B9F4A39C9E30662`.
+- Isolated packaged-app smoke test: health response reported `ok: true`, the branded operator-login page returned HTTP 200, and a test-only operator session reached the dashboard. A reversible pause/resume control check succeeded. Test database and configuration were kept in a temporary directory; no live provider credentials were used.
+- Browser-visible readiness correctly reported that WhatsApp Cloud API credentials and Google Calendar OAuth were not configured. No WhatsApp message or Google Calendar event was sent or created.
+- Fresh performance measurements are recorded in [PERFORMANCE.md](PERFORMANCE.md); they are single-host observations, not deployment guarantees.
+- The open draft PR's current source commit at the start of this addendum was `98007a0f18ce222cef5290e071290b8ef6badb27`; its two CI checks and Windows package check were successful. This source-check result is point-in-time and precedes this documentation-only addendum.
