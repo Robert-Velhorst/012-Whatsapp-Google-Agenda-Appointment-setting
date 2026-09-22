@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}Scheduling desk - Agenda Relay{% endblock %}
+{% block body_class %}app-page{% endblock %}
+{% block body %}
+<div class="app-shell">
+  <aside class="sidebar">
+    <a class="wordmark sidebar-wordmark" href="{{ url_for('dashboard') }}">Agenda Relay</a>
+    <nav aria-label="Primary navigation">
+      <a class="nav-link {{ 'active' if view == 'overview' }}" href="{{ url_for('dashboard') }}"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5v8a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Overview</a>
+      <a class="nav-link {{ 'active' if view == 'scheduling' }}" href="{{ url_for('dashboard', view='scheduling') }}"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4m10-4v4M3 10h18m-14 4h3m4 0h3m-10 4h3"/></svg>Scheduling</a>
+      <a class="nav-link {{ 'active' if view == 'contacts' }}" href="{{ url_for('dashboard', view='contacts') }}"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="9" cy="8" r="4"/><path d="M2.5 21a6.5 6.5 0 0 1 13 0M16 8h6m-3-3v6"/></svg>Contacts</a>
+      <a class="nav-link {{ 'active' if view == 'audit' }}" href="{{ url_for('dashboard', view='audit') }}"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 4h14v17H5zM8 8h8m-8 4h8m-8 4h5"/></svg>Audit</a>
+      <a class="nav-link {{ 'active' if view == 'settings' }}" href="{{ url_for('dashboard', view='settings') }}"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"/></svg>Settings</a>
+      <a class="nav-link {{ 'active' if view == 'help' }}" href="{{ url_for('dashboard', view='help') }}"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.8 9a2.4 2.4 0 1 1 3 2.3c-.8.3-.8.9-.8 1.7m0 4h.01"/></svg>Help</a>
+    </nav>
+    <div class="sidebar-status">
+      <span class="status-line {{ 'bad' if readiness.automation_paused or not readiness.ready else '' }}"><span class="status-dot"></span>{{ 'Automation paused' if readiness.automation_paused else ('Provider attention' if not readiness.ready else 'All systems operational') }}</span>
+      <span>{{ timezone_name }}</span>
+    </div>
+  </aside>
+
+  <div class="app-main">
+    <header class="topbar">
+      <div class="environment"><span class="mode-dot"></span>{{ mode|capitalize }}</div>
+      <form method="post" action="{{ url_for('toggle_automation') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="pause-button {{ 'resume' if readiness.automation_paused }}" type="submit">{{ 'Resume automation' if readiness.automation_paused else 'Pause automation' }}</button>
+      </form>
+      <div class="operator"><span class="avatar">{{ operator_name[:1]|upper }}</span><span><strong>{{ operator_name }}</strong><small>Operator</small></span></div>
+      <form method="post" action="{{ url_for('logout') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="text-button" type="submit">Sign out</button>
+      </form>
+    </header>
+
+    <main class="content">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}<div class="flash {{ category }}" role="status">{{ message }}</div>{% endfor %}
+      {% endwith %}
+
+      {% if view in ['overview', 'scheduling'] %}
+      <div class="page-heading">
+        <div><h1>Scheduling desk</h1><p>Exceptions that need attention appear here; provider actions always show their real state.</p></div>
+        <a class="secondary-button" href="{{ url_for('api_requests_csv') }}">Export CSV</a>
+      </div>
+
+      <section class="readiness-strip" aria-label="Provider readiness">
+        <div class="provider"><span class="provider-mark whatsapp">W</span><span><strong>WhatsApp connection</strong><small>{{ readiness.providers.whatsapp.detail }}</small></span><span class="provider-state {{ 'ok' if readiness.providers.whatsapp.ready else 'attention' }}">{{ 'Ready' if readiness.providers.whatsapp.ready else 'Action required' }}</span></div>
+        <div class="provider"><span class="provider-mark calendar">31</span><span><strong>Google Calendar connection</strong><small>{{ readiness.providers.google_calendar.detail }}</small></span><span class="provider-state {{ 'ok' if readiness.providers.google_calendar.ready else 'attention' }}">{{ 'Ready' if readiness.providers.google_calendar.ready else 'Action required' }}</span></div>
+      </section>
+
+      <section class="workload" aria-label="Workload summary">
+        <span><small>Workload summary</small><strong>{{ data.total }}</strong></span>
+        <span><small>Needs review</small><strong class="amber">{{ data.counts.get('proposal_pending', 0) + data.counts.get('needs_clarification', 0) }}</strong></span>
+        <span><small>Awaiting contact</small><strong class="blue">{{ data.counts.get('awaiting_confirmation', 0) }}</strong></span>
+        <span><small>Ready to book</small><strong class="green">{{ data.counts.get('slot_confirmed', 0) + data.counts.get('booking_pending', 0) }}</strong></span>
+        <span><small>Provider attention</small><strong class="amber">{{ data.counts.get('failed', 0) }}</strong></span>
+      </section>
+
+      <div class="desk-layout">
+        <section class="queue-panel">
+          <div class="panel-toolbar">
+            <div><h2>Exception queue</h2><span>{{ data.total }} scheduling requests</span></div>
+            <form class="filter-form" method="get">
+              <input type="hidden" name="view" value="scheduling">
+              <label class="sr-only" for="queue-search">Search requests</label>
+              <input id="queue-search" name="q" type="search" value="{{ query }}" placeholder="Search contact or title">
+              <label class="sr-only" for="status-filter">Filter status</label>
+              <select id="status-filter" name="status">
+                <option value="">All statuses</option>
+                {% for option in ['proposal_pending','awaiting_confirmation','slot_confirmed','booking_pending','booked','failed','cancelled'] %}
+                  <option value="{{ option }}" {{ 'selected' if status == option }}>{{ option.replace('_',' ')|title }}</option>
+                {% endfor %}
+              </select>
+              <button class="secondary-button" type="submit">Filter</button>
+            </form>
+          </div>
+          <div class="table-scroll">
+            <table class="queue-table">
+              <thead><tr><th>Contact</th><th>Next action</th><th>Requested window</th><th>Status</th><th>Confidence</th><th>Action</th></tr></thead>
+              <tbody>
+              {% for item in data['items'] %}
+                <tr class="{{ 'selected' if selected and selected.id == item.id }}">
+                  <td><a class="contact-link" href="{{ url_for('dashboard', view='scheduling', request=item.id, q=query, status=status) }}"><strong>{{ item.display_name or 'WhatsApp contact' }}</strong><small>•••• {{ item.sender[-4:] }}</small></a></td>
+                  <td>{{ 'Review proposal' if item.status == 'proposal_pending' else ('Book confirmed slot' if item.status in ['slot_confirmed','booking_pending'] else ('Awaiting contact reply' if item.status == 'awaiting_confirmation' else ('Provider attention' if item.status == 'failed' else 'View details'))) }}</td>
+                  <td>{{ item.requested_start }}<small>{{ item.duration_minutes }} minutes · {{ item.timezone }}</small></td>
+                  <td><span class="state {{ item.status }}">{{ item.status.replace('_',' ') }}</span></td>
+                  <td>{{ (item.confidence * 100)|round|int }}%</td>
+                  <td>
+                    {% if item.proposal_id and item.proposal_status in ['pending_approval','send_failed'] %}
+                    <form method="post" action="{{ url_for('action_send_proposal', proposal_id=item.proposal_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="row-action" type="submit">Review proposal</button></form>
+                    {% elif item.appointment_id and item.appointment_status in ['pending_approval','failed'] %}
+                    <form method="post" action="{{ url_for('action_book', appointment_id=item.appointment_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="row-action" type="submit">Book confirmed slot</button></form>
+                    {% elif item.google_event_link %}<a class="row-action" href="{{ item.google_event_link }}" rel="noreferrer">Open calendar</a>
+                    {% else %}<a class="row-action" href="{{ url_for('dashboard', view='scheduling', request=item.id) }}">View details</a>{% endif %}
+                  </td>
+                </tr>
+              {% else %}
+                <tr><td class="empty-row" colspan="6">No scheduling requests match this view. New verified WhatsApp messages will appear here.</td></tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          <div class="pagination"><span>Page {{ data.page }} · {{ data.total }} total</span><div>{% if data.page > 1 %}<a href="{{ url_for('dashboard', view='scheduling', page=data.page-1, q=query, status=status) }}">Previous</a>{% endif %}{% if data.page * data.per_page < data.total %}<a href="{{ url_for('dashboard', view='scheduling', page=data.page+1, q=query, status=status) }}">Next</a>{% endif %}</div></div>
+        </section>
+
+        <aside class="detail-rail" aria-label="Selected scheduling request">
+          {% if selected %}
+          <div class="detail-heading"><div><h2>{{ selected.display_name or 'WhatsApp contact' }}</h2><span>•••• {{ selected.sender[-4:] }}</span></div><span class="state {{ selected.status }}">{{ selected.status.replace('_',' ') }}</span></div>
+          <div class="detail-section"><h3>Conversation excerpt</h3><div class="conversation">{% for message in selected.messages %}<div class="message">{{ message.body }}<small>{{ message.received_at[:16].replace('T',' ') }}</small></div>{% endfor %}</div></div>
+          <div class="detail-section"><h3>Proposed time slots</h3><ol class="slot-list">{% for slot in selected.slots %}<li class="{{ 'chosen' if selected.selected_slot == loop.index0 }}"><span>{{ slot[:10] }}</span><strong>{{ slot[11:16] }}</strong></li>{% else %}<li>No slots available for this request.</li>{% endfor %}</ol></div>
+          <div class="detail-section consent"><h3>Consent &amp; timezone</h3><p><span class="check">✓</span>{{ selected.contact.consent_status.replace('_',' ')|title }}</p><p>Timezone: <strong>{{ selected.timezone }}</strong></p></div>
+          <div class="detail-section"><h3>Audit trail</h3><ol class="timeline">{% for event in selected.audit %}<li><time>{{ event.created_at[11:16] }}</time><span>{{ event.action.replace('.',' ') }}</span></li>{% else %}<li><span>No audit events recorded.</span></li>{% endfor %}</ol></div>
+          {% if selected.appointment_id and selected.appointment_status == 'booked' %}<form method="post" action="{{ url_for('action_cancel', appointment_id=selected.appointment_id) }}" class="danger-zone"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="danger-button" type="submit">Cancel appointment</button></form>{% endif %}
+          {% else %}<div class="empty-detail"><strong>No request selected</strong><span>Select a scheduling request to review its conversation, time slots, consent, and audit trail.</span></div>{% endif %}
+        </aside>
+      </div>
+
+      <section class="lower-panels">
+        <div><div class="section-title"><h2>Upcoming reminders</h2><span>{{ data.jobs|length }} need attention</span></div><ul class="compact-list">{% for job in data.jobs %}<li><span><strong>{{ job.job_type.replace('_',' ')|title }}</strong><small>{{ job.run_at[:16].replace('T',' ') }}</small></span><span class="state {{ job.status }}">{{ job.status.replace('_',' ') }}</span></li>{% else %}<li class="empty-row">No queued or manual reminders.</li>{% endfor %}</ul></div>
+        <div><div class="section-title"><h2>Recently completed bookings</h2><span>Calendar-backed</span></div><ul class="compact-list">{% for item in data['items'] if item.status == 'booked' %}<li><span><strong>{{ item.display_name or item.sender[-4:] }}</strong><small>{{ item.start_at[:16].replace('T',' ') if item.start_at else '' }}</small></span><span class="state booked">booked</span></li>{% else %}<li class="empty-row">No completed bookings in this page.</li>{% endfor %}</ul></div>
+      </section>
+
+      {% elif view == 'contacts' %}
+      <div class="page-heading"><div><h1>Contacts</h1><p>Maintain verified email, timezone, language, and consent before external calendar actions.</p></div></div>
+      <section class="wide-panel"><table class="queue-table"><thead><tr><th>WhatsApp contact</th><th>Name</th><th>Email</th><th>Timezone</th><th>Language</th><th>Consent</th><th>Save</th></tr></thead><tbody>{% for contact in contacts %}<tr><form method="post" action="{{ url_for('action_contact_update', contact_id=contact.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><td>•••• {{ contact.sender[-4:] }}</td><td><input name="display_name" value="{{ contact.display_name or '' }}" aria-label="Display name"></td><td><input name="email" value="{{ contact.email or '' }}" type="email" aria-label="Email"></td><td><input name="timezone" value="{{ contact.timezone }}" aria-label="Timezone"></td><td><select name="language" aria-label="Language"><option value="en" {{ 'selected' if contact.language == 'en' }}>English</option><option value="nl" {{ 'selected' if contact.language == 'nl' }}>Dutch</option></select></td><td><select name="consent_status" aria-label="Consent"><option value="implicit_inbound" {{ 'selected' if contact.consent_status == 'implicit_inbound' }}>Inbound consent</option><option value="confirmed" {{ 'selected' if contact.consent_status == 'confirmed' }}>Confirmed</option><option value="revoked" {{ 'selected' if contact.consent_status == 'revoked' }}>Revoked</option></select></td><td><button class="row-action" type="submit">Save</button></td></form></tr>{% else %}<tr><td class="empty-row" colspan="7">No contacts yet.</td></tr>{% endfor %}</tbody></table></section>
+
+      {% elif view == 'audit' %}
+      <div class="page-heading"><div><h1>Audit trail</h1><p>Immutable operator and provider event history for this workspace.</p></div></div>
+      <section class="wide-panel"><table class="queue-table"><thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Entity</th><th>Details</th></tr></thead><tbody>{% for event in audit %}<tr><td>{{ event.created_at[:19].replace('T',' ') }}</td><td>{{ event.actor }}</td><td>{{ event.action }}</td><td>{{ event.entity_type }} {{ event.entity_id or '' }}</td><td><code>{{ event.detail|tojson }}</code></td></tr>{% else %}<tr><td colspan="5" class="empty-row">No audit events yet.</td></tr>{% endfor %}</tbody></table></section>
+
+      {% elif view == 'settings' %}
+      <div class="page-heading"><div><h1>Settings &amp; readiness</h1><p>Configuration is environment-owned; this page reports truth without exposing secrets.</p></div></div>
+      <section class="settings-grid"><div class="settings-block"><h2>Runtime mode</h2><dl><dt>Environment</dt><dd>{{ mode }}</dd><dt>Workspace</dt><dd>{{ workspace_name }}</dd><dt>Timezone</dt><dd>{{ timezone_name }}</dd><dt>Storage encryption</dt><dd>{{ 'Enabled' if readiness.storage_encrypted else 'Not configured' }}</dd></dl></div><div class="settings-block"><h2>Readiness issues</h2><ul class="issue-list">{% for error in readiness.errors %}<li class="error">{{ error }}</li>{% endfor %}{% for warning in readiness.warnings %}<li>{{ warning }}</li>{% endfor %}{% if not readiness.errors and not readiness.warnings %}<li>No configuration issues detected.</li>{% endif %}</ul><a class="secondary-button" href="{{ url_for('google_connect') }}">Connect Google Calendar</a></div></section>
+
+      {% else %}
+      <div class="page-heading"><div><h1>Operator help</h1><p>The safe path from message to calendar event.</p></div></div>
+      <section class="help-layout"><ol><li><strong>Review detected intent.</strong><span>Check the conversation excerpt, proposed slots, timezone, and confidence.</span></li><li><strong>Send a proposal.</strong><span>The official WhatsApp Cloud API sends the reviewed time choices and booking link.</span></li><li><strong>Wait for contact confirmation.</strong><span>The contact replies with 1, 2, or 3, or confirms through the secure booking link.</span></li><li><strong>Book the confirmed slot.</strong><span>An idempotent Google Calendar event is created and the result is recorded.</span></li><li><strong>Handle reminder exceptions.</strong><span>Reminders outside the messaging window require an approved WhatsApp template or remain manual.</span></li></ol><div class="safety-note"><h2>Emergency behavior</h2><p>Pause automation to stop outbound messages, calendar changes, and reminder jobs. Signed inbound messages continue to be recorded so work can resume safely.</p></div></section>
+      {% endif %}
+    </main>
+  </div>
+</div>
+{% endblock %}
