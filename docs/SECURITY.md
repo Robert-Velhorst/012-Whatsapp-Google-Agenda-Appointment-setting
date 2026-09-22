@@ -7,6 +7,7 @@
 - API client -> operator API: constant-time bearer-token comparison.
 - Application -> Google/Meta: HTTPS provider endpoints through official client libraries/APIs.
 - Public booking link: 256-bit random bearer token stored encrypted and indexed only by SHA-256 hash; configurable expiry and proposal state prevent stale or post-confirmation reuse.
+- HAI metadata feed: direct client IP allowlist; forwarded headers never grant access, and loopback requests carrying `X-Forwarded-For` are denied so the local public tunnel cannot inherit loopback access.
 
 ## Sensitive storage
 

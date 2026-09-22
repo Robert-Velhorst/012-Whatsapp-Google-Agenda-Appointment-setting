@@ -27,6 +27,6 @@ When HAI runs in Docker Desktop, use `http://host.docker.internal:5000/api/integ
 
 ## Network boundary
 
-Agenda Relay evaluates the direct client address. When the direct peer is loopback, it also evaluates the first `X-Forwarded-For` address so an external ngrok request cannot inherit loopback trust. Requests outside `HAI_ALLOWED_NETWORKS` fail with 403; disabled feeds return 404. The feed is bounded to 500 records per request and 60 requests per minute per direct peer.
+Agenda Relay evaluates only the direct client address. It does not trust `X-Forwarded-For` for access control. If a loopback request includes that header, the feed denies it, which keeps requests arriving through the local ngrok proxy from inheriting loopback access. Requests outside `HAI_ALLOWED_NETWORKS` fail with 403; disabled feeds return 404. The feed is bounded to 500 records per request and 60 requests per minute per direct peer.
 
 For a same-host setup, keep HAI and Agenda Relay loopback-only. Do not add the HAI feed URL to an externally accessible source or allowlist a public network. HAI remains responsible for owner/workspace authorization and its own source retention policy.

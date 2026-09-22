@@ -22,6 +22,8 @@ def test_hai_feed_is_local_cursor_based_and_pii_minimized(tmp_path):
 
     denied = client.get("/api/integrations/hai/feed", headers={"X-Forwarded-For": "203.0.113.10"})
     assert denied.status_code == 403
+    spoofed_loopback = client.get("/api/integrations/hai/feed", headers={"X-Forwarded-For": "127.0.0.1"})
+    assert spoofed_loopback.status_code == 403
     first = client.get("/api/integrations/hai/feed")
     assert first.status_code == 200
     payload = first.get_json()
