@@ -90,6 +90,33 @@ class GoogleCalendar:
             day += timedelta(days=1)
         return slots
 
+    def is_slot_available(self, start_at: datetime, end_at: datetime) -> bool:
+        """Recheck one confirmed slot immediately before creating its event."""
+        if start_at.utcoffset() is None or end_at.utcoffset() is None or end_at <= start_at:
+            raise ValueError("Calendar availability requires a valid timezone-aware interval")
+        response = self._service().freebusy().query(body={
+            "timeMin": start_at.isoformat(),
+            "timeMax": end_at.isoformat(),
+            "timeZone": self.settings.timezone,
+            "items": [{"id": self.settings.google_calendar_id}],
+        }).execute()
+        calendar_data = response.get("calendars", {}).get(self.settings.google_calendar_id) if isinstance(response, dict) else None
+        if not isinstance(calendar_data, dict) or not isinstance(calendar_data.get("busy"), list):
+            raise CalendarUnavailable("Google Calendar did not return valid availability; the appointment was not booked.")
+        if calendar_data.get("errors"):
+            raise CalendarUnavailable(f"Google Calendar FreeBusy error: {calendar_data['errors']}")
+        for item in calendar_data["busy"]:
+            try:
+                busy_start = datetime.fromisoformat(item["start"])
+                busy_end = datetime.fromisoformat(item["end"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise CalendarUnavailable("Google Calendar returned an invalid busy interval; the appointment was not booked.") from exc
+            if busy_start.tzinfo is None or busy_end.tzinfo is None:
+                raise CalendarUnavailable("Google Calendar returned a timezone-free busy interval; the appointment was not booked.")
+            if start_at < busy_end and end_at > busy_start:
+                return False
+        return True
+
     def create_event(self, appointment: dict) -> dict:
         service = self._service()
         event_id = self._event_id(appointment["workspace_id"], appointment["id"])

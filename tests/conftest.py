@@ -27,6 +27,9 @@ class FakeCalendar:
             base += timedelta(days=1)
         return [base + timedelta(hours=index) for index in range(min(count, 3))]
 
+    def is_slot_available(self, start_at, end_at):
+        return True
+
     def create_event(self, appointment):
         self.created.append(dict(appointment))
         return {"id": f"event-{appointment['id']}", "htmlLink": f"https://calendar.google.com/event/{appointment['id']}"}

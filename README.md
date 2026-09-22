@@ -227,7 +227,7 @@ For HAI, enable the feed and configure an owner-scoped `json-feed` source using 
 
 - Intent analysis uses local English/Dutch rules, not a general language model. It recognizes scheduling keywords, some dates, weekdays and bounded durations; it does not reliably understand arbitrary negotiation, negation, time-of-day preferences, complex recurrence or travel constraints.
 - WhatsApp confirmation accepts a single explicit selection or supported affirmative phrase. Questions, multiple choices, refusals and incidental numbers are not confirmations. The public choice form is available for other phrasing.
-- Availability is queried during proposal generation. Missing calendar data stops suggestions. Slots are not held, and a final conflict recheck before event insertion is not implemented; another calendar writer can occupy a proposed slot before booking.
+- Availability is queried during proposal generation and rechecked immediately before event insertion. Missing or invalid calendar data stops booking. Google does not hold the slot between that check and insertion, so another calendar writer can still create a conflict in that small interval.
 - Only one configured calendar/workspace/operator is supported. There is no team authorization, multi-calendar intersection, billing, SSO, general import, or end-user rescheduling flow.
 - Reminders always use the configured template in the current worker. There is no delivery/read-status tracking, and provider API acceptance is not proof that a contact read a message.
 - Contact metadata and scheduling timestamps are not all field-encrypted. Use protected local storage and backups. Retention purging is not a complete deletion policy for every domain table; use explicit privacy operations as appropriate.

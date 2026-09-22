@@ -150,6 +150,13 @@ class SchedulingService:
             self.store.transition_request(self.settings.workspace_id, appointment["request_id"], "failed", actor, {"reason": "consent_revoked"})
             raise ValueError("Contact consent is revoked")
         try:
+            if not self.calendar.is_slot_available(
+                datetime.fromisoformat(appointment["start_at"]),
+                datetime.fromisoformat(appointment["end_at"]),
+            ):
+                raise CalendarUnavailable(
+                    "The selected time has since become busy. No calendar event was created; review the request and offer new times."
+                )
             event = self.calendar.create_event(appointment)
             self.store.mark_booked(self.settings.workspace_id, appointment_id, event["id"], event.get("htmlLink"))
         except Exception as exc:

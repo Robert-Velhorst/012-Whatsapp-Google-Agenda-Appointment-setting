@@ -1,6 +1,6 @@
 from dataclasses import replace
 from types import SimpleNamespace
-from datetime import date
+from datetime import date, datetime, timedelta
 import pytest
 
 from googleapiclient.errors import HttpError
@@ -53,3 +53,12 @@ def test_missing_availability_is_not_treated_as_free(app_bundle, response):
     calendar._service = lambda: SimpleNamespace(freebusy=lambda: SimpleNamespace(query=lambda **kw: SimpleNamespace(execute=lambda: response)))
     with pytest.raises(CalendarUnavailable):
         calendar.free_slots(date(2030, 1, 7), 30)
+
+
+@pytest.mark.parametrize("busy,expected", [([], True), ([{"start": "2030-01-07T10:00:00+01:00", "end": "2030-01-07T10:30:00+01:00"}], False)])
+def test_confirmed_slot_availability_recheck(app_bundle, busy, expected):
+    app, _, _ = app_bundle
+    calendar = GoogleCalendar(app.extensions["settings"])
+    calendar._service = lambda: SimpleNamespace(freebusy=lambda: SimpleNamespace(query=lambda **kw: SimpleNamespace(execute=lambda: {"calendars": {"primary": {"busy": busy}}})))
+    start = datetime.fromisoformat("2030-01-07T10:00:00+01:00")
+    assert calendar.is_slot_available(start, start + timedelta(minutes=30)) is expected

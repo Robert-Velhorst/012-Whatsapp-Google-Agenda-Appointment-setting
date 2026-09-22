@@ -1,4 +1,7 @@
+import pytest
+
 from .conftest import post_webhook, webhook
+from scheduler.calendar import CalendarUnavailable
 
 
 def test_message_to_proposal_to_confirmation_to_calendar_event(app_bundle, auth_headers):
@@ -29,6 +32,24 @@ def test_message_to_proposal_to_confirmation_to_calendar_event(app_bundle, auth_
     repeat = client.post(f"/api/appointments/{item['appointment_id']}/book", headers=auth_headers)
     assert repeat.status_code == 200 and repeat.get_json()["idempotent"] is True
     assert len(calendar.created) == 1
+
+
+def test_booking_does_not_create_event_if_selected_slot_is_now_busy(app_bundle):
+    app, calendar, _ = app_bundle
+    client = app.test_client()
+    post_webhook(client, webhook())
+    item = app.extensions["store"].dashboard("default")["items"][0]
+    app.extensions["scheduling"].send_proposal(item["proposal_id"])
+    post_webhook(client, webhook("wamid.2", body="1"))
+    item = app.extensions["store"].dashboard("default")["items"][0]
+    calendar.is_slot_available = lambda start, end: False
+
+    with pytest.raises(CalendarUnavailable, match="selected time has since become busy"):
+        app.extensions["scheduling"].book_appointment(item["appointment_id"])
+
+    assert calendar.created == []
+    appointment = app.extensions["store"].get_appointment("default", item["appointment_id"])
+    assert appointment["status"] == "failed"
 
 
 def test_public_booking_link_requires_consent(app_bundle, auth_headers):

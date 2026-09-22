@@ -1,5 +1,12 @@
 # Codex worklog
 
+## 2026-09-23 - Recheck availability before booking
+
+- Added a strict Google FreeBusy check for the exact contact-confirmed interval immediately before event insertion. Busy slots, provider errors, malformed responses, and missing availability fail closed before creating an event.
+- A conflict marks booking for operator attention and reports that new times must be offered; it does not silently substitute another slot after the contact chose a specific time.
+- The check cannot reserve the interval atomically; a separate calendar writer could still book during the short check-to-insert interval.
+- Verification: all 56 local tests pass; Python compilation and `git diff --check` pass.
+
 ## 2026-09-07 - Local executable and setup improvement
 
 - Added `AgendaRelay.exe --setup` and `python -m scheduler.cli setup` to create an operator password hash and independent random secrets without overwriting existing settings.
