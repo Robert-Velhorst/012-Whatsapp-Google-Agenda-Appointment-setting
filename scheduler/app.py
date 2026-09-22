@@ -251,9 +251,9 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
         except KeyError:
             abort(404)
         except ValueError as exc:
-            return render_template("booking.html", proposal={"status": "expired"}, token=token, timezone_name=settings.timezone, display_slots=[], error=str(exc)), 410
+            return render_template("booking.html", proposal={"status": "expired"}, token=token, timezone_name=settings.timezone, display_slots=[], error=str(exc), auto_book_confirmed=settings.auto_book_confirmed and not scheduling.is_paused()), 410
         timezone_name = proposal.get("contact_timezone") or settings.timezone
-        return render_template("booking.html", proposal=proposal, token=token, timezone_name=timezone_name, display_slots=booking_slots(proposal))
+        return render_template("booking.html", proposal=proposal, token=token, timezone_name=timezone_name, display_slots=booking_slots(proposal), auto_book_confirmed=settings.auto_book_confirmed and not scheduling.is_paused())
 
     @app.post("/book/<token>")
     def booking_confirm(token: str):
@@ -261,14 +261,14 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             abort(403)
         try:
             slot_index = int(request.form.get("slot", "-1"))
-            appointment_id = scheduling.confirm_public(token, slot_index, request.form.get("consent") == "yes")
-            return render_template("booking_complete.html", appointment_id=appointment_id)
+            result = scheduling.confirm_public(token, slot_index, request.form.get("consent") == "yes")
+            return render_template("booking_complete.html", appointment_id=result["appointment_id"], booked=result["booked"], warning=result["warning"])
         except KeyError:
             abort(404)
         except Exception as exc:
             proposal = store.get_proposal_by_token(token)
             timezone_name = (proposal or {}).get("contact_timezone") or settings.timezone
-            return render_template("booking.html", proposal=proposal, token=token, timezone_name=timezone_name, display_slots=booking_slots(proposal), error=str(exc)), 400
+            return render_template("booking.html", proposal=proposal, token=token, timezone_name=timezone_name, display_slots=booking_slots(proposal), error=str(exc), auto_book_confirmed=settings.auto_book_confirmed and not scheduling.is_paused()), 400
 
     @app.get("/webhook/whatsapp")
     def verify_webhook():

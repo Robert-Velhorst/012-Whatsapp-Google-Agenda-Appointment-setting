@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 
 from .conftest import post_webhook, webhook
@@ -69,7 +71,53 @@ def test_public_booking_link_requires_consent(app_bundle, auth_headers):
     assert rejected.status_code == 400
     accepted = client.post(f"/book/{token}", data={"csrf_token": csrf, "slot": "0", "consent": "yes"})
     assert accepted.status_code == 200
-    assert b"Your time is confirmed" in accepted.data
+    assert b"Your selection was received" in accepted.data
+    assert b"operator will add it" in accepted.data
+
+
+def test_busy_public_slot_does_not_consume_proposal(app_bundle):
+    app, calendar, _ = app_bundle
+    client = app.test_client()
+    post_webhook(client, webhook())
+    store = app.extensions["store"]
+    item = store.dashboard("default")["items"][0]
+    app.extensions["scheduling"].send_proposal(item["proposal_id"])
+    proposal = store.get_proposal("default", item["proposal_id"])
+    client.get(f"/book/{proposal['booking_token']}")
+    with client.session_transaction() as current:
+        csrf = current["csrf_token"]
+    app.extensions["scheduling"].settings = replace(app.extensions["settings"], auto_book_confirmed=True)
+    calendar.is_slot_available = lambda start, end: False
+
+    response = client.post(f"/book/{proposal['booking_token']}", data={"csrf_token": csrf, "slot": "0", "consent": "yes"})
+
+    assert response.status_code == 400
+    assert b"choose another of the proposed times" in response.data
+    assert store.get_proposal("default", item["proposal_id"])["status"] == "sent"
+    assert store.dashboard("default")["items"][0].get("appointment_id") is None
+
+
+def test_public_auto_booking_reports_calendar_and_whatsapp_result(app_bundle):
+    app, calendar, whatsapp = app_bundle
+    client = app.test_client()
+    post_webhook(client, webhook())
+    store = app.extensions["store"]
+    item = store.dashboard("default")["items"][0]
+    app.extensions["scheduling"].send_proposal(item["proposal_id"])
+    proposal = store.get_proposal("default", item["proposal_id"])
+    client.get(f"/book/{proposal['booking_token']}")
+    with client.session_transaction() as current:
+        csrf = current["csrf_token"]
+    app.extensions["scheduling"].settings = replace(app.extensions["settings"], auto_book_confirmed=True)
+
+    response = client.post(f"/book/{proposal['booking_token']}", data={"csrf_token": csrf, "slot": "0", "consent": "yes"})
+
+    assert response.status_code == 200
+    assert b"Your appointment is confirmed" in response.data
+    assert b"added to the Google Calendar" in response.data
+    assert b"sent through WhatsApp" in response.data
+    assert len(calendar.created) == 1
+    assert len(whatsapp.sent) == 2
 
 
 def test_public_booking_link_expires(app_bundle):

@@ -111,19 +111,33 @@ class SchedulingService:
             self.store.mark_proposal_manual_required(self.settings.workspace_id, proposal_id, str(exc))
             raise
 
-    def confirm_public(self, token: str, slot_index: int, consent: bool) -> int:
+    def confirm_public(self, token: str, slot_index: int, consent: bool) -> dict[str, Any]:
         proposal = self.public_proposal(token)
         if not consent:
             raise ValueError("Consent is required before confirming a slot")
+        if slot_index < 0 or slot_index >= len(proposal["slots"]):
+            raise ValueError("Selected slot is outside proposal")
+        if self.settings.auto_book_confirmed and not self.is_paused():
+            start_at = datetime.fromisoformat(proposal["slots"][slot_index])
+            end_at = start_at + timedelta(minutes=int(proposal["duration_minutes"]))
+            if not self.calendar.is_slot_available(start_at, end_at):
+                raise CalendarUnavailable(
+                    "That time has just become unavailable. Please choose another of the proposed times."
+                )
         self.store.update_contact(
             proposal["workspace_id"], proposal["contact_id"], display_name=proposal.get("display_name"),
             email=proposal.get("email"), timezone_name=proposal.get("contact_timezone") or self.settings.timezone, language=proposal.get("language", "en"),
             consent_status="confirmed",
         )
         appointment_id = self.store.confirm_proposal(proposal["workspace_id"], proposal["id"], slot_index, "booking_link")
+        booking_result = None
         if self.settings.auto_book_confirmed and not self.is_paused():
-            self.book_appointment(appointment_id, actor="automation")
-        return appointment_id
+            booking_result = self.book_appointment(appointment_id, actor="automation")
+        return {
+            "appointment_id": appointment_id,
+            "booked": bool(booking_result and booking_result.get("status") == "booked"),
+            "warning": booking_result.get("warning") if booking_result else None,
+        }
 
     def public_proposal(self, token: str) -> dict:
         proposal = self.store.get_proposal_by_token(token)
