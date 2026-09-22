@@ -6,6 +6,8 @@
 - Browser -> operator actions: password-hash login, HttpOnly SameSite session cookie, one-hour lifetime, CSRF on state changes.
 - API client -> operator API: constant-time bearer-token comparison.
 - Application -> Google/Meta: HTTPS provider endpoints through official client libraries/APIs.
+- Meta webhook messages: valid app-secret HMAC plus exact match to the configured WhatsApp phone-number ID before message processing.
+- Container image and Compose services default to production configuration checks; weak/short data-encryption keys are rejected before use.
 - Public booking link: 256-bit random bearer token stored encrypted and indexed only by SHA-256 hash; configurable expiry and proposal state prevent stale or post-confirmation reuse.
 - HAI metadata feed: direct client IP allowlist; forwarded headers never grant access, and loopback requests carrying `X-Forwarded-For` are denied so the local public tunnel cannot inherit loopback access.
 

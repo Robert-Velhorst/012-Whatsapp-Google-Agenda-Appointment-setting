@@ -10,6 +10,23 @@ def test_production_configuration_fails_closed(tmp_path):
         create_app({"app_env": "production", "database_path": tmp_path / "db.sqlite", "public_base_url": "http://localhost"})
 
 
+def test_production_rejects_short_encryption_key(tmp_path):
+    with pytest.raises(RuntimeError, match="DATA_ENCRYPTION_KEY must be at least 64 characters"):
+        create_app({
+            "app_env": "production",
+            "database_path": tmp_path / "db.sqlite",
+            "public_base_url": "https://agenda.example",
+            "flask_secret_key": "f" * 64,
+            "admin_api_token": "a" * 64,
+            "admin_password_hash": "hash",
+            "data_encryption_key": "short-passphrase",
+            "whatsapp_verify_token": "v" * 64,
+            "whatsapp_app_secret": "s" * 64,
+            "whatsapp_access_token": "t" * 64,
+            "whatsapp_phone_number_id": "123",
+        })
+
+
 def test_api_requires_authentication(app_bundle):
     app, _, _ = app_bundle
     response = app.test_client().get("/api/requests")

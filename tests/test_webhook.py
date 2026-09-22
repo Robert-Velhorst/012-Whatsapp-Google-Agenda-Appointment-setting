@@ -33,6 +33,19 @@ def test_webhook_is_idempotent_and_creates_reviewable_proposal(app_bundle, auth_
     assert whatsapp.sent == []
 
 
+def test_webhook_ignores_messages_for_another_phone_number(app_bundle, auth_headers):
+    app, _, whatsapp = app_bundle
+    payload = webhook()
+    payload["entry"][0]["changes"][0]["value"]["metadata"]["phone_number_id"] = "another-number"
+
+    response = post_webhook(app.test_client(), payload)
+
+    assert response.status_code == 200
+    assert response.get_json()["ignored"] == 1
+    assert app.test_client().get("/api/requests", headers=auth_headers).get_json()["total"] == 0
+    assert whatsapp.sent == []
+
+
 def test_pause_records_message_but_stops_processing(app_bundle):
     app, _, _ = app_bundle
     store = app.extensions["store"]

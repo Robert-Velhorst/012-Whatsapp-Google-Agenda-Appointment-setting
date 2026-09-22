@@ -163,6 +163,8 @@ class Settings:
                 errors.append("ADMIN_PASSWORD_HASH is required in production")
             if not self.data_encryption_key:
                 errors.append("DATA_ENCRYPTION_KEY is required in production")
+            elif len(self.data_encryption_key) < 64:
+                errors.append("DATA_ENCRYPTION_KEY must be at least 64 characters; generate it with the setup command")
             if provider_missing:
                 errors.append("All WhatsApp and Google provider settings are required in production")
             if self.google_client_secrets_file and not Path(self.google_client_secrets_file).is_file():

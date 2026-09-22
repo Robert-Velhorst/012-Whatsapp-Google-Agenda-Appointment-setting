@@ -62,6 +62,7 @@ def signed(raw: bytes, secret: str = "test-app-secret") -> str:
 def webhook(message_id="wamid.1", sender="31612345678", body="Could we schedule a 30 minute call tomorrow?", name="Emma de Vries"):
     return {
         "entry": [{"changes": [{"value": {
+            "metadata": {"phone_number_id": "123"},
             "contacts": [{"wa_id": sender, "profile": {"name": name}}],
             "messages": [{"id": message_id, "from": sender, "timestamp": "1786000000", "type": "text", "text": {"body": body}}],
         }}]}]

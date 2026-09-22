@@ -25,8 +25,12 @@ class SchedulingService:
         for entry in payload.get("entry", []):
             for change in entry.get("changes", []):
                 value = change.get("value", {})
+                messages = value.get("messages", [])
+                if messages and str(value.get("metadata", {}).get("phone_number_id", "")) != str(self.settings.whatsapp_phone_number_id):
+                    result["ignored"] += len(messages)
+                    continue
                 names = {item.get("wa_id"): item.get("profile", {}).get("name") for item in value.get("contacts", [])}
-                for message in value.get("messages", []):
+                for message in messages:
                     if message.get("type") != "text":
                         result["ignored"] += 1
                         continue

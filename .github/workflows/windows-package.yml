@@ -31,6 +31,7 @@ jobs:
       - run: python -m venv .venv
       - run: .\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-build.txt pip-audit==2.9.0
       - run: .\.venv\Scripts\python.exe -m pip_audit -r requirements.lock
+      - run: .\.venv\Scripts\python.exe -m pip_audit -r requirements-build.txt
       - run: .\.venv\Scripts\python.exe -m pytest -q
       - shell: powershell
         run: .\windows\Build-Windows.ps1

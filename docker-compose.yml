@@ -9,6 +9,7 @@ services:
       - ./data:/app/data
       - ${GOOGLE_CLIENT_SECRETS_FILE_HOST:-./credentials.json}:/run/secrets/google-client.json:ro
     environment:
+      APP_ENV: production
       GOOGLE_CLIENT_SECRETS_FILE: /run/secrets/google-client.json
     read_only: true
     tmpfs:
@@ -24,6 +25,7 @@ services:
       - ./data:/app/data
       - ${GOOGLE_CLIENT_SECRETS_FILE_HOST:-./credentials.json}:/run/secrets/google-client.json:ro
     environment:
+      APP_ENV: production
       GOOGLE_CLIENT_SECRETS_FILE: /run/secrets/google-client.json
     read_only: true
     tmpfs:

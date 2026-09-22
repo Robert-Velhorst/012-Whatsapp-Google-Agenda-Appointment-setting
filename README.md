@@ -94,7 +94,7 @@ docker compose build
 docker compose up -d
 ```
 
-The Compose stack runs separate web and reminder-worker processes, mounts persistent data, uses read-only containers, and binds the app to localhost. Put an HTTPS reverse proxy in front of it before registering a Meta webhook.
+The Compose stack forces production-mode validation for both web and reminder-worker processes, mounts persistent data, uses read-only containers, and binds the app to localhost. It will refuse to start until `.env` contains production-strength secrets, encryption key, and provider configuration. Put an HTTPS reverse proxy in front of it before registering a Meta webhook.
 
 ## HAI connector
 

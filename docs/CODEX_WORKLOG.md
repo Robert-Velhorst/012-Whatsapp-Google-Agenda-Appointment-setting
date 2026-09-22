@@ -8,6 +8,8 @@
 - Verification: all 58 local tests pass; Python compilation and `git diff --check` pass.
 - Public booking now checks availability before consuming a selected proposal, keeps the link usable if the slot is busy, and reports whether calendar booking and WhatsApp confirmation actually completed. Focused public-flow checks pass.
 - Hardened the optional HAI feed so forwarded headers cannot grant loopback access; requests through a loopback-bound public tunnel are denied. Added spoofed-loopback regression coverage. Full local suite remains 58 passing.
+- Bound signed inbound WhatsApp messages to the configured phone-number ID so messages from another number subscribed to the same Meta app are ignored; added a regression test.
+- Made Docker image and Compose services production-fail-closed by default, rejected short production encryption keys, and extended the Windows workflow's dependency audit to include build requirements.
 - The current WhatsApp channel remains Meta Cloud API and does not support a personal WhatsApp inbox. A personal-account workflow still needs Robert's choice of a supported assisted flow or a business-number integration; unofficial web-session automation is not being added.
 - Security review found that proxied login failures share the loopback rate-limit bucket, so five failed attempts can temporarily block other ngrok visitors. This remains a deployment limitation until a trustworthy per-client identity or non-lockout throttle is chosen.
 
