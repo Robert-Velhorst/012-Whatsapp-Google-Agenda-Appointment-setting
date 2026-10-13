@@ -13,7 +13,6 @@
 3. Team roles, SSO, per-user sessions, and per-workspace credentials are not implemented.
 4. WhatsApp delivery/read status webhooks are not stored.
 5. Rescheduling an already-booked event is available at provider-adapter level but not exposed as a reviewed UI state machine.
-6. Contact deletion is API-only and should gain a re-authenticated confirmation UI.
 7. PostgreSQL/distributed locks are required before multi-instance worker deployment.
 
 ## Roadmap

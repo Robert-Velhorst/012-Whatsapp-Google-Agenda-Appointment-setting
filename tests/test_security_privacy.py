@@ -142,6 +142,24 @@ def test_browser_login_rejects_external_next_redirect(app_bundle):
     assert response.headers["Location"] == "/"
 
 
+@pytest.mark.parametrize("next_url", ["/\\attacker.example/steal", "/\r//attacker.example/steal"])
+def test_browser_login_rejects_backslash_or_control_character_redirect(app_bundle, next_url):
+    app, _, _ = app_bundle
+    client = app.test_client()
+    client.get("/login")
+    with client.session_transaction() as current:
+        csrf = current["csrf_token"]
+
+    response = client.post(
+        "/login",
+        query_string={"next": next_url},
+        data={"csrf_token": csrf, "password": "correct horse battery staple"},
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == "/"
+
+
 def test_browser_login_throttles_repeated_failures(app_bundle):
     app, _, _ = app_bundle
     client = app.test_client()

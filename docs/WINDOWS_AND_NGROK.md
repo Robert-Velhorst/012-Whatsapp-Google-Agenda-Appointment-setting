@@ -14,7 +14,9 @@ The source distribution also includes guided launchers:
 
 The source launcher refuses to start if its port is already occupied. Runtime state, SQLite data, and logs stay below `data/` and are excluded from Git. The packaged executable is built and smoke-tested by `.github/workflows/windows-package.yml` on version tags and manual runs.
 
-## Public HTTPS through ngrok
+## Local testing and operator acceptance through ngrok
+
+This tunnel is an optional way to test public booking links and complete Google OAuth while the application runs on a Windows computer. It is not production hosting or an approved production ingress path. Hetzner is the production target; do not use ngrok for production.
 
 Install and authenticate the current ngrok agent, then assign a stable domain to this application. Configure:
 
@@ -31,7 +33,7 @@ All production secrets, Google client JSON, operator password hash, and encrypti
 .\windows\Start-Ngrok.ps1
 ```
 
-The launcher refuses public exposure unless production configuration and the selected integration mode pass the protected local `public_ingress` check. When WhatsApp Cloud API is enabled, valid webhook credentials are required. When it is disabled, no WhatsApp webhook is accepted and the tunnel supports the assisted personal flow and private booking links. When Google OAuth is not connected, ingress is allowed only while automation is paused so the operator can complete consent safely. The ordinary scheduling readiness endpoint remains false until Google is connected and automation is resumed. Test real Google Calendar access and public booking-link reachability before using the workflow.
+The launcher refuses public exposure unless production-mode configuration and the selected integration mode pass the protected local `public_ingress` check. Production-mode configuration here is a safety gate, not an indication that this is production deployment. When WhatsApp Cloud API is enabled, valid webhook credentials are required. When it is disabled, no WhatsApp webhook is accepted and the tunnel supports the assisted personal flow and private booking links without Meta credentials. When Google OAuth is not connected, ingress is allowed only while automation is paused so the operator can complete consent safely. The ordinary scheduling readiness endpoint remains false until Google is connected and automation is resumed. Test real Google Calendar access and public booking-link reachability before using the workflow.
 
 The launcher requires the operator API token to read this local ingress check; it does not send that token through ngrok. It uses a project-specific local inspector port, verifies the exact assigned HTTPS URL, calls the public health endpoint, and records the verified process before reporting success. Stop only this tunnel with `.\windows\Stop-Ngrok.ps1`.
 

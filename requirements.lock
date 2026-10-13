@@ -29,7 +29,7 @@ pycparser==3.0
 pyparsing==3.3.2
 pytest==9.0.3
 python-dateutil==2.9.0.post0
-python-dotenv==1.2.2
+python-dotenv==1.2.4
 requests==2.33.0
 requests-oauthlib==2.0.0
 six==1.17.0

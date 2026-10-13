@@ -29,7 +29,7 @@ Create a consistent backup with `python -m scheduler.cli backup --output C:\secu
 
 ## Privacy request
 
-Export the contact first when requested. Deletion is intentionally API-only because it is destructive; authenticate with the admin bearer token and issue `DELETE /api/contacts/<id>`. Verify the contact no longer appears and retain the minimal deletion audit event.
+Export the contact first when requested. For human operator deletion, use the browser Contacts page: the action requires the signed-in operator session, CSRF protection, and a fresh current-password check, and is rate-limited. It is refused while the contact has unresolved appointments; cancel or resolve those first. The bearer-authenticated `DELETE /api/contacts/<id>` endpoint is available to authorized API clients and does not provide the browser's password reauthentication step, so do not use it as the routine human workflow. Verify successful deletion and retain only the minimal deletion audit event.
 
 ## Incident support bundle
 

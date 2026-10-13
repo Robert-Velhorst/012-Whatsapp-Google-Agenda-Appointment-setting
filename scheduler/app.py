@@ -77,8 +77,9 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
         return bool(supplied and expected and secrets.compare_digest(supplied, expected))
 
     def safe_next_url(candidate: str | None) -> str:
-        if candidate and candidate.startswith("/") and not candidate.startswith("//"):
-            return candidate
+        if candidate and "\\" not in candidate and not any(ord(char) < 0x20 or ord(char) == 0x7F for char in candidate):
+            if candidate.startswith("/") and not candidate.startswith("//"):
+                return candidate
         if candidate:
             parsed = urlsplit(candidate)
             if parsed.scheme in {"http", "https"} and parsed.netloc == request.host:
