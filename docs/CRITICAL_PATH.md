@@ -14,7 +14,7 @@ When automation is paused, signed inbound messages are still recorded but no pro
 
 ## 2. Detect appointment intent
 
-The local deterministic provider inspects up to twelve recent sender messages. It recognizes Dutch and English scheduling language, explicit/tomorrow/weekday dates, bounded durations, language, title, and confidence. Conversation text never leaves the process for AI analysis.
+The local deterministic provider parses each inbound message independently, recognizing Dutch and English scheduling language, explicit/tomorrow/weekday dates, bounded durations, language, title, and confidence. It does not reuse older messages as a trigger or source of appointment details: unrelated follow-ups cannot create another proposal, and a new request cannot inherit a stale date. Stored conversation context remains available to the operator for review, but conversation-level stitching/debounce is not implemented. Text never leaves the process for AI analysis.
 
 ## 3. Propose slots
 

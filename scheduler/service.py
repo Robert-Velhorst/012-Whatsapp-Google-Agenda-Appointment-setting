@@ -105,9 +105,8 @@ class SchedulingService:
                             if self.settings.auto_book_confirmed:
                                 self.book_appointment(appointment_id, actor="automation")
                             continue
-                    history = "\n".join(item["body"] for item in self.store.recent_messages(self.settings.workspace_id, sender))
                     local_today = datetime.now(ZoneInfo(self.settings.timezone)).date()
-                    intent = self.intent_provider.analyse(history, local_today, self.settings.default_duration_minutes)
+                    intent = self.intent_provider.analyse(body, local_today, self.settings.default_duration_minutes)
                     if not intent.is_scheduling:
                         result["ignored"] += 1
                         continue

@@ -1,4 +1,7 @@
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import pytest
 
 from .conftest import post_webhook, signed, webhook
@@ -93,6 +96,37 @@ def test_webhook_is_idempotent_and_creates_reviewable_proposal(app_bundle, auth_
     assert requests["items"][0]["status"] == "proposal_pending"
     assert requests["items"][0]["proposal_status"] == "pending_approval"
     assert whatsapp.sent == []
+
+
+def test_unrelated_followup_does_not_reuse_old_scheduling_intent(app_bundle, auth_headers):
+    app, _, _ = app_bundle
+    client = app.test_client()
+
+    first = post_webhook(client, webhook())
+    followup = post_webhook(client, webhook(message_id="wamid.thanks", body="Thanks!"))
+
+    assert first.get_json()["proposals"] == 1
+    assert followup.get_json()["proposals"] == 0
+    assert followup.get_json()["ignored"] == 1
+    assert client.get("/api/requests", headers=auth_headers).get_json()["total"] == 1
+
+    new_request = post_webhook(
+        client, webhook(message_id="wamid.second-request", body="Could we schedule another call next week?")
+    )
+    assert new_request.get_json()["proposals"] == 1
+    assert client.get("/api/requests", headers=auth_headers).get_json()["total"] == 2
+
+
+def test_new_request_does_not_inherit_an_old_message_date(app_bundle):
+    app, _, _ = app_bundle
+    client = app.test_client()
+
+    post_webhook(client, webhook(body="Could we schedule a 30 minute call on 25/10/2026?"))
+    post_webhook(client, webhook(message_id="wamid.new-date", body="Could we schedule another call?"))
+
+    items = app.extensions["store"].dashboard("default")["items"]
+    expected_date = datetime.now(ZoneInfo("Europe/Amsterdam")).date().isoformat()
+    assert items[0]["requested_start"] == expected_date
 
 
 def test_webhook_ignores_messages_for_another_phone_number(app_bundle, auth_headers):

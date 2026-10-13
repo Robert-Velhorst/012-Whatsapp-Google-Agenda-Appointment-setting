@@ -22,7 +22,7 @@ def test_hai_feed_is_local_cursor_based_and_pii_minimized(tmp_path):
     app.config["TESTING"] = True
     client = app.test_client()
     post_webhook(client, webhook(body="Private message from Emma about a confidential appointment"))
-    post_webhook(client, webhook(message_id="wamid.2", body="Another private request from Emma"))
+    post_webhook(client, webhook(message_id="wamid.2", body="Could we schedule another private appointment?"))
 
     denied = client.get("/api/integrations/hai/feed", headers={"X-Forwarded-For": "203.0.113.10"})
     assert denied.status_code == 403

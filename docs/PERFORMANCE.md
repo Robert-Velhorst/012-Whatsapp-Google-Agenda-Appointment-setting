@@ -48,6 +48,8 @@ Three consecutive runs of `python -m scripts.benchmark --records 1000 --reads 50
 
 Write throughput and tail latency vary across repeat runs on the same host, which is why the table reports a range and not a performance guarantee. Re-run on the deployment machine under representative load before sizing or making latency commitments.
 
+An additional three serial runs on 2026-10-13 produced 134–564 writes/second, 0.593–0.664 ms dashboard median, 0.777–1.289 ms dashboard p95, 4.720–6.608 ms for a 500-item HAI page, and 0.48 MiB traced Python peak. The large write-throughput spread versus the earlier sample is a reason to profile under controlled, representative host load before drawing a capacity conclusion; do not treat either sample as a stable throughput guarantee. The benchmark database is temporary and does not touch the operator's configured database.
+
 Calendar availability uses one Google FreeBusy query for the full 21-day search window and filters returned busy ranges against local business hours. In the regression scenario with two weeks of full weekdays, this reduced the provider-call count from 11 per-day queries to one batched query. Booking still performs a separate final availability check before event insertion. The call-count result is a deterministic test, not a live Google latency benchmark.
 
 The executable's larger idle footprint comes from bundled Python and provider libraries. For horizontal scaling, multiple operators, or sustained write concurrency, move persistence and rate/job coordination to PostgreSQL rather than sharing the SQLite file across machines.
