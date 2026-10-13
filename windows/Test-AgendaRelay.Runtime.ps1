@@ -37,4 +37,31 @@ Assert-Equal (Get-AgendaRelayRuntimeAction -WebOwned $true -WorkerOwned $true -H
 Assert-Equal (Get-AgendaRelayRuntimeAction -WebOwned $true -WorkerOwned $false -HealthOk $false) 'unhealthy' 'Unhealthy web handling'
 Assert-Equal (Get-AgendaRelayRuntimeAction -WebOwned $false -WorkerOwned $true -HealthOk $false) 'start' 'Stale or reused web PID handling'
 
-Write-Host 'Agenda Relay source-launcher identity and recovery checks passed.'
+$ngrokRoot = Join-Path $env:TEMP 'Agenda Relay ngrok identity test'
+$ngrokExecutable = Join-Path $ngrokRoot 'tools\ngrok.exe'
+$ngrokConfig = Join-Path $ngrokRoot 'private config\ngrok.yml'
+$ngrokAgentConfig = Join-Path $ngrokRoot 'data\runtime\ngrok-agent.yml'
+$ngrokRuntime = [pscustomobject]@{
+    executablePath = $ngrokExecutable
+    configPath = $ngrokConfig
+    agentConfigPath = $ngrokAgentConfig
+    domain = 'agenda.example.ngrok.app'
+    port = 5000
+}
+$ngrokProcess = [pscustomobject]@{
+    ExecutablePath = $ngrokExecutable
+    CommandLine = '"ngrok.exe" "http" "--config=' + $ngrokConfig + '" "--config=' + $ngrokAgentConfig + '" "--url=agenda.example.ngrok.app" "http://127.0.0.1:5000" "--log=stdout" "--log-format=json"'
+}
+$wrongNgrokDomain = [pscustomobject]@{
+    ExecutablePath = $ngrokExecutable
+    CommandLine = '"ngrok.exe" "http" "--config=' + $ngrokConfig + '" "--config=' + $ngrokAgentConfig + '" "--url=another.example.ngrok.app" "http://127.0.0.1:5000"'
+}
+$unrelatedNgrok = [pscustomobject]@{
+    ExecutablePath = 'C:\Other\ngrok.exe'
+    CommandLine = '"ngrok.exe" "http" "--url=agenda.example.ngrok.app" "http://127.0.0.1:5000"'
+}
+Assert-Equal (Test-AgendaRelayNgrokProcessIdentity -Process $ngrokProcess -Runtime $ngrokRuntime -Root $ngrokRoot) $true 'Owned ngrok process'
+Assert-Equal (Test-AgendaRelayNgrokProcessIdentity -Process $wrongNgrokDomain -Runtime $ngrokRuntime -Root $ngrokRoot) $false 'Other ngrok endpoint'
+Assert-Equal (Test-AgendaRelayNgrokProcessIdentity -Process $unrelatedNgrok -Runtime $ngrokRuntime -Root $ngrokRoot) $false 'Unrelated ngrok executable'
+
+Write-Host 'Agenda Relay source-launcher and ngrok process identity checks passed.'

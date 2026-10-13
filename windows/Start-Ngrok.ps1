@@ -4,7 +4,10 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
-if (-not (Get-Command ngrok.exe -ErrorAction SilentlyContinue)) { throw "ngrok is not installed. Install it with: winget install Ngrok.Ngrok" }
+Import-Module (Join-Path $PSScriptRoot 'AgendaRelay.Runtime.psm1') -Force
+$ngrokCommand = Get-Command ngrok.exe -ErrorAction SilentlyContinue
+if (-not $ngrokCommand) { throw "ngrok is not installed. Install it with: winget install Ngrok.Ngrok" }
+$ngrokExecutable = [IO.Path]::GetFullPath($ngrokCommand.Source)
 Get-Content -LiteralPath ".env" | ForEach-Object { if ($_ -match '^\s*([^#][A-Za-z0-9_]*)=(.*)$') { [Environment]::SetEnvironmentVariable($matches[1], $matches[2], "Process") } }
 if ($env:APP_ENV -ne "production") { throw "Public tunnelling requires APP_ENV=production." }
 if (-not $env:NGROK_DOMAIN) { throw "Set NGROK_DOMAIN to an assigned ngrok domain." }
@@ -30,12 +33,34 @@ $runtime = Join-Path $Root "data\runtime"; $logs = Join-Path $Root "data\logs"
 New-Item -ItemType Directory -Force -Path $runtime,$logs | Out-Null
 $agentConfig = Join-Path $runtime "ngrok-agent.yml"
 @("version: 3", "agent:", "  web_addr: 127.0.0.1:$inspectorPort") | Set-Content -LiteralPath $agentConfig -Encoding ascii
+$agentConfig = [IO.Path]::GetFullPath($agentConfig)
+$baseConfig = [IO.Path]::GetFullPath($baseConfig)
 $ngrokLog = Join-Path $logs "ngrok.log"
 $ngrokError = Join-Path $logs "ngrok.err.log"
 Set-Content -LiteralPath $ngrokLog -Value "" -NoNewline
 Set-Content -LiteralPath $ngrokError -Value "" -NoNewline
-$process = Start-Process -FilePath "ngrok.exe" -ArgumentList @('http',"--config=$baseConfig","--config=$agentConfig","--url=$($env:NGROK_DOMAIN)","http://127.0.0.1:$port",'--log=stdout','--log-format=json') -WorkingDirectory $Root -RedirectStandardOutput $ngrokLog -RedirectStandardError $ngrokError -WindowStyle Hidden -PassThru
+$arguments = @('http',"--config=$baseConfig","--config=$agentConfig","--url=$($env:NGROK_DOMAIN)","http://127.0.0.1:$port",'--log=stdout','--log-format=json')
+$argumentLine = ($arguments | ForEach-Object { '"' + $_.Replace('"', '\"') + '"' }) -join ' '
+$process = Start-Process -FilePath $ngrokExecutable -ArgumentList $argumentLine -WorkingDirectory $Root -RedirectStandardOutput $ngrokLog -RedirectStandardError $ngrokError -WindowStyle Hidden -PassThru
+$runtimeState = [pscustomobject]@{
+    pid = $process.Id
+    publicUrl = $null
+    startedAt = (Get-Date).ToUniversalTime().ToString('o')
+    executablePath = $ngrokExecutable
+    configPath = $baseConfig
+    agentConfigPath = $agentConfig
+    domain = $env:NGROK_DOMAIN
+    port = $port
+}
 try {
+    $startedProcess = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$($process.Id)" -ErrorAction SilentlyContinue
+    if (-not $startedProcess -or [IO.Path]::GetFileName([string]$startedProcess.ExecutablePath) -ine 'ngrok.exe') {
+        throw "The started process could not be verified as ngrok; public endpoint setup was stopped."
+    }
+    $runtimeState.executablePath = [IO.Path]::GetFullPath([string]$startedProcess.ExecutablePath)
+    if (-not (Test-AgendaRelayNgrokProcessIdentity -Process $startedProcess -Runtime $runtimeState -Root $Root)) {
+        throw "The started process command did not match the requested ngrok endpoint."
+    }
     $public = $null
     $startupTimer = [Diagnostics.Stopwatch]::StartNew()
     while ($startupTimer.Elapsed.TotalSeconds -lt 45) {
@@ -56,9 +81,12 @@ try {
     if (-not $readiness.ready) {
         Write-Warning "The HTTPS ingress is verified, but scheduling readiness is not green. Complete Google OAuth if it is disconnected, run the real-provider acceptance checks, and keep automation paused until verified."
     }
-    @{ pid=$process.Id; publicUrl=$public; startedAt=(Get-Date).ToUniversalTime().ToString('o') } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $runtime "ngrok.json") -Encoding utf8
+    $runtimeState.publicUrl = $public
+    $runtimeState | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $runtime "ngrok.json") -Encoding utf8
 } catch {
-    Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+    try {
+        if (-not $process.HasExited) { $process.Kill(); $process.WaitForExit(5000) }
+    } catch { Write-Warning "Could not confirm cleanup of the ngrok process created by this launcher; inspect its state before retrying." }
     throw
 }
 Write-Host "Verified public URL: $public"

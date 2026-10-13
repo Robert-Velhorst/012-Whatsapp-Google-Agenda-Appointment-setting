@@ -6,6 +6,13 @@
 - Strengthened `tests/test_hai_integration.py` to assert a multi-item snapshot is not replayed when HAI returns the unchanged cursor, while a later request is delivered incrementally. This protects an existing correct invariant; no production code change was needed.
 - Focused HAI tests passed (5); the full local suite passed (112).
 
+## 2026-10-14 - Validate ngrok process ownership before stop
+
+- Replaced PID/name-only tunnel shutdown with exact executable and command checks for the saved ngrok configuration, assigned domain, isolated inspector configuration, and loopback target.
+- The start failure cleanup now uses the same ownership check; argument quoting preserves config paths containing spaces. Stop waits for confirmed exit and retains runtime state if the owned tunnel remains.
+- Added self-checks for the owned tunnel, a different ngrok domain, and an unrelated ngrok executable. They passed under PowerShell 7 and Windows PowerShell 5.1; all eight Windows PowerShell scripts parsed under PowerShell 7.
+- No live tunnel was started: this checkout still has no `.env` or provider credentials.
+
 ## 2026-10-14 - Validate Windows launcher recovery and package
 
 - Added exact executable/command identity validation for recorded web and worker PIDs, health-gated detection of an already-running app, safe missing-worker recovery, and fail-closed shutdown state handling.
