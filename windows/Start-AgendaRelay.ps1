@@ -58,7 +58,12 @@ if (Test-Path -LiteralPath $state) {
         if (-not (Get-AgendaRelayProcess -ProcessId $restartedWorker.Id -Root $Root -Role worker)) {
             throw "The existing web server is healthy, but the due-job worker failed to start. Review data\logs\worker.err.log. The web server was left running."
         }
-        @{ webPid=$oldWebPid; workerPid=$restartedWorker.Id; port=$oldPort; startedAt=$old.startedAt } | ConvertTo-Json | Set-Content -LiteralPath $state -Encoding utf8
+        try {
+            @{ webPid=$oldWebPid; workerPid=$restartedWorker.Id; port=$oldPort; startedAt=$old.startedAt } | ConvertTo-Json | Set-Content -LiteralPath $state -Encoding utf8
+        } catch {
+            if (Get-AgendaRelayProcess -ProcessId $restartedWorker.Id -Root $Root -Role worker) { Stop-Process -Id $restartedWorker.Id -Force -ErrorAction SilentlyContinue }
+            throw "The due-job worker was restarted but its runtime state could not be saved. The new worker was stopped; review permissions on data\runtime and try again."
+        }
         Write-Host "Agenda Relay was already running; its missing due-job worker has been restarted at http://127.0.0.1:$oldPort"
         if ($OpenBrowser) { Start-Process "http://127.0.0.1:$oldPort" }
         return
