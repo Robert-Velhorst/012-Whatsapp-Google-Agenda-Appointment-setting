@@ -37,10 +37,10 @@ Assert-Equal (Get-AgendaRelayRuntimeAction -WebOwned $true -WorkerOwned $true -H
 Assert-Equal (Get-AgendaRelayRuntimeAction -WebOwned $true -WorkerOwned $false -HealthOk $false) 'unhealthy' 'Unhealthy web handling'
 Assert-Equal (Get-AgendaRelayRuntimeAction -WebOwned $false -WorkerOwned $true -HealthOk $false) 'start' 'Stale or reused web PID handling'
 
-$ngrokRoot = Join-Path $env:TEMP 'Agenda Relay ngrok identity test'
-$ngrokExecutable = Join-Path $ngrokRoot 'tools\ngrok.exe'
-$ngrokConfig = Join-Path $ngrokRoot 'private config\ngrok.yml'
-$ngrokAgentConfig = Join-Path $ngrokRoot 'data\runtime\ngrok-agent.yml'
+$ngrokRoot = [IO.Path]::GetFullPath((Join-Path $env:TEMP 'Agenda Relay ngrok identity test'))
+$ngrokExecutable = [IO.Path]::GetFullPath((Join-Path $ngrokRoot 'tools\ngrok.exe'))
+$ngrokConfig = [IO.Path]::GetFullPath((Join-Path $ngrokRoot 'private config\ngrok.yml'))
+$ngrokAgentConfig = [IO.Path]::GetFullPath((Join-Path $ngrokRoot 'data\runtime\ngrok-agent.yml'))
 $ngrokRuntime = [pscustomobject]@{
     executablePath = $ngrokExecutable
     configPath = $ngrokConfig
@@ -60,8 +60,6 @@ $unrelatedNgrok = [pscustomobject]@{
     ExecutablePath = 'C:\Other\ngrok.exe'
     CommandLine = '"ngrok.exe" "http" "--url=agenda.example.ngrok.app" "http://127.0.0.1:5000"'
 }
-Write-Host "Synthetic ngrok config path: $([IO.Path]::GetFullPath($ngrokConfig))"
-Write-Host "Synthetic ngrok command line: $($ngrokProcess.CommandLine)"
 Assert-Equal (Test-AgendaRelayNgrokProcessIdentity -Process $ngrokProcess -Runtime $ngrokRuntime -Root $ngrokRoot -Verbose) $true 'Owned ngrok process'
 Assert-Equal (Test-AgendaRelayNgrokProcessIdentity -Process $wrongNgrokDomain -Runtime $ngrokRuntime -Root $ngrokRoot) $false 'Other ngrok endpoint'
 Assert-Equal (Test-AgendaRelayNgrokProcessIdentity -Process $unrelatedNgrok -Runtime $ngrokRuntime -Root $ngrokRoot) $false 'Unrelated ngrok executable'
