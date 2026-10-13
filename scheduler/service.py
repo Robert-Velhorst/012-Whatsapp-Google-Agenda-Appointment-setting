@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import secrets
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -121,6 +121,7 @@ class SchedulingService:
                     except Exception as exc:  # noqa: BLE001 - Google provider SDK errors are not a stable shared exception type.
                         self.store.transition_request(self.settings.workspace_id, request_id, "failed", "scheduler", {"provider": "google_calendar", "error": str(exc)[:200]})
                         continue
+                    slots = self._usable_calendar_slots(slots, intent.requested_start, intent.duration_minutes)
                     if not slots:
                         self.store.transition_request(self.settings.workspace_id, request_id, "needs_clarification", "scheduler", {"reason": "no_slots_in_search_window"})
                         continue
@@ -163,6 +164,7 @@ class SchedulingService:
                 {"provider": "google_calendar", "error": str(exc)[:200]},
             )
             raise
+        slots = self._usable_calendar_slots(slots, intent.requested_start, intent.duration_minutes)
         if not slots:
             self.store.transition_request(
                 self.settings.workspace_id, request_id, "needs_clarification", "assisted_personal",
@@ -179,6 +181,41 @@ class SchedulingService:
             "proposal", proposal_id, {"text_retained": False, "source": "operator_paste"},
         )
         return proposal_id
+
+    def _usable_calendar_slots(self, slots, requested_start, duration_minutes: int) -> list[datetime]:
+        """Fail closed on provider slots outside the requested, configured booking window."""
+        if not isinstance(slots, (list, tuple)):
+            return []
+        zone = ZoneInfo(self.settings.timezone)
+        now = datetime.now(zone)
+        window_end = requested_start + timedelta(days=21)
+        unique: dict[str, datetime] = {}
+        for slot in slots:
+            if not isinstance(slot, datetime):
+                continue
+            try:
+                if slot.utcoffset() is None:
+                    continue
+                local_slot = slot.astimezone(zone)
+            except (OverflowError, ValueError):
+                continue
+            if local_slot < now or local_slot.date() < requested_start or local_slot.date() >= window_end:
+                continue
+            if local_slot.weekday() >= 5:
+                continue
+            opening = datetime.combine(
+                local_slot.date(),
+                time(self.settings.business_hours_start),
+                tzinfo=zone,
+            )
+            closing = datetime.combine(local_slot.date(), datetime.min.time(), tzinfo=zone) + timedelta(
+                hours=self.settings.business_hours_end
+            )
+            slot_end = local_slot + timedelta(minutes=duration_minutes)
+            if local_slot < opening or slot_end > closing:
+                continue
+            unique[local_slot.astimezone(UTC).isoformat()] = local_slot
+        return sorted(unique.values(), key=lambda value: value.astimezone(UTC))[:3]
 
     def send_proposal(self, proposal_id: int, actor: str = "operator") -> dict:
         if self.is_paused():

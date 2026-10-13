@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime, time, timedelta
+from zoneinfo import ZoneInfo
+
+import pytest
+
 
 def signed_in_client(app):
     client = app.test_client()
@@ -127,6 +132,44 @@ def test_assisted_path_rejects_non_scheduling_and_missing_calendar_without_creat
     assert response.status_code == 302
     assert b"Google Calendar is not connected" in client.get(response.headers["Location"]).data
     assert app.extensions["store"].dashboard("default")["total"] == 0
+
+
+def test_assisted_proposal_filters_invalid_calendar_slots(app_bundle):
+    app, calendar, _ = app_bundle
+    service = app.extensions["scheduling"]
+    settings = app.extensions["settings"]
+    zone = ZoneInfo(settings.timezone)
+    today = datetime.now(zone).date()
+    requested_start = service.intent_provider.analyse("Schedule a 30 minute call next week", today, 30).requested_start
+    valid_slot = datetime.combine(requested_start, time(10), tzinfo=zone)
+    calendar.free_slots = lambda *_args: [
+        datetime.combine(requested_start - timedelta(days=1), time(10), tzinfo=zone),
+        datetime.combine(requested_start, time(8), tzinfo=zone),
+        valid_slot,
+        datetime.combine(requested_start + timedelta(days=22), time(11), tzinfo=zone),
+    ]
+
+    proposal_id = service.create_assisted_proposal("Schedule a 30 minute call next week")
+
+    proposal = app.extensions["store"].get_proposal("default", proposal_id)
+    assert proposal["slots"] == [valid_slot.isoformat()]
+
+
+def test_assisted_proposal_rejects_naive_calendar_slot(app_bundle):
+    app, calendar, _ = app_bundle
+    service = app.extensions["scheduling"]
+    zone = ZoneInfo(app.extensions["settings"].timezone)
+    requested_start = service.intent_provider.analyse(
+        "Schedule a 30 minute call next week",
+        datetime.now(zone).date(),
+        30,
+    ).requested_start
+    calendar.free_slots = lambda *_args: [datetime.combine(requested_start, time(10))]
+
+    with pytest.raises(ValueError, match="No suitable times"):
+        service.create_assisted_proposal("Schedule a 30 minute call next week")
+
+    assert app.extensions["store"].dashboard("default")["items"][0]["status"] == "needs_clarification"
 
 
 def test_assisted_posts_require_operator_session_and_csrf(app_bundle):

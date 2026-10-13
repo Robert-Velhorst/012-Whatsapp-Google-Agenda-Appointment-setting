@@ -1,5 +1,5 @@
 
-from datetime import datetime
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -127,6 +127,27 @@ def test_new_request_does_not_inherit_an_old_message_date(app_bundle):
     items = app.extensions["store"].dashboard("default")["items"]
     expected_date = datetime.now(ZoneInfo("Europe/Amsterdam")).date().isoformat()
     assert items[0]["requested_start"] == expected_date
+
+
+def test_webhook_does_not_propose_calendar_slots_before_requested_start(app_bundle):
+    app, calendar, whatsapp = app_bundle
+    zone = ZoneInfo("Europe/Amsterdam")
+    today = datetime.now(zone).date()
+    requested_start = app.extensions["scheduling"].intent_provider.analyse(
+        "Schedule a 30 minute call next week", today, 30
+    ).requested_start
+    calendar.free_slots = lambda *_args: [
+        datetime.combine(requested_start - timedelta(days=1), time(10), tzinfo=zone)
+    ]
+
+    response = post_webhook(
+        app.test_client(),
+        webhook(body="Schedule a 30 minute call next week"),
+    )
+
+    assert response.get_json()["proposals"] == 0
+    assert whatsapp.sent == []
+    assert app.extensions["store"].dashboard("default")["items"][0]["status"] == "needs_clarification"
 
 
 def test_webhook_ignores_messages_for_another_phone_number(app_bundle, auth_headers):
