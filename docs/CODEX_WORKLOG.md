@@ -1,5 +1,13 @@
 # Codex worklog
 
+## 2026-10-14 - Sanitize API exceptions and verify assisted flow in browser
+
+- Reproduced CodeQL's exception-disclosure path with a traceback-bearing HAI error. API exception handlers now return stable client-safe messages while preserving error codes and HTTP statuses; the regression proves traceback and filesystem path details are absent.
+- Corrected the fake Calendar adapter to honor its requested start date and added a critical-path assertion that no proposed slot precedes that date. The assertion failed against the old fake, then passed with the corrected fixture.
+- Full local suite: 116 passed. Focused HAI suite: 6 passed. Browser QA with synthetic provider fixtures verified sign-in, assisted proposal rendering, expected weekday/date/time slots, and a pre-share booking-link 404. At emulated 390px mobile, document width matched viewport; console was clean and CSS/favicon returned 200.
+- Current benchmark run (1,000 records/500 reads): 497.3 writes/second, 1.386 ms dashboard p95, 4.681 ms for 500 HAI items, 0.49 MiB traced Python peak. This is one variable local sample, not a capacity guarantee or a measured optimization.
+- Commits `e8b59d1` and `442fce6` are pushed to PR #13; exact-head verification, Windows package, Python/actions analysis, and CodeQL passed, with no new CodeQL alerts. No live Google, WhatsApp, HAI, or ngrok operation was attempted.
+
 ## 2026-10-14 - Lock HAI incremental cursor behavior
 
 - Verified the HAI `json-feed` cursor watermark against the connector implementation: the initial bounded snapshot is reversed into ascending order before its newest timestamp/ID is encoded as `nextCursor`.
