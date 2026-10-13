@@ -220,6 +220,7 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             audit=store.recent_audit(settings.workspace_id, 200) if view == "audit" else [],
             mode=settings.app_env, workspace_name=settings.workspace_name, operator_name=settings.operator_name,
             timezone_name=settings.timezone, query=query, status=status,
+            google_oauth_configured=bool(settings.google_client_secrets_file and os.path.isfile(settings.google_client_secrets_file)),
         )
 
     @app.post("/actions/assisted/analyze")
@@ -444,7 +445,11 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
     @app.get("/api/google/connect")
     @admin_required
     def google_connect():
-        if not settings.google_client_secrets_file or not os.path.exists(settings.google_client_secrets_file):
+        if not settings.google_client_secrets_file or not os.path.isfile(settings.google_client_secrets_file):
+            message = "Google OAuth is not configured. Set GOOGLE_CLIENT_SECRETS_FILE to your Google OAuth web client JSON file outside the repository, then restart Agenda Relay."
+            if session.get("operator_authenticated"):
+                flash(message, "error")
+                return redirect(url_for("dashboard", view="settings"))
             return _error("google_credentials_missing", "GOOGLE_CLIENT_SECRETS_FILE is not configured or does not exist", 400)
         state = secrets.token_urlsafe(32)
         session["google_oauth_state"] = state
