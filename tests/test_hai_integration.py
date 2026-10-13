@@ -1,3 +1,5 @@
+import pytest
+
 from .conftest import post_webhook, webhook
 
 
@@ -50,4 +52,46 @@ def test_hai_feed_rejects_invalid_cursor(tmp_path):
     response = app.test_client().get("/api/integrations/hai/feed?cursor=not-a-cursor")
     assert response.status_code == 400
     assert response.get_json()["error"]["code"] == "invalid_cursor"
+    app.extensions["store"].close()
+
+
+@pytest.mark.parametrize("automation_paused", [True, False])
+def test_public_ingress_allows_google_oauth_bootstrap_only_while_automation_is_paused(tmp_path, automation_paused):
+    from scheduler.app import create_app
+    from .conftest import FakeWhatsApp
+
+    class DisconnectedCalendar:
+        def connected(self):
+            return False
+
+    google_client = tmp_path / "google-client.json"
+    google_client.write_text("{}", encoding="utf-8")
+    app = create_app({
+        "app_env": "production",
+        "database_path": tmp_path / "ingress.sqlite3",
+        "public_base_url": "https://agenda.example.ngrok.app",
+        "flask_secret_key": "f" * 40,
+        "admin_api_token": "a" * 40,
+        "admin_password_hash": "configured-password-hash",
+        "data_encryption_key": "e" * 64,
+        "whatsapp_verify_token": "v" * 32,
+        "whatsapp_app_secret": "s" * 32,
+        "whatsapp_access_token": "t" * 32,
+        "whatsapp_phone_number_id": "123456789",
+        "google_client_secrets_file": str(google_client),
+        "automation_paused": automation_paused,
+    }, calendar=DisconnectedCalendar(), whatsapp=FakeWhatsApp())
+
+    readiness = app.extensions["scheduling"].readiness()
+    assert readiness["ready"] is False  # OAuth is incomplete and automation is paused.
+    assert readiness["providers"]["google_calendar"]["ready"] is False
+    assert readiness["automation_paused"] is automation_paused
+    assert readiness["public_ingress"]["ready"] is automation_paused
+    if not automation_paused:
+        assert "pause automation" in readiness["public_ingress"]["detail"]
+    client = app.test_client()
+    assert client.get("/api/operator/readiness").status_code == 401
+    response = client.get("/api/operator/readiness", headers={"Authorization": "Bearer " + "a" * 40})
+    assert response.status_code == 200
+    assert response.get_json()["public_ingress"]["ready"] is automation_paused
     app.extensions["store"].close()

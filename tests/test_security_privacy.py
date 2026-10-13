@@ -34,6 +34,33 @@ def test_api_requires_authentication(app_bundle):
     assert response.get_json()["error"]["code"] == "authentication_required"
 
 
+def test_audit_api_clamps_negative_limit(app_bundle, auth_headers):
+    app, _, _ = app_bundle
+    store = app.extensions["store"]
+    for index in range(3):
+        store.audit("default", "test", f"audit-{index}", "test")
+
+    response = app.test_client().get("/api/audit?limit=-1", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert len(response.get_json()) == 1
+
+
+def test_requests_api_clamps_page_to_available_results(app_bundle, auth_headers):
+    app, _, _ = app_bundle
+    store = app.extensions["store"]
+    contact_id = store.upsert_contact("default", "31600000002", "Europe/Amsterdam")
+    for index in range(3):
+        store.create_request("default", contact_id, f"pagination-{index}", f"Request {index}", 30, "Europe/Amsterdam", "2026-10-13", 0.8)
+
+    response = app.test_client().get("/api/requests?page=" + ("9" * 1000) + "&per_page=2", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.get_json()["page"] == 2
+    assert response.get_json()["total"] == 3
+    assert len(response.get_json()["items"]) == 1
+
+
 def test_browser_login_and_csrf(app_bundle):
     app, _, _ = app_bundle
     client = app.test_client()
@@ -44,6 +71,23 @@ def test_browser_login_and_csrf(app_bundle):
     assert client.post("/login", data={"csrf_token": csrf, "password": "correct horse battery staple"}).status_code == 302
     assert client.get("/").status_code == 200
     assert client.post("/actions/automation/toggle").status_code == 403
+
+
+def test_automation_cannot_resume_before_providers_are_ready(app_bundle):
+    app, _, _ = app_bundle
+    client = app.test_client()
+    app.extensions["calendar"].connected = lambda: False
+    app.extensions["whatsapp"].configured = lambda: False
+    app.extensions["store"].set_state("default", "automation_paused", "true", "test")
+    with client.session_transaction() as current:
+        current["operator_authenticated"] = True
+        current["csrf_token"] = "valid-test-csrf"
+
+    response = client.post("/actions/automation/toggle", data={"csrf_token": "valid-test-csrf"})
+
+    assert response.status_code == 302
+    assert app.extensions["scheduling"].is_paused() is True
+    assert b"Automation cannot resume until setup issues are resolved" in client.get("/").data
 
 
 def test_browser_login_rejects_external_next_redirect(app_bundle):

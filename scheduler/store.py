@@ -468,7 +468,8 @@ class Store:
             args.append(status)
         where_sql = " AND ".join(where)
         with self.connect() as db:
-            total = db.execute(f"SELECT COUNT(*) FROM scheduling_requests r JOIN contacts c ON c.id=r.contact_id WHERE {where_sql}", args).fetchone()[0]
+            total = int(db.execute(f"SELECT COUNT(*) FROM scheduling_requests r JOIN contacts c ON c.id=r.contact_id WHERE {where_sql}", args).fetchone()[0])
+            page = min(page, max(1, (total + per_page - 1) // per_page))
             rows = db.execute(
                 f"SELECT r.*,c.sender,c.display_name,c.email,c.consent_status,p.id proposal_id,p.status proposal_status,p.slots_json,p.selected_slot,a.id appointment_id,a.status appointment_status,a.start_at,a.google_event_link "
                 f"FROM scheduling_requests r JOIN contacts c ON c.id=r.contact_id LEFT JOIN proposals p ON p.request_id=r.id LEFT JOIN appointments a ON a.request_id=r.id "
@@ -550,8 +551,9 @@ class Store:
         return request_data
 
     def recent_audit(self, workspace_id: str, limit: int = 100) -> list[dict[str, Any]]:
+        bounded_limit = min(max(limit, 1), 500)
         with self.connect() as db:
-            rows = db.execute("SELECT * FROM audit_events WHERE workspace_id=? ORDER BY id DESC LIMIT ?", (workspace_id, min(limit, 500))).fetchall()
+            rows = db.execute("SELECT * FROM audit_events WHERE workspace_id=? ORDER BY id DESC LIMIT ?", (workspace_id, bounded_limit)).fetchall()
         return [self._audit_row(row) for row in rows]
 
     def contacts(self, workspace_id: str, query: str = "") -> list[dict[str, Any]]:
@@ -597,9 +599,18 @@ class Store:
         cutoff = (utc_now() - timedelta(days=retention_days)).isoformat()
         with self.connect() as db:
             cursor = db.execute("DELETE FROM inbound_messages WHERE workspace_id=? AND received_at<?", (workspace_id, cutoff))
-            db.execute("DELETE FROM rate_events WHERE workspace_id=? AND created_at<?", (workspace_id, cutoff))
+            rate_cursor = db.execute("DELETE FROM rate_events WHERE workspace_id=? AND created_at<?", (workspace_id, cutoff))
         count = cursor.rowcount
-        self.audit(workspace_id, "worker", "privacy.retention_purge", "workspace", workspace_id, {"messages_deleted": count, "cutoff": cutoff})
+        rate_count = rate_cursor.rowcount
+        if count or rate_count:
+            self.audit(
+                workspace_id,
+                "worker",
+                "privacy.retention_purge",
+                "workspace",
+                workspace_id,
+                {"messages_deleted": count, "rate_events_deleted": rate_count, "cutoff": cutoff},
+            )
         return count
 
     @staticmethod

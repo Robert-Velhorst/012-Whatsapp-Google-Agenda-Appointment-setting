@@ -36,10 +36,10 @@ Status is evidence-based as of 2026-08-09. `Implemented` means locally wired and
 | 029 | Web security | Implemented | CSP, HSTS production, no-store, anti-frame/sniff/referrer |
 | 030 | Secret management/rotation | Partial | Env/secret mounts and docs; no external vault integration |
 | 031 | One-command local development | Implemented | README/Makefile/locked environment commands |
-| 032 | Docker/deployment | Partial | Hardened non-root image and Windows executable verified; no authorized live provider deployment |
+| 032 | Docker/deployment | Partial | Hardened non-root image and Windows executable verified; protected ngrok ingress now supports paused Google OAuth bootstrap; no authorized live provider deployment |
 | 033 | Migrations/rollback safety | Implemented | Forward ledger, backup/restore, pre-restore copy |
 | 034 | CLI/doctor | Implemented | Migrate, doctor, worker, backup, restore, bundle, hash commands |
-| 035 | Health/readiness | Implemented | Public minimal and protected detailed readiness |
+| 035 | Health/readiness | Implemented | Public minimal and protected detailed scheduling/ingress readiness |
 | 036 | Operator diagnostics | Implemented | Settings readiness, audit, doctor, redacted support bundle |
 | 037 | Demo mode labelling | Implemented | Development/test mode visibly labelled and guarded |
 | 038 | Fake provider lab | Implemented | Test-only fake Calendar/WhatsApp fixtures |
@@ -108,7 +108,7 @@ Status is evidence-based as of 2026-08-09. `Implemented` means locally wired and
 | 101 | Support bundle | Implemented | Redacted CLI bundle excludes PII/secrets |
 | 102 | Retention/archive policy | Implemented | Configured purge, backup policy, privacy docs |
 | 103 | Prototype-to-production | Partial | Guards/Docker/ops complete; real deployment/security validation blocked |
-| 104 | Emergency controls | Implemented | Persistent pause and inbound record-only behavior |
+| 104 | Emergency controls | Implemented | Persistent pause and inbound record-only behavior; resume is blocked until required integrations are ready |
 | 105 | First-run onboarding | Partial | Login/readiness/help guide; no multi-step credential wizard |
 | 106 | Roles/team permissions | Partial | Single operator only; no teams/RBAC |
 | 107 | Quality/confidence | Implemented | Deterministic confidence stored and displayed |
@@ -120,6 +120,13 @@ Status is evidence-based as of 2026-08-09. `Implemented` means locally wired and
 | 113 | Regression baseline | Implemented | Automated suite covers critical invariants |
 | 114 | Maintenance/refactoring | Implemented | Layered modules and debt register replace flat prototype |
 | 115 | Human-operator readiness | Partial | Usable dashboard/runbook; authorized real-provider rehearsal blocked |
+
+## Targeted follow-up — 2026-10-13
+
+- Closed a Windows/ngrok OAuth bootstrap deadlock: the tunnel launcher now uses the protected `public_ingress` readiness contract. Google OAuth may be disconnected only while automation is paused; full production configuration and signed WhatsApp webhook settings must already validate.
+- Closed an unsafe resume path: the operator action cannot resume automation while configuration errors or provider disconnections remain.
+- Regression evidence: `tests/test_hai_integration.py` covers paused/unpaused OAuth bootstrap and authenticated readiness; `tests/test_security_privacy.py` covers the refused resume and visible error message. Full suite: 66 passed; dependency audit and consistency checks passed; PowerShell parser accepted `windows/Start-Ngrok.ps1`.
+- No ngrok tunnel or live provider action was run. Live exposure, Google consent, Meta callback, and the end-to-end provider acceptance matrix remain external gates.
 
 ## Overall verdict
 

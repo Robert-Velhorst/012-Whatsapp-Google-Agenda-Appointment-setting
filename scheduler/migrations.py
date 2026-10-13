@@ -79,6 +79,10 @@ MIGRATIONS: list[tuple[int, str]] = [
     (4, """
         CREATE INDEX IF NOT EXISTS idx_jobs_stale ON background_jobs(workspace_id, status, updated_at);
     """),
+    (5, """
+        CREATE INDEX IF NOT EXISTS idx_messages_retention ON inbound_messages(workspace_id, received_at);
+        CREATE INDEX IF NOT EXISTS idx_rate_retention ON rate_events(workspace_id, created_at);
+    """),
 ]
 
 

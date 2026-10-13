@@ -46,6 +46,39 @@ def test_google_token_write_is_atomic_and_encrypted(app_bundle, tmp_path):
     assert list(token_path.parent.glob("*.tmp")) == []
 
 
+def test_free_slots_uses_one_batched_freebusy_query_for_search_window(app_bundle):
+    app, _, _ = app_bundle
+    calendar = GoogleCalendar(app.extensions["settings"])
+    start_day = date(2030, 1, 7)  # Monday
+    busy = []
+    for offset in range(14):
+        day = start_day + timedelta(days=offset)
+        if day.weekday() < 5:
+            busy.append({
+                "start": f"{day.isoformat()}T09:00:00+01:00",
+                "end": f"{day.isoformat()}T17:00:00+01:00",
+            })
+    calls = []
+
+    class FreeBusy:
+        def query(self, *, body):
+            calls.append(body)
+            return SimpleNamespace(execute=lambda: {"calendars": {"primary": {"busy": busy}}})
+
+    calendar._service = lambda: SimpleNamespace(freebusy=lambda: FreeBusy())
+
+    slots = calendar.free_slots(start_day, 30)
+
+    assert len(calls) == 1
+    assert calls[0]["timeMin"] == "2030-01-07T00:00:00+01:00"
+    assert calls[0]["timeMax"] == "2030-01-28T00:00:00+01:00"
+    assert [slot.isoformat() for slot in slots] == [
+        "2030-01-21T09:00:00+01:00",
+        "2030-01-21T09:30:00+01:00",
+        "2030-01-21T10:00:00+01:00",
+    ]
+
+
 @pytest.mark.parametrize("response", [{}, {"calendars": {}}, {"calendars": {"primary": {}}}])
 def test_missing_availability_is_not_treated_as_free(app_bundle, response):
     app, _, _ = app_bundle

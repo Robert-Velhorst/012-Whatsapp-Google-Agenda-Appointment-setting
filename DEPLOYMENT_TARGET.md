@@ -1,7 +1,9 @@
-
-
 # Deployment target
 
-Hetzner is the target for production deployment. New production deployments must be prepared for Hetzner. Existing Vercel or ngrok production use must be inventoried and migrated to Hetzner before being retired; do not claim a migration or cutover until the running service, data, secrets, security controls, backups, and rollback path have been verified.
+For this project, the required cloud-access mode is the single-operator Windows 11 application exposed through the operator's assigned ngrok HTTPS domain. The ngrok tunnel is a transport for the app's signed WhatsApp provider webhook and Google OAuth callback; it is not a general-purpose public access path.
 
-Preserve local development and test tooling when it is still needed, but do not use Vercel or ngrok for new production deployments. Document the Hetzner architecture, required infrastructure, deployment steps, data and database migration, DNS/TLS, secrets, monitoring, backups, and rollback in the project deployment guide before cutover. Keep credentials and private data out of this file.
+The deployment remains single-host and single-instance. Do not describe it as highly available or suitable for horizontally scaled SaaS. Before opening the tunnel, require `APP_ENV=production`, strong non-default secrets, configured provider credentials, a valid exact `PUBLIC_BASE_URL`, a dedicated ngrok inspector port bound to loopback, and a passing authenticated `public_ingress` readiness check. Verify the assigned HTTPS hostname and public health response before registering provider callbacks.
+
+Keep the HAI JSON feed local and owner-scoped. Never expose it through ngrok or another public tunnel; use loopback or a narrowly allowlisted local Docker Desktop gateway as documented in [HAI integration](docs/HAI_INTEGRATION.md).
+
+The ngrok account, assigned domain, available endpoint slot, provider credentials and approvals, and real-account acceptance are operator-controlled external requirements. No tunnel, provider account, or Google Calendar event is considered live-ready until the operator completes and verifies those steps.
