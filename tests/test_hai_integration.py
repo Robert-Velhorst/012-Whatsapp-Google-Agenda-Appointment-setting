@@ -17,7 +17,7 @@ def test_hai_feed_is_local_cursor_based_and_pii_minimized(tmp_path):
         "app_env": "test", "database_path": tmp_path / "hai.sqlite3", "flask_secret_key": "test-secret",
         "admin_api_token": "test-token", "data_encryption_key": "test-encryption", "whatsapp_app_secret": "test-app-secret",
         "whatsapp_access_token": "token", "whatsapp_phone_number_id": "123", "hai_connector_enabled": True,
-        "hai_allowed_networks": "127.0.0.1/32", "hai_feed_page_size": 1,
+        "hai_allowed_networks": "127.0.0.1/32", "hai_feed_page_size": 2,
     }, calendar=FakeCalendar(), whatsapp=FakeWhatsApp())
     app.config["TESTING"] = True
     client = app.test_client()
@@ -32,18 +32,24 @@ def test_hai_feed_is_local_cursor_based_and_pii_minimized(tmp_path):
     assert first.status_code == 200
     payload = first.get_json()
     assert set(payload) == {"items", "nextCursor", "cursor"}
-    assert len(payload["items"]) == 1 and payload["nextCursor"]
+    assert len(payload["items"]) == 2 and payload["nextCursor"]
     assert payload["cursor"] == payload["nextCursor"]
     serialized = first.get_data(as_text=True)
     assert "31612345678" not in serialized
     assert "Private message from Emma" not in serialized
-    item = payload["items"][0]
+    assert [item["metadata"]["requestId"] for item in payload["items"]] == [1, 2]
+    item = payload["items"][-1]
     assert {"externalId", "title", "content", "itemType", "provider", "receivedAt", "metadata"} <= set(item)
     assert item["itemType"] == "message"
     assert item["provider"] == "generic_json_feed"
     assert isinstance(item["metadata"], dict)
     assert item["metadata"]["authority"] == "advisory_read_only"
     assert item["metadata"]["requestId"] == 2
+    # The initial snapshot is returned oldest-to-newest, so its cursor must
+    # mark the newest item and an unchanged subsequent sync must not replay it.
+    unchanged = client.get("/api/integrations/hai/feed", query_string={"cursor": payload["nextCursor"]})
+    assert unchanged.status_code == 200
+    assert unchanged.get_json()["items"] == []
     post_webhook(client, webhook(message_id="wamid.3", body="Follow-up scheduling request"))
     second = client.get("/api/integrations/hai/feed", query_string={"cursor": payload["nextCursor"]})
     second_payload = second.get_json()

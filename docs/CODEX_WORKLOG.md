@@ -1,5 +1,11 @@
 # Codex worklog
 
+## 2026-10-14 - Lock HAI incremental cursor behavior
+
+- Verified the HAI `json-feed` cursor watermark against the connector implementation: the initial bounded snapshot is reversed into ascending order before its newest timestamp/ID is encoded as `nextCursor`.
+- Strengthened `tests/test_hai_integration.py` to assert a multi-item snapshot is not replayed when HAI returns the unchanged cursor, while a later request is delivered incrementally. This protects an existing correct invariant; no production code change was needed.
+- Focused HAI tests passed (5); the full local suite passed (112).
+
 ## 2026-10-14 - Validate Windows launcher recovery and package
 
 - Added exact executable/command identity validation for recorded web and worker PIDs, health-gated detection of an already-running app, safe missing-worker recovery, and fail-closed shutdown state handling.

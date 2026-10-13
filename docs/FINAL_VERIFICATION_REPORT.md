@@ -105,7 +105,7 @@ This later update supersedes the pending publication/CI statements above for the
 - Compared the live HAI `json-feed` adapter in [`018-HAI/backend/internal/source/service.go`](https://github.com/Robert-Velhorst/018-HAI/blob/main/backend/internal/source/service.go): it reads `nextCursor` from the feed envelope and sends the saved value on a later request as the `cursor` query parameter.
 - Agenda Relay previously returned only `cursor`. HAI therefore did not persist the continuation cursor and could keep retrieving only the initial bounded snapshot, missing later request updates. The older integration note incorrectly said HAI never returned a cursor.
 - The feed now emits `nextCursor` and preserves `cursor` as a compatibility alias. The local integration test starts with a snapshot, adds a new request, then verifies the subsequent cursor request returns it.
-- HAI integration tests: 5 passed. Full local suite: 112 passed. Live HAI source creation/sync and historical backfill remain unverified.
+- The HAI regression now also verifies a two-item initial snapshot advances to the newest item: an unchanged continuation returns no duplicate records, and a later new request is returned incrementally. HAI integration tests: 5 passed; full local suite: 112 passed. Live HAI source creation/sync and historical backfill remain unverified.
 
 ## Current Windows 11 package and launcher verification — 2026-10-14
 
