@@ -6,7 +6,8 @@
 | Sign out | `POST /logout` | Session + CSRF | Clears session | Rejects invalid CSRF |
 | Pause/resume | `POST /actions/automation/toggle` | Session + CSRF | Writes persistent emergency state | Banner/status changes; inbound remains record-only |
 | Search/filter | `GET /?view=scheduling` | Session | Workspace-scoped SQL search/status/pagination | Empty result explains next action |
-| Review proposal | `POST /actions/proposals/<id>/send` | Session + CSRF | Official WhatsApp Cloud API text send | Failure stored as `send_failed`; no fake sent state |
+| Review proposal | `POST /actions/proposals/<id>/send` | Session + CSRF | Official WhatsApp Cloud API text send | Definite non-delivery is `send_failed`; ambiguous delivery is `manual_required`, never blindly retried |
+| Reconcile ambiguous delivery | `POST /actions/proposals/<id>/reconcile` | Session + CSRF; workspace-scoped proposal; outcome allowlisted | Atomically records operator-verified delivery/non-delivery and audit event; never calls WhatsApp | Delivered moves proposal to awaiting contact confirmation; verified non-delivery only enables a separate explicit retry; stale or personal proposals are rejected |
 | Analyze pasted personal message | `POST /actions/assisted/analyze` | Session + CSRF | Transient local intent analysis and Calendar FreeBusy query; persists structured proposal only | Ambiguous/non-scheduling text and disconnected Calendar produce a truthful error |
 | Open WhatsApp with draft | `https://wa.me/?text=...` | Authenticated operator page | Opens WhatsApp with prefilled text; operator still chooses recipient and sends | Not a delivery signal; no send API is called |
 | I sent this manually | `POST /actions/assisted/<id>/shared` | Session + CSRF | Activates the private booking link after operator confirmation | Records manual confirmation; provider delivery remains unverified |
@@ -20,4 +21,4 @@
 
 Navigation links render real server views: Overview/Scheduling, Personal WhatsApp, Contacts, Audit, Settings/readiness, and Help. No visible button is a placeholder or no-op.
 
-Remaining UI limitations: destructive contact deletion is API-only; team/role management and provider credential entry are deliberately not exposed in the browser because they require a stronger identity/secret-management design.
+Remaining UI limitations: ambiguous reminder jobs and other provider states do not yet have a general reconciliation screen; destructive contact deletion is API-only; team/role management and provider credential entry are deliberately not exposed in the browser because they require a stronger identity/secret-management design.

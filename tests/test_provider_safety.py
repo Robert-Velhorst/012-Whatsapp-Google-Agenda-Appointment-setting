@@ -35,6 +35,67 @@ def test_proposal_send_distinguishes_ambiguous_delivery(app_bundle, retry_safe, 
     assert store.get_proposal("default", proposal_id)["status"] == expected_status
 
 
+def test_operator_can_reconcile_verified_delivery_without_resending(app_bundle):
+    app, _, whatsapp = app_bundle
+    client = app.test_client()
+    post_webhook(client, webhook())
+    store = app.extensions["store"]
+    scheduling = app.extensions["scheduling"]
+    proposal_id = store.dashboard("default")["items"][0]["proposal_id"]
+    scheduling.whatsapp = FailingWhatsApp(retry_safe=False)
+
+    with pytest.raises(WhatsAppUnavailable):
+        scheduling.send_proposal(proposal_id)
+    assert store.get_proposal("default", proposal_id)["status"] == "manual_required"
+
+    with client.session_transaction() as current:
+        current["operator_authenticated"] = True
+        current["csrf_token"] = "reconcile-csrf"
+    page = client.get("/?view=scheduling&request=1")
+    assert b"WhatsApp delivery is unknown" in page.data
+    assert b"I verified it was delivered" in page.data
+    assert client.post(
+        f"/actions/proposals/{proposal_id}/reconcile",
+        data={"outcome": "delivered"},
+    ).status_code == 403
+
+    response = client.post(
+        f"/actions/proposals/{proposal_id}/reconcile",
+        data={"csrf_token": "reconcile-csrf", "outcome": "delivered"},
+    )
+    assert response.status_code == 302
+    assert store.get_proposal("default", proposal_id)["status"] == "sent"
+    assert store.request_detail("default", 1)["status"] == "awaiting_confirmation"
+    assert whatsapp.sent == []
+    with store.connect() as db:
+        audit = db.execute(
+            "SELECT detail_json FROM audit_events WHERE action='proposal.delivery_reconciled' AND entity_id=?",
+            (str(proposal_id),),
+        ).fetchone()
+    assert '"outcome": "delivered"' in audit[0]
+
+
+def test_verified_non_delivery_only_enables_a_separate_explicit_retry(app_bundle):
+    app, _, whatsapp = app_bundle
+    client = app.test_client()
+    post_webhook(client, webhook())
+    store = app.extensions["store"]
+    scheduling = app.extensions["scheduling"]
+    proposal_id = store.dashboard("default")["items"][0]["proposal_id"]
+    scheduling.whatsapp = FailingWhatsApp(retry_safe=False)
+
+    with pytest.raises(WhatsAppUnavailable):
+        scheduling.send_proposal(proposal_id)
+    store.reconcile_proposal_delivery("default", proposal_id, "not_delivered", "operator")
+    assert store.get_proposal("default", proposal_id)["status"] == "send_failed"
+    assert whatsapp.sent == []
+
+    scheduling.whatsapp = whatsapp
+    scheduling.send_proposal(proposal_id)
+    assert len(whatsapp.sent) == 1
+    assert store.get_proposal("default", proposal_id)["status"] == "sent"
+
+
 def test_rate_limit_reservation_is_atomic(app_bundle):
     app, _, _ = app_bundle
     store = app.extensions["store"]

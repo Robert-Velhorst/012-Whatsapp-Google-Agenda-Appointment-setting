@@ -83,13 +83,15 @@
               {% for item in data['items'] %}
                 <tr class="{{ 'selected' if selected and selected.id == item.id }}">
                   <td><a class="contact-link" href="{{ url_for('dashboard', view='scheduling', request=item.id, q=query, status=status) }}"><strong>{{ item.display_name or 'WhatsApp contact' }}</strong><small>•••• {{ item.sender[-4:] }}</small></a></td>
-                  <td>{{ 'Review proposal' if item.status == 'proposal_pending' else ('Book confirmed slot' if item.status in ['slot_confirmed','booking_pending'] else ('Awaiting contact reply' if item.status == 'awaiting_confirmation' else ('Provider attention' if item.status == 'failed' else 'View details'))) }}</td>
+                  <td>{% if item.proposal_status == 'manual_required' %}Verify WhatsApp delivery{% elif item.status == 'proposal_pending' %}Review proposal{% elif item.status in ['slot_confirmed','booking_pending'] %}Book confirmed slot{% elif item.status == 'awaiting_confirmation' %}Awaiting contact reply{% elif item.status == 'failed' %}Provider attention{% else %}View details{% endif %}</td>
                   <td>{{ item.requested_start }}<small>{{ item.duration_minutes }} minutes · {{ item.timezone }}</small></td>
                   <td><span class="state {{ item.status }}">{{ item.status.replace('_',' ') }}</span></td>
                   <td>{{ (item.confidence * 100)|round|int }}%</td>
                   <td>
                     {% if item.sender.startswith('assisted:') and item.proposal_id and item.proposal_status == 'pending_approval' %}
                     <a class="row-action" href="{{ url_for('dashboard', view='assisted', proposal=item.proposal_id) }}">Review personal draft</a>
+                    {% elif item.proposal_id and item.proposal_status == 'manual_required' %}
+                    <a class="row-action" href="{{ url_for('dashboard', view='scheduling', request=item.id) }}">Reconcile delivery</a>
                     {% elif item.proposal_id and item.proposal_status in ['pending_approval','send_failed'] %}
                     <form method="post" action="{{ url_for('action_send_proposal', proposal_id=item.proposal_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="row-action" type="submit">Review proposal</button></form>
                     {% elif item.appointment_id and item.appointment_status in ['pending_approval','failed'] %}
@@ -115,6 +117,13 @@
           {% if personal_confirmation_text %}<div class="detail-section"><h3>Personal WhatsApp confirmation draft</h3><textarea rows="3" readonly aria-label="WhatsApp confirmation draft">{{ personal_confirmation_text }}</textarea><a class="secondary-button" href="{{ personal_confirmation_url }}" target="_blank" rel="noopener noreferrer">Open WhatsApp with confirmation</a><small>Not sent or delivery-verified by Agenda Relay.</small></div>{% endif %}
           <div class="detail-section consent"><h3>Consent &amp; timezone</h3><p><span class="check">✓</span>{{ selected.contact.consent_status.replace('_',' ')|title }}</p><p>Timezone: <strong>{{ selected.timezone }}</strong></p></div>
           <div class="detail-section"><h3>Audit trail</h3><ol class="timeline">{% for event in selected.audit %}<li><time>{{ event.created_at[11:16] }}</time><span>{{ event.action.replace('.',' ') }}</span></li>{% else %}<li><span>No audit events recorded.</span></li>{% endfor %}</ol></div>
+          {% if selected.proposal_id and selected.proposal_status == 'manual_required' and not selected.sender.startswith('assisted:') %}
+          <section class="detail-section assist-warning"><h3>WhatsApp delivery is unknown</h3><p>Check the message status in the WhatsApp provider before choosing an outcome. Agenda Relay does not query the provider or send anything from these controls.</p>
+            <form method="post" action="{{ url_for('action_reconcile_proposal_delivery', proposal_id=selected.proposal_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="outcome" value="delivered"><button class="secondary-button" type="submit">I verified it was delivered</button></form>
+            <form method="post" action="{{ url_for('action_reconcile_proposal_delivery', proposal_id=selected.proposal_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="outcome" value="not_delivered"><button class="secondary-button" type="submit">I verified it was not delivered</button></form>
+            <small>Marking non-delivery only enables a separate explicit retry; it does not resend automatically. Your attestation is added to the audit trail.</small>
+          </section>
+          {% endif %}
           {% if selected.appointment_id and selected.appointment_status == 'booked' %}<form method="post" action="{{ url_for('action_cancel', appointment_id=selected.appointment_id) }}" class="danger-zone"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="danger-button" type="submit">Cancel appointment</button></form>{% endif %}
           {% else %}<div class="empty-detail"><strong>No request selected</strong><span>Select a scheduling request to review its conversation, time slots, consent, and audit trail.</span></div>{% endif %}
         </aside>

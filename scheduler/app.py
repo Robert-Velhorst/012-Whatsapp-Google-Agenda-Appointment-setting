@@ -259,6 +259,24 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             flash(f"Proposal not sent: {exc}", "error")
         return redirect(safe_next_url(request.referrer))
 
+    @app.post("/actions/proposals/<int:proposal_id>/reconcile")
+    @operator_required
+    def action_reconcile_proposal_delivery(proposal_id: int):
+        if not valid_csrf():
+            abort(403)
+        try:
+            outcome = request.form.get("outcome", "")
+            store.reconcile_proposal_delivery(settings.workspace_id, proposal_id, outcome, settings.operator_name)
+            if outcome == "delivered":
+                flash("Recorded your provider-verified delivery. The proposal is now awaiting the contact's confirmation.", "success")
+            else:
+                flash("Recorded your provider-verified non-delivery. The proposal can be resent only with a separate explicit action.", "success")
+        except KeyError as exc:
+            flash(f"Delivery could not be reconciled: {exc}", "error")
+        except ValueError as exc:
+            flash(f"Delivery could not be reconciled: {exc}", "error")
+        return redirect(safe_next_url(request.referrer))
+
     @app.post("/actions/appointments/<int:appointment_id>/book")
     @operator_required
     def action_book(appointment_id: int):

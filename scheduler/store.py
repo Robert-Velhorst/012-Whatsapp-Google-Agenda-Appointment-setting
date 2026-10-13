@@ -303,6 +303,65 @@ class Store:
             )
         self.audit(workspace_id, "scheduler", "proposal.manual_required", "proposal", proposal_id, {"error": error[:200]})
 
+    def reconcile_proposal_delivery(self, workspace_id: str, proposal_id: int, outcome: str, actor: str) -> None:
+        """Record an operator-verified outcome for an ambiguous Business API send."""
+        if outcome not in {"delivered", "not_delivered"}:
+            raise ValueError("Delivery outcome must be delivered or not_delivered")
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT p.status,p.request_id,r.status request_status,r.source_message_id "
+                "FROM proposals p JOIN scheduling_requests r ON r.id=p.request_id "
+                "WHERE p.workspace_id=? AND p.id=?",
+                (workspace_id, proposal_id),
+            ).fetchone()
+            if not row:
+                raise KeyError("Proposal not found")
+            if str(row["source_message_id"]).startswith("assisted:"):
+                raise ValueError("Personal WhatsApp delivery cannot be reconciled through the Business API")
+            if row["status"] != "manual_required":
+                raise ValueError("Proposal is not awaiting delivery reconciliation")
+            if row["request_status"] != "proposal_pending":
+                raise ValueError("Scheduling request is no longer pending proposal delivery")
+
+            if outcome == "delivered":
+                if not transition_allowed(row["request_status"], "awaiting_confirmation"):
+                    raise ValueError("Scheduling request cannot move to awaiting confirmation")
+                proposal_update = db.execute(
+                    "UPDATE proposals SET status='sent',provider_message_id=NULL,sent_at=?,error_text=NULL "
+                    "WHERE workspace_id=? AND id=? AND status='manual_required'",
+                    (now, workspace_id, proposal_id),
+                )
+                request_update = db.execute(
+                    "UPDATE scheduling_requests SET status='awaiting_confirmation',updated_at=? "
+                    "WHERE workspace_id=? AND id=? AND status='proposal_pending'",
+                    (now, workspace_id, row["request_id"]),
+                )
+                if proposal_update.rowcount != 1 or request_update.rowcount != 1:
+                    raise ValueError("Proposal or request changed during delivery reconciliation")
+            else:
+                proposal_update = db.execute(
+                    "UPDATE proposals SET status='send_failed',error_text=? "
+                    "WHERE workspace_id=? AND id=? AND status='manual_required'",
+                    ("Operator verified no delivery; an explicit retry is available.", workspace_id, proposal_id),
+                )
+                if proposal_update.rowcount != 1:
+                    raise ValueError("Proposal changed during delivery reconciliation")
+
+            db.execute(
+                "INSERT INTO audit_events(workspace_id,actor,action,entity_type,entity_id,detail_json,created_at) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (
+                    workspace_id,
+                    actor,
+                    "proposal.delivery_reconciled",
+                    "proposal",
+                    str(proposal_id),
+                    json.dumps({"outcome": outcome, "provider_queried_by_app": False}, sort_keys=True),
+                    now,
+                ),
+            )
+
     def confirm_proposal(self, workspace_id: str, proposal_id: int, slot_index: int, actor: str) -> int:
         now = utc_now().isoformat()
         with self.connect() as db:
