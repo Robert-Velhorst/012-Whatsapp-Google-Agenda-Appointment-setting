@@ -60,6 +60,8 @@ $unrelatedNgrok = [pscustomobject]@{
     ExecutablePath = 'C:\Other\ngrok.exe'
     CommandLine = '"ngrok.exe" "http" "--url=agenda.example.ngrok.app" "http://127.0.0.1:5000"'
 }
+Write-Host "Synthetic ngrok config path: $([IO.Path]::GetFullPath($ngrokConfig))"
+Write-Host "Synthetic ngrok command line: $($ngrokProcess.CommandLine)"
 Assert-Equal (Test-AgendaRelayNgrokProcessIdentity -Process $ngrokProcess -Runtime $ngrokRuntime -Root $ngrokRoot -Verbose) $true 'Owned ngrok process'
 Assert-Equal (Test-AgendaRelayNgrokProcessIdentity -Process $wrongNgrokDomain -Runtime $ngrokRuntime -Root $ngrokRoot) $false 'Other ngrok endpoint'
 Assert-Equal (Test-AgendaRelayNgrokProcessIdentity -Process $unrelatedNgrok -Runtime $ngrokRuntime -Root $ngrokRoot) $false 'Unrelated ngrok executable'
