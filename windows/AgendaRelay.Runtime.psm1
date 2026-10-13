@@ -69,9 +69,15 @@ function Test-AgendaRelayNgrokProcessIdentity {
         [Parameter(Mandatory)][string]$Root
     )
 
-    if (-not $Process.ExecutablePath -or -not $Process.CommandLine) { return $false }
+    if (-not $Process.ExecutablePath -or -not $Process.CommandLine) {
+        Write-Verbose 'Ngrok process metadata is incomplete.'
+        return $false
+    }
     foreach ($property in @('executablePath', 'configPath', 'agentConfigPath', 'domain', 'port')) {
-        if (-not $Runtime.PSObject.Properties[$property] -or -not $Runtime.$property) { return $false }
+        if (-not $Runtime.PSObject.Properties[$property] -or -not $Runtime.$property) {
+            Write-Verbose "Ngrok runtime state is missing $property."
+            return $false
+        }
     }
 
     try {
@@ -81,9 +87,18 @@ function Test-AgendaRelayNgrokProcessIdentity {
         $actualAgentConfig = [IO.Path]::GetFullPath([string]$Runtime.agentConfigPath)
         $configPath = [IO.Path]::GetFullPath([string]$Runtime.configPath)
         $port = 0
-        if (-not [int]::TryParse([string]$Runtime.port, [ref]$port) -or $port -lt 1 -or $port -gt 65535) { return $false }
-        if (-not [string]::Equals($expectedExecutable, $actualExecutable, [StringComparison]::OrdinalIgnoreCase)) { return $false }
-        if (-not [string]::Equals($expectedAgentConfig, $actualAgentConfig, [StringComparison]::OrdinalIgnoreCase)) { return $false }
+        if (-not [int]::TryParse([string]$Runtime.port, [ref]$port) -or $port -lt 1 -or $port -gt 65535) {
+            Write-Verbose 'Ngrok runtime state contains an invalid local port.'
+            return $false
+        }
+        if (-not [string]::Equals($expectedExecutable, $actualExecutable, [StringComparison]::OrdinalIgnoreCase)) {
+            Write-Verbose 'Ngrok process executable does not match the recorded path.'
+            return $false
+        }
+        if (-not [string]::Equals($expectedAgentConfig, $actualAgentConfig, [StringComparison]::OrdinalIgnoreCase)) {
+            Write-Verbose 'Ngrok agent config is not the Agenda Relay isolated config.'
+            return $false
+        }
 
         $requiredArguments = @(
             'http',
@@ -93,13 +108,18 @@ function Test-AgendaRelayNgrokProcessIdentity {
             "http://127.0.0.1:$port"
         )
         $commandLine = [string]$Process.CommandLine
-        foreach ($argument in $requiredArguments) {
+        for ($index = 0; $index -lt $requiredArguments.Count; $index++) {
+            $argument = $requiredArguments[$index]
             $escaped = [regex]::Escape($argument)
             $pattern = '(?i)(?:^|\s)(?:"' + $escaped + '"|' + $escaped + ')(?=\s|$)'
-            if (-not [regex]::IsMatch($commandLine, $pattern)) { return $false }
+            if (-not [regex]::IsMatch($commandLine, $pattern)) {
+                Write-Verbose "Ngrok process argument check $index failed."
+                return $false
+            }
         }
         return $true
     } catch {
+        Write-Verbose "Ngrok process identity check failed: $($_.Exception.Message)"
         return $false
     }
 }
