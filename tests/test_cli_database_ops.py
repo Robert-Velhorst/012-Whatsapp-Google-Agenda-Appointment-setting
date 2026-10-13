@@ -69,4 +69,3 @@ def test_restore_rejects_non_app_sqlite_database(app_bundle, tmp_path):
 
     with pytest.raises(ValueError, match="application schema"):
         _restore_database(invalid, app.extensions["settings"].database_path, store)
-
