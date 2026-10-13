@@ -74,4 +74,11 @@ This later update supersedes the pending publication/CI statements above for the
 - Out-of-range message timestamps now safely fall back to the current UTC receipt time rather than raising an overflow error.
 - Full local suite: 79 passed. `compileall`, `pip check`, and `git diff --check` passed.
 - The targeted Codex Security diff scan (`e205d912-37ed-40c7-a711-cea6325d9ecb`) completed with no reportable findings for this patch. It reviewed the changed parser and tests plus the signature-verifying route; it was not a full repository security audit.
-- The code and this verification addendum are pending push and GitHub CI verification.
+- At the time this addendum was first written, the code had not yet been pushed. The webhook-resilience code was subsequently pushed to `agent/agenda-relay-production` as commit `afd170f88a4df4136b03d58ea28e3e529b04bbb9`; its GitHub CI run `38373387020` is queued and has not started, so no CI result is claimed.
+
+## Packaged-app UI verification — 2026-10-13
+
+- Rebuilt the Windows x64 standalone package from commit `afd170f88a4df4136b03d58ea28e3e529b04bbb9` in an isolated temporary directory. ZIP SHA-256: `F45886E595FBF2784179436B4B0262D33EC2D60D72F450B67FC2527591C24B4A`.
+- `windows/Test-Package.ps1` passed against the extracted package: health `ok: true`, development mode, branded login HTTP 200, and 67.5 MiB working set. Test configuration, database, and logs were isolated; provider credentials were absent and automation was paused.
+- A localhost browser check signed in with a test-only password, rendered the scheduling dashboard, and navigated to the Scheduling view. The browser reported no console warnings or errors. Provider readiness correctly showed WhatsApp Cloud API and Google Calendar as unconfigured. No real message or calendar event was sent or created.
+- The package and UI checks are local evidence only. GitHub CI run `38373387020`, for the same code commit, remains queued without a runner; its outcome is pending. The branch tip and `origin/agent/agenda-relay-production` were both `afd170f88a4df4136b03d58ea28e3e529b04bbb9` before this report update.
