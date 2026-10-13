@@ -7,7 +7,7 @@ import os
 import secrets
 from datetime import datetime
 from functools import wraps
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 from zoneinfo import ZoneInfo
 
 from flask import (
@@ -67,12 +67,29 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
         return bool(supplied and expected and secrets.compare_digest(supplied, expected))
 
     def safe_next_url(candidate: str | None) -> str:
-        if candidate and candidate.startswith("/") and not candidate.startswith("//"):
-            return candidate
-        if candidate:
+        if not candidate or any(ord(character) < 32 or ord(character) == 127 for character in candidate):
+            return url_for("dashboard")
+        if "\\" in candidate:
+            return url_for("dashboard")
+        try:
             parsed = urlsplit(candidate)
-            if parsed.scheme in {"http", "https"} and parsed.netloc == request.host:
-                return parsed.path + (f"?{parsed.query}" if parsed.query else "")
+        except ValueError:
+            return url_for("dashboard")
+        if parsed.scheme or parsed.netloc:
+            if (
+                parsed.scheme not in {"http", "https"}
+                or parsed.netloc.casefold() != request.host.casefold()
+                or parsed.username is not None
+                or parsed.password is not None
+            ):
+                return url_for("dashboard")
+        elif not parsed.path.startswith("/") or parsed.path.startswith("//"):
+            return url_for("dashboard")
+        decoded_path = unquote(parsed.path)
+        if not decoded_path.startswith("/") or decoded_path.startswith("//") or "\\" in decoded_path:
+            return url_for("dashboard")
+        if parsed.path:
+            return parsed.path + (f"?{parsed.query}" if parsed.query else "")
         return url_for("dashboard")
 
     def booking_slots(proposal: dict | None) -> list[dict[str, str | int]]:

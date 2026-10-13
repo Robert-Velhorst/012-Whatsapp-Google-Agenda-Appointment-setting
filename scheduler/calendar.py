@@ -4,6 +4,8 @@ import base64
 import hashlib
 import json
 import os
+import secrets
+import threading
 from datetime import datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -31,6 +33,7 @@ class GoogleCalendar:
     def __init__(self, settings: Settings, crypto: CryptoBox | None = None):
         self.settings = settings
         self.crypto = crypto or CryptoBox(settings.data_encryption_key)
+        self._token_lock = threading.RLock()
 
     def authorization_url(self, redirect_uri: str, state: str) -> str:
         flow = Flow.from_client_secrets_file(self.settings.google_client_secrets_file, scopes=SCOPES, state=state, redirect_uri=redirect_uri)
@@ -161,6 +164,12 @@ class GoogleCalendar:
             raise
 
     def _credentials(self) -> Credentials:
+        # The worker and web threads can hit an expired token concurrently.
+        # Serialize refresh so only one thread consumes/writes refreshed credentials.
+        with self._token_lock:
+            return self._credentials_locked()
+
+    def _credentials_locked(self) -> Credentials:
         token_path = Path(self.settings.google_token_file)
         if not token_path.exists():
             raise CalendarUnavailable("Google Calendar is not connected; visit /api/google/connect first.")
@@ -176,13 +185,19 @@ class GoogleCalendar:
     def _write_token(self, serialized: str) -> None:
         token_path = Path(self.settings.google_token_file)
         token_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = token_path.with_name(f".{token_path.name}.{os.getpid()}.tmp")
-        temporary.write_text(self.crypto.encrypt(serialized), encoding="utf-8")
-        try:
-            temporary.chmod(0o600)
-        except OSError:
-            pass
-        os.replace(temporary, token_path)
+        temporary = token_path.with_name(
+            f".{token_path.name}.{os.getpid()}.{threading.get_ident()}.{secrets.token_hex(8)}.tmp"
+        )
+        with self._token_lock:
+            try:
+                temporary.write_text(self.crypto.encrypt(serialized), encoding="utf-8")
+                try:
+                    temporary.chmod(0o600)
+                except OSError:
+                    pass
+                os.replace(temporary, token_path)
+            finally:
+                temporary.unlink(missing_ok=True)
 
     def _service(self):
         return build("calendar", "v3", credentials=self._credentials(), cache_discovery=False)

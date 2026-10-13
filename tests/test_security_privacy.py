@@ -142,6 +142,46 @@ def test_browser_login_rejects_external_next_redirect(app_bundle):
     assert response.headers["Location"] == "/"
 
 
+@pytest.mark.parametrize("candidate", [
+    r"/\evil.example/steal",
+    "/%5C%5Cevil.example/steal",
+    "/%2F%2Fevil.example/steal",
+    "//evil.example/steal",
+    "https://evil.example/steal",
+])
+def test_browser_login_rejects_redirects_that_browsers_may_normalize_externally(app_bundle, candidate):
+    app, _, _ = app_bundle
+    client = app.test_client()
+    client.get("/login")
+    with client.session_transaction() as current:
+        csrf = current["csrf_token"]
+
+    response = client.post(
+        "/login",
+        query_string={"next": candidate},
+        data={"csrf_token": csrf, "password": "correct horse battery staple"},
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == "/"
+
+
+def test_browser_login_preserves_safe_same_origin_next_redirect(app_bundle):
+    app, _, _ = app_bundle
+    client = app.test_client()
+    client.get("/login")
+    with client.session_transaction() as current:
+        csrf = current["csrf_token"]
+
+    response = client.post(
+        "/login?next=%2F%3Fview%3Dassisted",
+        data={"csrf_token": csrf, "password": "correct horse battery staple"},
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == "/?view=assisted"
+
+
 def test_browser_login_throttles_repeated_failures(app_bundle):
     app, _, _ = app_bundle
     client = app.test_client()

@@ -1,9 +1,13 @@
+import json
+import threading
+import time
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
 from googleapiclient.errors import HttpError
+from google.oauth2.credentials import Credentials
 
 from scheduler.calendar import CalendarUnavailable, GoogleCalendar
 from scheduler.crypto import CryptoBox
@@ -43,6 +47,61 @@ def test_google_token_write_is_atomic_and_encrypted(app_bundle, tmp_path):
     stored = token_path.read_text(encoding="utf-8")
     assert stored.startswith("enc:")
     assert crypto.decrypt(stored) == '{"refresh_token":"secret"}'
+    assert list(token_path.parent.glob("*.tmp")) == []
+
+
+def test_concurrent_google_token_reads_refresh_once_and_leave_no_temp_files(app_bundle, tmp_path, monkeypatch):
+    app, _, _ = app_bundle
+    token_path = tmp_path / "credentials" / "google-token.json"
+    settings = replace(app.extensions["settings"], google_token_file=str(token_path))
+    calendar = GoogleCalendar(settings, CryptoBox("test-encryption-key"))
+    calendar._write_token('{"token":"stale","refresh_token":"refresh"}')
+    refresh_count = 0
+    refresh_count_lock = threading.Lock()
+
+    class FakeCredentials:
+        def __init__(self, info):
+            self.refresh_token = info.get("refresh_token")
+            self.valid = info.get("token") == "fresh"
+            self.expired = not self.valid
+
+        def refresh(self, _request):
+            nonlocal refresh_count
+            with refresh_count_lock:
+                refresh_count += 1
+            time.sleep(0.02)
+            self.valid = True
+            self.expired = False
+
+        def to_json(self):
+            return json.dumps({"token": "fresh", "refresh_token": self.refresh_token})
+
+    def from_authorized_user_info(info, _scopes):
+        return FakeCredentials(info)
+
+    monkeypatch.setattr(Credentials, "from_authorized_user_info", staticmethod(from_authorized_user_info))
+    barrier = threading.Barrier(8)
+    results = []
+    errors = []
+
+    def load_credentials():
+        try:
+            barrier.wait(timeout=2)
+            results.append(calendar._credentials())
+        except Exception as exc:  # capture thread failures for an actionable assertion
+            errors.append(exc)
+
+    threads = [threading.Thread(target=load_credentials) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=3)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert errors == []
+    assert len(results) == 8
+    assert all(result.valid for result in results)
+    assert refresh_count == 1
     assert list(token_path.parent.glob("*.tmp")) == []
 
 
