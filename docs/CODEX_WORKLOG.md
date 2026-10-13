@@ -1,5 +1,11 @@
 # Codex worklog
 
+## 2026-10-13 - Keep immutable static caching safe across upgrades
+
+- Reproduced that the app marked stable `/static/...` URLs immutable, allowing a browser to retain stale CSS after a release.
+- Templates now include a 16-character SHA-256 content version for the packaged CSS and favicon. Only a matching version gets one-year immutable caching; unversioned or mismatched static URLs must revalidate.
+- Added a regression that compares the rendered asset digest with the file and checks both cache policies.
+
 ## 2026-10-13 - Add reauthenticated browser contact deletion
 
 - Closed the documented gap between the guarded contact-deletion API and the Contacts screen.

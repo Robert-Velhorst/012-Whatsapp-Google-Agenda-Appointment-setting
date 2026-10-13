@@ -1,3 +1,7 @@
+from hashlib import sha256
+from pathlib import Path
+
+
 def test_favicon_is_linked_and_served(app_bundle):
     app, _, _ = app_bundle
     client = app.test_client()
@@ -97,3 +101,17 @@ def test_contacts_screen_exposes_valid_csrf_and_reauthenticated_delete_controls(
     stylesheet = client.get("/static/app.css").get_data(as_text=True)
     assert ".contacts-panel{max-width:100%;overflow-x:auto}" in stylesheet
     assert ".contacts-table th:nth-child(3),.contacts-table td:nth-child(3){display:table-cell}" in stylesheet
+
+
+def test_static_assets_are_content_versioned_before_immutable_caching(app_bundle):
+    app, _, _ = app_bundle
+    client = app.test_client()
+    page = client.get("/login")
+    digest = sha256((Path(app.static_folder) / "app.css").read_bytes()).hexdigest()[:16]
+
+    assert f"/static/app.css?v={digest}".encode() in page.data
+    versioned = client.get(f"/static/app.css?v={digest}")
+    unversioned = client.get("/static/app.css")
+    assert versioned.status_code == unversioned.status_code == 200
+    assert versioned.headers["Cache-Control"] == "public, max-age=31536000, immutable"
+    assert unversioned.headers["Cache-Control"] == "public, max-age=0, must-revalidate"
