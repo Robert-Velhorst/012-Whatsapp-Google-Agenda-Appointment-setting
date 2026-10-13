@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+from contextlib import closing
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -40,7 +41,7 @@ def test_concurrent_processes_apply_each_migration_once(tmp_path, existing_schem
         results = [future.result(timeout=15) for future in futures]
 
     assert len(results) == worker_count
-    with sqlite3.connect(database_path) as db:
+    with closing(sqlite3.connect(database_path)) as db:
         versions = {row[0] for row in db.execute("SELECT version FROM schema_migrations")}
         columns = [row[1] for row in db.execute("PRAGMA table_info(proposals)")]
     assert versions == {version for version, _ in MIGRATIONS}

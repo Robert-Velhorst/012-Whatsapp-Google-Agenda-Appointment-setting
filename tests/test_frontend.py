@@ -6,15 +6,15 @@ def test_favicon_is_linked_and_served(app_bundle):
     app, _, _ = app_bundle
     client = app.test_client()
 
-    page = client.get("/login")
-    assert page.status_code == 200
-    assert b'rel="icon" type="image/svg+xml"' in page.data
-    assert b"/static/favicon.svg" in page.data
+    with client.get("/login") as page:
+        assert page.status_code == 200
+        assert b'rel="icon" type="image/svg+xml"' in page.data
+        assert b"/static/favicon.svg" in page.data
 
-    icon = client.get("/static/favicon.svg")
-    assert icon.status_code == 200
-    assert icon.mimetype == "image/svg+xml"
-    assert b"<svg" in icon.data
+    with client.get("/static/favicon.svg") as icon:
+        assert icon.status_code == 200
+        assert icon.mimetype == "image/svg+xml"
+        assert b"<svg" in icon.data
 
 
 def test_personal_whatsapp_assisted_screen_is_in_operator_navigation(app_bundle):
@@ -98,7 +98,8 @@ def test_contacts_screen_exposes_valid_csrf_and_reauthenticated_delete_controls(
     assert 'autocomplete="current-password" required' in html
     assert "Deletion permanently removes" in html
     assert "<tr>\n        <form" not in html
-    stylesheet = client.get("/static/app.css").get_data(as_text=True)
+    with client.get("/static/app.css") as response:
+        stylesheet = response.get_data(as_text=True)
     assert ".contacts-panel{max-width:100%;overflow-x:auto}" in stylesheet
     assert ".contacts-table th:nth-child(3),.contacts-table td:nth-child(3){display:table-cell}" in stylesheet
 
@@ -106,13 +107,14 @@ def test_contacts_screen_exposes_valid_csrf_and_reauthenticated_delete_controls(
 def test_static_assets_are_content_versioned_before_immutable_caching(app_bundle):
     app, _, _ = app_bundle
     client = app.test_client()
-    page = client.get("/login")
     digest = sha256((Path(app.static_folder) / "app.css").read_bytes()).hexdigest()[:16]
 
-    assert f"/static/app.css?v={digest}".encode() in page.data
-    versioned = client.get(f"/static/app.css?v={digest}")
-    unversioned = client.get("/static/app.css")
-    assert versioned.status_code == unversioned.status_code == 200
-    assert versioned.headers["Cache-Control"] == "public, max-age=31536000, immutable"
-    assert unversioned.headers["Cache-Control"] == "public, max-age=0, must-revalidate"
+    with client.get("/login") as page:
+        assert f"/static/app.css?v={digest}".encode() in page.data
+    with client.get(f"/static/app.css?v={digest}") as versioned:
+        assert versioned.status_code == 200
+        assert versioned.headers["Cache-Control"] == "public, max-age=31536000, immutable"
+    with client.get("/static/app.css") as unversioned:
+        assert unversioned.status_code == 200
+        assert unversioned.headers["Cache-Control"] == "public, max-age=0, must-revalidate"
 
