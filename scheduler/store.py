@@ -599,9 +599,18 @@ class Store:
         cutoff = (utc_now() - timedelta(days=retention_days)).isoformat()
         with self.connect() as db:
             cursor = db.execute("DELETE FROM inbound_messages WHERE workspace_id=? AND received_at<?", (workspace_id, cutoff))
-            db.execute("DELETE FROM rate_events WHERE workspace_id=? AND created_at<?", (workspace_id, cutoff))
+            rate_cursor = db.execute("DELETE FROM rate_events WHERE workspace_id=? AND created_at<?", (workspace_id, cutoff))
         count = cursor.rowcount
-        self.audit(workspace_id, "worker", "privacy.retention_purge", "workspace", workspace_id, {"messages_deleted": count, "cutoff": cutoff})
+        rate_count = rate_cursor.rowcount
+        if count or rate_count:
+            self.audit(
+                workspace_id,
+                "worker",
+                "privacy.retention_purge",
+                "workspace",
+                workspace_id,
+                {"messages_deleted": count, "rate_events_deleted": rate_count, "cutoff": cutoff},
+            )
         return count
 
     @staticmethod

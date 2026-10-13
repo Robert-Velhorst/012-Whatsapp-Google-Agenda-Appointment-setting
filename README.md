@@ -209,7 +209,7 @@ Sign in, inspect Settings/readiness, then review the scheduling queue. Open a co
 
 `GET /api/readiness` returns 503 while providers are incomplete or automation is paused. `GET /api/operator/readiness` provides details under operator authentication. `GET /api/requests/<id>`, `/api/audit` and `/api/export/requests.csv` support inspection/export. Contact privacy export/deletion use `/api/contacts/<id>/export` and `DELETE /api/contacts/<id>`. Browser mutations require a CSRF token; authenticated API clients may use the bearer credential.
 
-Pause from the dashboard before investigating an incident. Signed incoming messages continue to be stored while paused, but are not automatically replayed on resume. The worker still performs stale-claim recovery and proposal expiry while paused; reminder sending and retention purging wait until resumed.
+Pause from the dashboard before investigating an incident. Signed incoming messages continue to be stored while paused, but are not automatically replayed on resume. The worker still performs stale-claim recovery, proposal expiry, and configured data-retention purging while paused; only outbound reminder sending waits until automation resumes.
 
 If delivery times out, inspect Meta before resending. Stale claims older than 15 minutes move into manual review. The software has no general manual-resolution UI for these ambiguous states. Do not change database status to force a retry without reconciling provider state.
 

@@ -269,6 +269,7 @@ class SchedulingService:
         totals["expired"] = self.store.expire_stale_proposals(
             self.settings.workspace_id, (utc_now() - timedelta(hours=self.settings.booking_link_ttl_hours)).isoformat()
         )
+        self.store.purge_expired(self.settings.workspace_id, self.settings.data_retention_days)
         if self.is_paused():
             return totals
         for job in self.store.claim_due_jobs(self.settings.workspace_id, utc_now().isoformat(), limit):
@@ -296,7 +297,6 @@ class SchedulingService:
                 # Provider timeouts are operationally ambiguous: do not auto-retry or risk duplicate reminders.
                 self.store.complete_job(self.settings.workspace_id, job["id"], "manual_required", str(exc)[:500])
                 totals["manual_required"] += 1
-        self.store.purge_expired(self.settings.workspace_id, self.settings.data_retention_days)
         return totals
 
     def readiness(self) -> dict[str, Any]:
