@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import ipaddress
 import os
 import secrets
 from datetime import datetime
 from functools import wraps
-from urllib.parse import quote, urlsplit
+from pathlib import Path
+from urllib.parse import quote, unquote, urlsplit
 from zoneinfo import ZoneInfo
 
 from flask import (
@@ -46,6 +48,14 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
         PERMANENT_SESSION_LIFETIME=3600,
         MAX_CONTENT_LENGTH=1_000_000,
     )
+    static_asset_versions: dict[str, str] = {}
+    for asset_name in ("app.css", "favicon.svg"):
+        try:
+            asset_bytes = (Path(app.static_folder) / asset_name).read_bytes()
+        except OSError:
+            continue
+        static_asset_versions[asset_name] = hashlib.sha256(asset_bytes).hexdigest()[:16]
+    app.jinja_env.globals["static_asset_versions"] = static_asset_versions
     crypto = CryptoBox(settings.data_encryption_key)
     store = Store(settings.database_path, crypto)
     store.ensure_workspace(settings.workspace_id, settings.workspace_name, settings.timezone)
@@ -129,7 +139,17 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         response.headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
-        response.headers["Cache-Control"] = "public, max-age=86400, immutable" if request.endpoint == "static" else "no-store"
+        if request.endpoint == "static":
+            filename = (request.view_args or {}).get("filename", "")
+            expected_version = static_asset_versions.get(filename)
+            is_content_versioned = bool(expected_version and request.args.get("v") == expected_version)
+            response.headers["Cache-Control"] = (
+                "public, max-age=31536000, immutable"
+                if is_content_versioned
+                else "public, max-age=0, must-revalidate"
+            )
+        else:
+            response.headers["Cache-Control"] = "no-store"
         if settings.is_production:
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response

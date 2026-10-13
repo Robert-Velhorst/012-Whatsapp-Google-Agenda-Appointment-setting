@@ -15,6 +15,7 @@
 | Production guard | `test_production_configuration_fails_closed` | Unsafe production startup raises |
 | Auth/CSRF | `test_api_requires_authentication`, `test_browser_login_and_csrf` | Protected data inaccessible; session mutations require CSRF |
 | Redirect/CSV safety | `test_browser_login_rejects_external_next_redirect`, `test_csv_export_neutralizes_spreadsheet_formulas` | External redirects refused; spreadsheet formulas neutralized |
+| Static asset cache | `test_static_assets_are_content_versioned_before_immutable_caching` | Only content-matching CSS URLs receive immutable caching; legacy/unversioned URLs revalidate |
 | Privacy/isolation | `test_contact_export_delete_and_workspace_isolation`, `test_contact_delete_refuses_unresolved_calendar_appointments`, `test_browser_contact_delete_requires_csrf_and_recent_password`, `test_browser_contact_delete_keeps_contact_when_appointment_is_active`, `test_browser_contact_delete_reauthentication_is_rate_limited_and_not_logged`, `test_contacts_screen_exposes_valid_csrf_and_reauthenticated_delete_controls` | Export/deletion work; browser deletion requires CSRF and password reauthentication, is rate-limited, logs no password, and is refused until calendar appointments are cancelled/resolved; other workspace sees zero records |
 | Encryption | `test_sensitive_message_is_encrypted_in_database` | Plain conversation absent from SQLite field |
 | Jobs | `tests/test_worker.py` | Missing/unknown reminders are never reported sent |
