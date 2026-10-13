@@ -30,6 +30,8 @@ All operator endpoints require bearer token or authenticated session. Session st
 
 The personal WhatsApp screen is session-only (not bearer API): `POST /actions/assisted/analyze` performs transient local analysis and a Calendar availability query, while `POST /actions/assisted/<id>/shared` activates the private booking link only after the operator confirms manual sharing. Both require CSRF and create no WhatsApp API calls.
 
+Browser contact deletion is handled by `POST /actions/contacts/<id>/delete`, not the bearer API: it requires the authenticated operator session, CSRF, a fresh current-password check, and an IP-scoped attempt limit. It refuses contacts with unresolved appointments; the operator must cancel or resolve those appointments separately first.
+
 ## External provider calls
 
 - Google `freebusy.query`: real calendar availability.

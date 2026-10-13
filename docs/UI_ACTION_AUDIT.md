@@ -15,10 +15,11 @@
 | Open calendar | External event link | Session page | Opens provider-returned `htmlLink` | Shown only after real event response |
 | Cancel appointment | `POST /actions/appointments/<id>/cancel` | Session + CSRF | Deletes Google event and cancels jobs | Error retained; repeated cancellation does not duplicate |
 | Contact save | `POST /actions/contacts/<id>/update` | Session + CSRF | Updates name/email/timezone/language/consent | Server validation and error flash |
+| Contact delete | `POST /actions/contacts/<id>/delete` | Session + CSRF + current password; five attempts per IP per 15 minutes | Deletes contact records only after all linked appointments are cancelled; never cancels a provider event as a side effect | Refused while appointments are unresolved; invalid password is audited without storing the supplied value |
 | Connect Google Calendar | `GET /api/google/connect` | Session or API token | Starts state-bound OAuth | Missing client file returns truthful error |
 | Export CSV | `GET /api/export/requests.csv` | Session/API | Exports current workspace rows | No cross-workspace rows |
 | Public slot choice | `POST /book/<token>` | Private token + consent | Creates one pending appointment | Closed token state shown; no event write yet |
 
 Navigation links render real server views: Overview/Scheduling, Personal WhatsApp, Contacts, Audit, Settings/readiness, and Help. No visible button is a placeholder or no-op.
 
-Remaining UI limitations: ambiguous reminder jobs and other provider states do not yet have a general reconciliation screen; destructive contact deletion is API-only; team/role management and provider credential entry are deliberately not exposed in the browser because they require a stronger identity/secret-management design.
+Remaining UI limitations: ambiguous reminder jobs and other provider states do not yet have a general reconciliation screen; team/role management and provider credential entry are deliberately not exposed in the browser because they require a stronger identity/secret-management design.
