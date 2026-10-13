@@ -95,3 +95,12 @@ This later update supersedes the pending publication/CI statements above for the
 - An API-level regression reproduces the overflow before the fix and confirms an oversized page now resolves safely. The full local suite passes 81 tests; compilation, dependency consistency, and dependency audit pass.
 - Windows 11 standalone package rebuilt from the combined source: ZIP SHA-256 `0AA5E9500066ACCB7D5FF86C117DCD1C23A9A8D20EF78DB6C30335C73465EE4B`. `windows/Test-Package.ps1` passed: health true, development mode, branded login HTTP 200, and 67.3 MiB working set. Build output/work, test database, and logs were isolated under temporary directories; no provider credentials were used.
 - GitHub CI for this combined source is pending and will be checked against the pushed commit.
+
+## Personal WhatsApp assisted flow and Windows launcher recovery — 2026-10-13
+
+- Confirmed the personal-account path is assisted-only: the operator pastes the relevant text, the app analyzes it locally and checks Google Calendar, and the operator manually sends the prepared private booking link from WhatsApp. The app does not read the personal inbox or send personal WhatsApp messages. Existing `tests/test_assisted_personal.py` and `tests/test_frontend.py` passed: 11 tests.
+- Reproduced a source-launcher defect where any live process at the saved web PID was reported as Agenda Relay, even if it was an unrelated/recycled PID and the worker PID was missing.
+- Added exact executable/command validation for the web and worker roles, health-gated already-running detection, missing-worker recovery, stale-worker cleanup only after exact identity validation, and fail-closed cleanup for newly started processes. The stop script no longer uses a broad command-line substring match to decide what to terminate.
+- Added a PowerShell self-check to the Windows package workflow. It passed under both PowerShell 7 and Windows PowerShell 5.1; all five Windows PowerShell source files parsed successfully. This self-check covers process identity and recovery decisions; it does not replace a live source-launcher run on the target Windows 11 computer.
+- Full local regression suite: 126 passed in 106.37 seconds. `compileall` and `git diff --check` passed. The earlier GitHub CI and package checks apply to commit `69463b379b6e992492187e32f4f2be6e7a154a88`, not this uncommitted follow-up. New remote CI/package verification is pending publication.
+- Real Google OAuth/Calendar, personal WhatsApp use, public ngrok reachability, HAI runtime, and target-PC acceptance remain unverified.
