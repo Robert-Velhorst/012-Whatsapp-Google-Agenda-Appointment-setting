@@ -595,9 +595,8 @@ class Store:
                     (workspace_id, timestamp, timestamp, cursor_id, page_size),
                 ).fetchall()
             else:
-                # HAI's current HTTP feed reader performs a plain GET and does not
-                # send the previously returned cursor. Give it a useful bounded
-                # snapshot instead of repeatedly exposing the oldest first page.
+                # Start with a useful bounded latest snapshot. HAI persists the
+                # returned nextCursor and supplies it on subsequent requests.
                 rows = db.execute(
                     "SELECT r.id,r.title,r.duration_minutes,r.timezone,r.requested_start,r.status,r.confidence,r.created_at,r.updated_at,"
                     "p.status proposal_status,a.status appointment_status,a.start_at,a.end_at "

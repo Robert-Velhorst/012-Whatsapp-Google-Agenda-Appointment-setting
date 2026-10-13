@@ -31,8 +31,9 @@ def test_hai_feed_is_local_cursor_based_and_pii_minimized(tmp_path):
     first = client.get("/api/integrations/hai/feed")
     assert first.status_code == 200
     payload = first.get_json()
-    assert set(payload) == {"items", "cursor"}
-    assert len(payload["items"]) == 1 and payload["cursor"]
+    assert set(payload) == {"items", "nextCursor", "cursor"}
+    assert len(payload["items"]) == 1 and payload["nextCursor"]
+    assert payload["cursor"] == payload["nextCursor"]
     serialized = first.get_data(as_text=True)
     assert "31612345678" not in serialized
     assert "Private message from Emma" not in serialized
@@ -43,8 +44,11 @@ def test_hai_feed_is_local_cursor_based_and_pii_minimized(tmp_path):
     assert isinstance(item["metadata"], dict)
     assert item["metadata"]["authority"] == "advisory_read_only"
     assert item["metadata"]["requestId"] == 2
-    second = client.get("/api/integrations/hai/feed", query_string={"cursor": payload["cursor"]})
-    assert second.get_json()["items"] == []
+    post_webhook(client, webhook(message_id="wamid.3", body="Follow-up scheduling request"))
+    second = client.get("/api/integrations/hai/feed", query_string={"cursor": payload["nextCursor"]})
+    second_payload = second.get_json()
+    assert [item["metadata"]["requestId"] for item in second_payload["items"]] == [3]
+    assert second_payload["nextCursor"] == second_payload["cursor"]
     app.extensions["store"].close()
 
 

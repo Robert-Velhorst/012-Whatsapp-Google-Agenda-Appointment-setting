@@ -472,7 +472,10 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
                 "receivedAt": row["updated_at"],
                 "metadata": metadata,
             })
-        return jsonify({"items": items, "cursor": next_cursor})
+        # HAI's json-feed adapter persists `nextCursor` and sends it on the next
+        # request as the `cursor` query parameter. Keep `cursor` as a backwards-
+        # compatible alias for existing Agenda Relay feed clients.
+        return jsonify({"items": items, "nextCursor": next_cursor, "cursor": next_cursor})
 
     @app.get("/api/google/connect")
     @admin_required
