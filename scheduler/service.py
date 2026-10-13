@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -119,7 +119,7 @@ class SchedulingService:
                     )
                     try:
                         slots = self.calendar.free_slots(intent.requested_start, intent.duration_minutes)
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001 - Google provider SDK errors are not a stable shared exception type.
                         self.store.transition_request(self.settings.workspace_id, request_id, "failed", "scheduler", {"provider": "google_calendar", "error": str(exc)[:200]})
                         continue
                     if not slots:
@@ -158,7 +158,7 @@ class SchedulingService:
         )
         try:
             slots = self.calendar.free_slots(intent.requested_start, intent.duration_minutes)
-        except Exception as exc:
+        except Exception as exc:  # Calendar transport/auth failures vary by provider library; persist the request failure.
             self.store.transition_request(
                 self.settings.workspace_id, request_id, "failed", "assisted_personal",
                 {"provider": "google_calendar", "error": str(exc)[:200]},
@@ -208,7 +208,7 @@ class SchedulingService:
             else:
                 self.store.mark_proposal_manual_required(self.settings.workspace_id, proposal_id, str(exc))
             raise
-        except Exception as exc:
+        except Exception as exc:  # Provider send errors vary; persist ambiguous delivery for manual review, not retry.
             self.store.mark_proposal_manual_required(self.settings.workspace_id, proposal_id, str(exc))
             raise
 
@@ -274,7 +274,7 @@ class SchedulingService:
                 )
             event = self.calendar.create_event(appointment)
             self.store.mark_booked(self.settings.workspace_id, appointment_id, event["id"], event.get("htmlLink"))
-        except Exception as exc:
+        except Exception as exc:  # Calendar provider errors vary; persist the failed state before surfacing.
             self.store.mark_booking_failed(self.settings.workspace_id, appointment_id, str(exc))
             self.store.transition_request(self.settings.workspace_id, appointment["request_id"], "failed", actor, {"error": str(exc)[:200]})
             raise
@@ -282,10 +282,10 @@ class SchedulingService:
         warning = None
         try:
             self._send_booking_confirmation(appointment)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - WhatsApp send can fail after booking; preserve the booked state and manual warning.
             warning = "Calendar event was booked, but WhatsApp confirmation requires operator attention."
             self.store.audit(self.settings.workspace_id, actor, "confirmation.send_failed", "appointment", appointment_id, {"error": str(exc)[:200]})
-        reminder_at = datetime.fromisoformat(appointment["start_at"]).astimezone(timezone.utc) - timedelta(minutes=self.settings.reminder_minutes_before)
+        reminder_at = datetime.fromisoformat(appointment["start_at"]).astimezone(UTC) - timedelta(minutes=self.settings.reminder_minutes_before)
         if reminder_at > utc_now() and not appointment["sender"].startswith("assisted:"):
             self.store.schedule_job(
                 self.settings.workspace_id, "appointment_reminder", f"reminder:{appointment_id}:{self.settings.reminder_minutes_before}",
@@ -343,7 +343,7 @@ class SchedulingService:
                 self.whatsapp.send_template(appointment["sender"], self.settings.whatsapp_reminder_template, appointment["language"], [appointment["title"], local.strftime("%d-%m-%Y %H:%M")])
                 self.store.complete_job(self.settings.workspace_id, job["id"], "sent")
                 totals["sent"] += 1
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - provider timeouts are operationally ambiguous; do not auto-retry reminders.
                 # Provider timeouts are operationally ambiguous: do not auto-retry or risk duplicate reminders.
                 self.store.complete_job(self.settings.workspace_id, job["id"], "manual_required", str(exc)[:500])
                 totals["manual_required"] += 1
@@ -440,6 +440,6 @@ class SchedulingService:
     @staticmethod
     def _message_time(message: dict) -> str:
         try:
-            return datetime.fromtimestamp(int(message.get("timestamp")), tz=timezone.utc).isoformat()
+            return datetime.fromtimestamp(int(message.get("timestamp")), tz=UTC).isoformat()
         except (TypeError, ValueError, OverflowError, OSError):
             return utc_now().isoformat()

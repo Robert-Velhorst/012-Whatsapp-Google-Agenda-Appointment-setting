@@ -4,7 +4,7 @@ import base64
 import hashlib
 import json
 import os
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -46,7 +46,7 @@ class GoogleCalendar:
         try:
             self._credentials()
             return True
-        except Exception:
+        except Exception:  # noqa: BLE001 - Google auth/transport libraries expose several unrelated credential failure types.
             return False
 
     def free_slots(self, start_day, duration_minutes: int, count: int = 3) -> list[datetime]:

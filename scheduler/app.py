@@ -256,7 +256,7 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
         try:
             scheduling.send_proposal(proposal_id, settings.operator_name)
             flash("The proposal was sent through WhatsApp Cloud API.", "success")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - provider SDK errors are not a stable shared exception type; preserve the review state.
             flash(f"Proposal not sent: {exc}", "error")
         return redirect(safe_next_url(request.referrer))
 
@@ -268,7 +268,7 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
         try:
             result = scheduling.book_appointment(appointment_id, settings.operator_name)
             flash(result.get("warning") or "The confirmed slot was booked in Google Calendar.", "success")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - report provider failures without converting them into a success state.
             flash(f"Calendar booking failed safely: {exc}", "error")
         return redirect(safe_next_url(request.referrer))
 
@@ -280,7 +280,7 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
         try:
             scheduling.cancel_appointment(appointment_id, settings.operator_name)
             flash("The appointment was cancelled and queued reminders were stopped.", "success")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - provider cancellation failures must remain visible to the operator.
             flash(f"Cancellation failed safely: {exc}", "error")
         return redirect(safe_next_url(request.referrer))
 
@@ -299,7 +299,7 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
                 consent_status=request.form.get("consent_status", "implicit_inbound"),
             )
             flash("Contact settings saved.", "success")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - validation and database failures are returned as an operator-visible form error.
             flash(f"Contact not updated: {exc}", "error")
         return redirect(url_for("dashboard", view="contacts"))
 
@@ -324,7 +324,7 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             return render_template("booking_complete.html", appointment_id=result["appointment_id"], booked=result["booked"], warning=result["warning"])
         except KeyError:
             abort(404)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - provider SDK failures return the still-reviewable booking page.
             proposal = store.get_proposal_by_token(token)
             timezone_name = (proposal or {}).get("contact_timezone") or settings.timezone
             return render_template("booking.html", proposal=proposal, token=token, timezone_name=timezone_name, display_slots=booking_slots(proposal), error=str(exc), auto_book_confirmed=settings.auto_book_confirmed and not scheduling.is_paused()), 400

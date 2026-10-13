@@ -1,11 +1,11 @@
 from dataclasses import replace
-from types import SimpleNamespace
 from datetime import date, datetime, timedelta
-import pytest
+from types import SimpleNamespace
 
+import pytest
 from googleapiclient.errors import HttpError
 
-from scheduler.calendar import GoogleCalendar, CalendarUnavailable
+from scheduler.calendar import CalendarUnavailable, GoogleCalendar
 from scheduler.crypto import CryptoBox
 
 

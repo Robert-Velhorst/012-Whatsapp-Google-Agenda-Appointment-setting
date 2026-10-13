@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import hashlib
 import base64
+import hashlib
 import json
 import secrets
 import sqlite3
 import threading
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -18,7 +18,7 @@ from .migrations import migrate
 
 
 def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class Store:

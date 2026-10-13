@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import sqlite3
 
-
 MIGRATIONS: list[tuple[int, str]] = [
     (1, """
         CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
@@ -88,14 +87,42 @@ MIGRATIONS: list[tuple[int, str]] = [
 
 def migrate(connection: sqlite3.Connection, now_iso: str) -> list[int]:
     connection.execute("PRAGMA foreign_keys=ON")
-    connection.execute("CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)")
-    applied = {row[0] for row in connection.execute("SELECT version FROM schema_migrations")}
     completed: list[int] = []
     for version, sql in MIGRATIONS:
-        if version in applied:
-            continue
-        connection.executescript(sql)
-        connection.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)", (version, now_iso))
-        completed.append(version)
-    connection.commit()
+        # Web and worker processes can start together against the same SQLite file.
+        # Lock before checking the version so only one process applies each migration.
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
+            )
+            already_applied = connection.execute(
+                "SELECT 1 FROM schema_migrations WHERE version=?", (version,)
+            ).fetchone()
+            if already_applied:
+                connection.commit()
+                continue
+            _execute_statements(connection, sql)
+            connection.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                (version, now_iso),
+            )
+            connection.commit()
+            completed.append(version)
+        except Exception:
+            connection.rollback()
+            raise
     return completed
+
+
+def _execute_statements(connection: sqlite3.Connection, sql: str) -> None:
+    """Execute a migration script without executescript's implicit transaction commit."""
+    statement = ""
+    for line in sql.splitlines():
+        statement += line + "\n"
+        if sqlite3.complete_statement(statement):
+            if statement.strip():
+                connection.execute(statement)
+            statement = ""
+    if statement.strip():
+        raise ValueError("Migration contains an incomplete SQL statement")

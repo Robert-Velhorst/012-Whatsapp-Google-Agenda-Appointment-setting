@@ -74,14 +74,19 @@ def test_concurrent_confirmation_creates_one_appointment(app_bundle):
     app.extensions["scheduling"].send_proposal(proposal_id)
 
     def confirm(_):
-        try:
-            return store.confirm_proposal("default", proposal_id, 0, "contact")
-        except Exception as exc:
-            return type(exc).__name__
+        return store.confirm_proposal("default", proposal_id, 0, "contact")
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        results = list(pool.map(confirm, range(2)))
-    assert sum(isinstance(item, int) for item in results) == 1
+        futures = [pool.submit(confirm, index) for index in range(2)]
+        successes = 0
+        rejected = 0
+        for future in futures:
+            try:
+                future.result()
+                successes += 1
+            except ValueError:
+                rejected += 1
+    assert (successes, rejected) == (1, 1)
     with store.connect() as db:
         assert db.execute("SELECT COUNT(*) FROM appointments WHERE proposal_id=?", (proposal_id,)).fetchone()[0] == 1
 
@@ -118,7 +123,7 @@ def test_contact_timezone_is_preserved_and_used_in_new_proposals(app_bundle):
     proposal = store.get_proposal("default", store.dashboard("default")["items"][0]["proposal_id"])
     expected = datetime.fromisoformat(proposal["slots"][0]).astimezone(ZoneInfo("Asia/Tokyo")).strftime("%H:%M")
     assert proposal["contact_timezone"] == "Asia/Tokyo"
-    assert f"Time zone: Asia/Tokyo" in proposal["reply_text"]
+    assert "Time zone: Asia/Tokyo" in proposal["reply_text"]
     assert expected in proposal["reply_text"]
 
 

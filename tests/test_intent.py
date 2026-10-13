@@ -1,4 +1,5 @@
 from datetime import date
+
 import pytest
 
 from scheduler.intent import analyse, confirmation_index

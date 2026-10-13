@@ -10,6 +10,7 @@ def test_hai_feed_is_disabled_by_default(app_bundle):
 
 def test_hai_feed_is_local_cursor_based_and_pii_minimized(tmp_path):
     from scheduler.app import create_app
+
     from .conftest import FakeCalendar, FakeWhatsApp
 
     app = create_app({
@@ -42,6 +43,7 @@ def test_hai_feed_is_local_cursor_based_and_pii_minimized(tmp_path):
 
 def test_hai_feed_rejects_invalid_cursor(tmp_path):
     from scheduler.app import create_app
+
     from .conftest import FakeCalendar, FakeWhatsApp
 
     app = create_app({
@@ -58,6 +60,7 @@ def test_hai_feed_rejects_invalid_cursor(tmp_path):
 @pytest.mark.parametrize("automation_paused", [True, False])
 def test_public_ingress_allows_google_oauth_bootstrap_only_while_automation_is_paused(tmp_path, automation_paused):
     from scheduler.app import create_app
+
     from .conftest import FakeWhatsApp
 
     class DisconnectedCalendar:

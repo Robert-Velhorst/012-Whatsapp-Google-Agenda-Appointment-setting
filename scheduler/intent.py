@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Protocol
 
-
 SCHEDULING_TERMS = (
     "meet", "meeting", "call", "appointment", "schedule", "availability", "consultation",
     "afspreken", "afspraak", "bellen", "beschikbaar", "inplannen", "overleg", "gesprek",
