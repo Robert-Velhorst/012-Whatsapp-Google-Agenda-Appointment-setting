@@ -20,25 +20,72 @@ class SchedulingService:
         self.whatsapp = whatsapp
         self.intent_provider = intent_provider or DEFAULT_PROVIDER
 
-    def process_payload(self, payload: dict) -> dict[str, int]:
+    def process_payload(self, payload: Any) -> dict[str, int]:
         result = {"accepted": 0, "duplicates": 0, "proposals": 0, "confirmations": 0, "ignored": 0}
-        for entry in payload.get("entry", []):
-            for change in entry.get("changes", []):
+        if not isinstance(payload, dict):
+            result["ignored"] += 1
+            return result
+        entries = payload.get("entry", [])
+        if not isinstance(entries, list):
+            result["ignored"] += 1
+            return result
+        for entry in entries:
+            if not isinstance(entry, dict):
+                result["ignored"] += 1
+                continue
+            changes = entry.get("changes", [])
+            if not isinstance(changes, list):
+                result["ignored"] += 1
+                continue
+            for change in changes:
+                if not isinstance(change, dict):
+                    result["ignored"] += 1
+                    continue
                 value = change.get("value", {})
+                if not isinstance(value, dict):
+                    result["ignored"] += 1
+                    continue
                 messages = value.get("messages", [])
-                if messages and str(value.get("metadata", {}).get("phone_number_id", "")) != str(self.settings.whatsapp_phone_number_id):
+                if messages is None:
+                    continue
+                if not isinstance(messages, list):
+                    result["ignored"] += 1
+                    continue
+                metadata = value.get("metadata", {})
+                if messages and (
+                    not isinstance(metadata, dict)
+                    or str(metadata.get("phone_number_id", "")) != str(self.settings.whatsapp_phone_number_id)
+                ):
                     result["ignored"] += len(messages)
                     continue
-                names = {item.get("wa_id"): item.get("profile", {}).get("name") for item in value.get("contacts", [])}
+                contacts = value.get("contacts", [])
+                names = {}
+                if isinstance(contacts, list):
+                    for item in contacts:
+                        if not isinstance(item, dict):
+                            continue
+                        profile = item.get("profile", {})
+                        if isinstance(profile, dict) and isinstance(item.get("wa_id"), str):
+                            name = profile.get("name")
+                            names[item["wa_id"]] = name if isinstance(name, str) else None
                 for message in messages:
+                    if not isinstance(message, dict):
+                        result["ignored"] += 1
+                        continue
                     if message.get("type") != "text":
                         result["ignored"] += 1
                         continue
                     external_id, sender = message.get("id"), message.get("from")
-                    body = message.get("text", {}).get("body", "").strip()
-                    if not external_id or not sender or not body:
+                    text = message.get("text", {})
+                    body = text.get("body", "") if isinstance(text, dict) else ""
+                    if (
+                        not isinstance(external_id, str) or not external_id.strip()
+                        or not isinstance(sender, str) or not sender.strip()
+                        or not isinstance(body, str) or not body.strip()
+                    ):
                         result["ignored"] += 1
                         continue
+                    body = body.strip()
                     received_at = self._message_time(message)
                     if not self.store.record_inbound(self.settings.workspace_id, external_id, sender, body, received_at):
                         result["duplicates"] += 1
@@ -329,5 +376,5 @@ class SchedulingService:
     def _message_time(message: dict) -> str:
         try:
             return datetime.fromtimestamp(int(message.get("timestamp")), tz=timezone.utc).isoformat()
-        except (TypeError, ValueError, OSError):
+        except (TypeError, ValueError, OverflowError, OSError):
             return utc_now().isoformat()

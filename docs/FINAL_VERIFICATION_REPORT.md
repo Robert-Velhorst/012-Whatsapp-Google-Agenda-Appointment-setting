@@ -67,3 +67,11 @@ This later update supersedes the pending publication/CI statements above for the
 - `scripts/benchmark.py` no longer runs `tracemalloc` during timed writes/reads. It performs a separate allocation pass so instrumentation overhead cannot distort the latency numbers.
 - Three local 1,000-record/500-read runs measured 874–1,171 writes/second, 0.554–1.113 ms dashboard median, 0.593–1.769 ms dashboard p95, 4.551–7.680 ms for a 500-item HAI feed, and 0.48 MiB traced Python peak allocation. Repeat-run spread is reported rather than hidden; these are single-machine measurements, not deployment guarantees.
 - The earlier 2026-08 and 2026-09 figures remain historical results from the instrumented benchmark and are not directly comparable to this corrected method.
+
+## Subsequent follow-up — webhook payload resilience — 2026-10-13
+
+- Hardened the signed WhatsApp webhook parser against malformed top-level and nested JSON shapes, invalid message field types, and malformed optional contacts. Invalid message events are acknowledged as ignored; valid messages continue to process when optional contact details are malformed.
+- Out-of-range message timestamps now safely fall back to the current UTC receipt time rather than raising an overflow error.
+- Full local suite: 79 passed. `compileall`, `pip check`, and `git diff --check` passed.
+- The targeted Codex Security diff scan (`e205d912-37ed-40c7-a711-cea6325d9ecb`) completed with no reportable findings for this patch. It reviewed the changed parser and tests plus the signature-verifying route; it was not a full repository security audit.
+- The code and this verification addendum are pending push and GitHub CI verification.
