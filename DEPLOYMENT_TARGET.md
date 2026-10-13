@@ -1,9 +1,9 @@
-# Deployment target
+# Production deployment target
 
-For this project, the required cloud-access mode is the single-operator Windows 11 application exposed through the operator's assigned ngrok HTTPS domain. For personal WhatsApp assisted mode, the tunnel makes private booking links and Google OAuth callbacks reachable; it does not connect to or automate the personal WhatsApp account. If the optional Business Cloud API is enabled, the tunnel also carries its signed webhook.
+Hetzner is the target for production deployment. New production deployments must be prepared for Hetzner. Do not use Vercel or ngrok for production.
 
-The deployment remains single-host and single-instance. Do not describe it as highly available or suitable for horizontally scaled SaaS. Before opening the tunnel, require `APP_ENV=production`, strong non-default secrets, Google OAuth client configuration, a valid exact `PUBLIC_BASE_URL`, a dedicated ngrok inspector port bound to loopback, and a passing authenticated `public_ingress` readiness check. Meta credentials are additionally required only when `WHATSAPP_CLOUD_API_ENABLED=true`. Verify the assigned HTTPS hostname and public health response before sharing booking links or registering provider callbacks.
+Before deploying or retiring any existing service, verify the running application, database and persistent data, secrets, security controls, backups and restore procedure, rollback path, DNS, TLS, scheduled work, and external integrations. Do not claim migration or cutover until those checks pass.
 
-Keep the HAI JSON feed local and owner-scoped. Never expose it through ngrok or another public tunnel; use loopback or a narrowly allowlisted local Docker Desktop gateway as documented in [HAI integration](docs/HAI_INTEGRATION.md).
+Document the Hetzner architecture, required infrastructure, deployment steps, data and database migration, DNS/TLS, secrets, monitoring, backups, and rollback in the project deployment guide before cutover. Keep credentials and private operational data out of this file and source control.
 
-The ngrok account, assigned domain, available endpoint slot, provider credentials and approvals, and real-account acceptance are operator-controlled external requirements. No tunnel, provider account, or Google Calendar event is considered live-ready until the operator completes and verifies those steps.
+Local development and test tooling may remain when needed, but it must not be presented as production hosting.
