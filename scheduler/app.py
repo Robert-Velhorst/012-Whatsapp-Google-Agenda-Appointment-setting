@@ -223,6 +223,7 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             audit=store.recent_audit(settings.workspace_id, 200) if view == "audit" else [],
             mode=settings.app_env, workspace_name=settings.workspace_name, operator_name=settings.operator_name,
             timezone_name=settings.timezone, query=query, status=status,
+            google_oauth_configured=bool(settings.google_client_secrets_file and os.path.exists(settings.google_client_secrets_file)),
         )
 
     @app.post("/actions/assisted/analyze")

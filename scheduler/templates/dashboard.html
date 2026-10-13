@@ -101,7 +101,7 @@
                   </td>
                 </tr>
               {% else %}
-                <tr><td class="empty-row" colspan="6">No scheduling requests match this view. New verified WhatsApp messages will appear here.</td></tr>
+                <tr><td class="empty-row" colspan="6">{% if not readiness.providers.whatsapp.enabled %}For personal WhatsApp, paste a scheduling message in <a href="{{ url_for('dashboard', view='assisted') }}">Personal WhatsApp</a> to check availability and prepare a draft.{% else %}No scheduling requests match this view. New verified WhatsApp messages will appear here.{% endif %}</td></tr>
               {% endfor %}
               </tbody>
             </table>
@@ -189,7 +189,7 @@
 
       {% elif view == 'settings' %}
       <div class="page-heading"><div><h1>Settings &amp; readiness</h1><p>Configuration is environment-owned; this page reports truth without exposing secrets.</p></div></div>
-      <section class="settings-grid"><div class="settings-block"><h2>Runtime mode</h2><dl><dt>Environment</dt><dd>{{ mode }}</dd><dt>Workspace</dt><dd>{{ workspace_name }}</dd><dt>Timezone</dt><dd>{{ timezone_name }}</dd><dt>Storage encryption</dt><dd>{{ 'Enabled' if readiness.storage_encrypted else 'Not configured' }}</dd></dl></div><div class="settings-block"><h2>Readiness issues</h2><ul class="issue-list">{% for error in readiness.errors %}<li class="error">{{ error }}</li>{% endfor %}{% for warning in readiness.warnings %}<li>{{ warning }}</li>{% endfor %}{% if not readiness.errors and not readiness.warnings %}<li>No configuration issues detected.</li>{% endif %}</ul><a class="secondary-button" href="{{ url_for('google_connect') }}">Connect Google Calendar</a></div></section>
+      <section class="settings-grid"><div class="settings-block"><h2>Runtime mode</h2><dl><dt>Environment</dt><dd>{{ mode }}</dd><dt>Workspace</dt><dd>{{ workspace_name }}</dd><dt>Timezone</dt><dd>{{ timezone_name }}</dd><dt>Storage encryption</dt><dd>{{ 'Enabled' if readiness.storage_encrypted else 'Not configured' }}</dd></dl></div><div class="settings-block"><h2>Readiness issues</h2><ul class="issue-list">{% for error in readiness.errors %}<li class="error">{{ error }}</li>{% endfor %}{% for warning in readiness.warnings %}<li>{{ warning }}</li>{% endfor %}{% if not readiness.errors and not readiness.warnings %}<li>No configuration issues detected.</li>{% endif %}</ul>{% if google_oauth_configured %}<a class="secondary-button" href="{{ url_for('google_connect') }}">Connect Google Calendar</a>{% else %}<p>Configure <code>GOOGLE_CLIENT_SECRETS_FILE</code> with the OAuth client file stored outside the repository before connecting Google Calendar.</p>{% endif %}</div></section>
 
       {% else %}
       <div class="page-heading"><div><h1>Operator help</h1><p>The safe path from message to calendar event.</p></div></div>

@@ -70,9 +70,9 @@ def test_settings_explains_missing_google_oauth_file_and_hides_unavailable_actio
     assert b'href="/api/google/connect"' not in settings_page.data
 
     unavailable_action = client.get("/api/google/connect")
-    assert unavailable_action.status_code == 302
-    assert unavailable_action.headers["Location"] == "/?view=settings"
-    assert b"Google OAuth is not configured" in client.get(unavailable_action.headers["Location"]).data
+    assert unavailable_action.status_code == 400
+    assert unavailable_action.get_json()["error"]["code"] == "google_credentials_missing"
+    assert "GOOGLE_CLIENT_SECRETS_FILE" in unavailable_action.get_json()["error"]["message"]
 
 
 def test_contacts_screen_exposes_valid_csrf_and_reauthenticated_delete_controls(app_bundle):
