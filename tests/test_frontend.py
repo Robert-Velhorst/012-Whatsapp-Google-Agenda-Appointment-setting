@@ -92,6 +92,8 @@ def test_contacts_screen_exposes_valid_csrf_and_reauthenticated_delete_controls(
     assert f'id="contact-delete-{contact_id}"' in html
     assert f'form="contact-update-{contact_id}"' in html
     assert f'form="contact-delete-{contact_id}"' in html
+    assert f'href="/api/contacts/{contact_id}/export"' in html
+    assert "Download JSON" in html
     assert 'name="csrf_token" value="contacts-csrf"' in html
     assert 'autocomplete="current-password" required' in html
     assert "Deletion permanently removes" in html
@@ -113,3 +115,4 @@ def test_static_assets_are_content_versioned_before_immutable_caching(app_bundle
     assert versioned.status_code == unversioned.status_code == 200
     assert versioned.headers["Cache-Control"] == "public, max-age=31536000, immutable"
     assert unversioned.headers["Cache-Control"] == "public, max-age=0, must-revalidate"
+
