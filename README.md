@@ -108,7 +108,7 @@ The optional HAI integration is a local-network-only, read-only JSON feed contai
 
 ## Performance
 
-The current 1,000-record Windows benchmark reports 874–1,171 writes/second, 0.554–1.113 ms median dashboard reads, and 4.551–7.680 ms for a 500-item HAI page across three repeated runs. These are local observations, not production guarantees; the benchmark separates performance timing from Python allocation tracing. See [performance and resource profile](docs/PERFORMANCE.md).
+Two serial three-run samples on this Windows 11 host (six runs total) measured 230.6–782.2 records/second, 0.660–1.344 ms median dashboard reads, 1.154–2.039 ms dashboard p95, and 4.339–10.514 ms for a 500-item HAI page. The wide spread is not a capacity guarantee and does not yet justify a write-path optimization. These local runs use a temporary database; the benchmark separates timing from Python allocation tracing. See [performance and resource profile](docs/PERFORMANCE.md).
 
 ## Administrative API
 

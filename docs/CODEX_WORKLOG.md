@@ -20,7 +20,7 @@
 - Added a Windows package workflow self-check for launcher identity/recovery. It passed locally under PowerShell 7 and Windows PowerShell 5.1; all Windows PowerShell scripts parsed under PowerShell 7.
 - Built the standalone x64 package on Windows 11 Pro (build 26300). Package health/login smoke passed; ZIP SHA-256 `94AF076E7330E003E34544A2432C80DA29629AD02A368F1631CDAEF930A9ACE`, 32.23 MiB.
 - The full Python suite passed 112 tests, `compileall` passed, and `pip check` found no broken requirements. Real Google OAuth, personal WhatsApp, HAI runtime, ngrok exposure, and target-PC acceptance remain unverified; no provider credentials or tunnel were used.
-- Three serial local performance runs were added to `docs/PERFORMANCE.md`. Variability is too high to justify claiming a measured optimization, so no write-path optimization was promoted.
+- Six serial local performance runs are now recorded in `docs/PERFORMANCE.md`. Variability is too high to justify claiming a measured optimization, so no write-path optimization was promoted.
 - Exact published source SHA `01b45886928844b9c92087abad5ca6bf5407d9f9` passed push CI `38478527287`, PR CI `38478532204`, Windows package `38478532233`, and CodeQL run `38478527776`. The GitHub-hosted Windows workflow emitted a non-failing Node.js 20 deprecation advisory.
 
 ## 2026-10-13 - Keep immutable static caching safe across upgrades

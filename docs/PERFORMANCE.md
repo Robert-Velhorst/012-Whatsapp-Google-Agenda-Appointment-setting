@@ -50,7 +50,7 @@ Write throughput and tail latency vary across repeat runs on the same host, whic
 
 An additional three serial runs on 2026-10-13 produced 134–564 writes/second, 0.593–0.664 ms dashboard median, 0.777–1.289 ms dashboard p95, 4.720–6.608 ms for a 500-item HAI page, and 0.48 MiB traced Python peak. The large write-throughput spread versus the earlier sample is a reason to profile under controlled, representative host load before drawing a capacity conclusion; do not treat either sample as a stable throughput guarantee. The benchmark database is temporary and does not touch the operator's configured database.
 
-Three serial runs on 2026-10-14 with the same command on Windows 11 produced:
+The first three serial runs on 2026-10-14 with the same command on Windows 11 produced:
 
 | Workload | Observed range |
 |---|---:|
@@ -61,6 +61,18 @@ Three serial runs on 2026-10-14 with the same command on Windows 11 produced:
 | Traced Python peak allocation | 0.49 MiB in each run |
 
 These temporary-database runs were serial and verified 1,000 records each. The write-throughput spread remains too large to support a reliable before/after optimization claim; no write-path optimization was promoted from this sample. Profile on a controlled, representative deployment host before tuning persistence.
+
+An additional three serial runs later on 2026-10-14 produced:
+
+| Workload | Observed range |
+|---|---:|
+| Create 1,000 contacts and requests | 388.1–782.2 records/second |
+| Dashboard query median | 0.735–1.331 ms |
+| Dashboard query p95 | 1.377–1.773 ms |
+| HAI feed page of 500 items | 4.339–7.911 ms |
+| Traced Python peak allocation | 0.49 MiB in each run |
+
+Across both same-day samples (six serial runs), the combined ranges were 230.6–782.2 records/second, 0.660–1.344 ms dashboard median, 1.154–2.039 ms p95, 4.339–10.514 ms for the 500-item HAI page, and 0.49 MiB traced Python peak. Each run verified 1,000 records and used a temporary database. The spread still does not support a reliable optimization claim; no write-path change was promoted.
 
 The structured run artifact at `.ecc/benchmarks/sqlite-workload-2026-10-13.json` records another three-run sample against commit `6eb14af`. It observed 993–1,149 records/second, 0.551–0.584 ms dashboard median, 0.638–0.806 ms dashboard p95, 3.655–4.852 ms for a 500-item HAI page, and 0.48 MiB traced Python peak. These are local synthetic results only; concurrent load, cold cache, and real provider latency remain unmeasured.
 
