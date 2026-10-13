@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import secrets
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -13,6 +14,21 @@ load_dotenv()
 
 def _bool(name: str, default: bool = False) -> bool:
     return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def validate_server_bind(app_env: str, host: str) -> None:
+    """Keep non-production servers on loopback unless explicitly in production."""
+    if app_env == "production":
+        return
+    try:
+        is_loopback = ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        is_loopback = host.casefold() == "localhost"
+    if not is_loopback:
+        raise RuntimeError(
+            "Development and test servers must bind to loopback; "
+            "use APP_ENV=production with strong secrets for network access."
+        )
 
 
 @dataclass(frozen=True)
@@ -71,8 +87,8 @@ class Settings:
             "workspace_name": os.getenv("WORKSPACE_NAME", "My scheduling desk"),
             "operator_name": os.getenv("OPERATOR_NAME", "Operator"),
             "database_path": Path(os.getenv("DATABASE_PATH", "./data/scheduler.sqlite3")),
-            "flask_secret_key": os.getenv("FLASK_SECRET_KEY", "development-only-change-me"),
-            "admin_api_token": os.getenv("ADMIN_API_TOKEN", "development-admin-token"),
+            "flask_secret_key": os.getenv("FLASK_SECRET_KEY", ""),
+            "admin_api_token": os.getenv("ADMIN_API_TOKEN", ""),
             "admin_password_hash": os.getenv("ADMIN_PASSWORD_HASH", ""),
             "data_encryption_key": os.getenv("DATA_ENCRYPTION_KEY", ""),
             "whatsapp_cloud_api_enabled": _bool("WHATSAPP_CLOUD_API_ENABLED") if whatsapp_flag is not None else inferred_whatsapp_enabled,
@@ -104,6 +120,11 @@ class Settings:
         }
         if overrides:
             values.update(overrides)
+        if values["app_env"] != "production":
+            if not values["flask_secret_key"]:
+                values["flask_secret_key"] = secrets.token_urlsafe(32)
+            if not values["admin_api_token"]:
+                values["admin_api_token"] = secrets.token_urlsafe(32)
         if isinstance(values["database_path"], str):
             values["database_path"] = Path(values["database_path"])
         return cls(**values)

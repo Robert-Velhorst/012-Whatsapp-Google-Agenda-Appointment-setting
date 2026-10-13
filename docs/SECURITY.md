@@ -37,7 +37,7 @@ Every domain table carries `workspace_id`; store queries require it. The shipped
 - Unique inbound message ID per workspace.
 - Unique request source, proposal/request, appointment/request, booking token hash, job dedupe key, and Google event ID.
 - Atomic per-contact outbound WhatsApp reservations per hour, including concurrent requests.
-- Emergency pause blocks outbound messages, calendar changes, and workers while preserving signed inbound records.
+- Emergency pause blocks outbound messages, calendar changes, and due reminder sends while preserving signed inbound records. The worker still performs stale-claim recovery, proposal expiry, and configured retention purging while paused.
 - A proposal is atomically claimed before provider delivery, so simultaneous send actions cannot call WhatsApp twice.
 - Provider timeouts and process interruption during external actions become visible manual exceptions instead of blind retries.
 - Expired booking proposals are rejected equally through the private link and WhatsApp reply path.

@@ -48,7 +48,7 @@ The source setup command performs the same password and key initialization as th
 
 The included Windows launchers install, start, stop, package, and smoke-test the application. See [Windows 11 and ngrok](docs/WINDOWS_AND_NGROK.md).
 
-Development mode is visibly labelled and may start with incomplete provider settings. `APP_ENV=production` fails closed unless HTTPS, strong secrets, encryption, and Google client credentials are configured. Meta credentials are required only when `WHATSAPP_CLOUD_API_ENABLED=true`; the assisted personal workflow does not require them.
+Development mode is visibly labelled and may start with incomplete provider settings. If development/test secrets are omitted, the process creates random ephemeral signing/API secrets; browser sessions and API clients therefore need to reconnect after a restart. Use first-run setup for stable local credentials. Development/test servers are loopback-only. `APP_ENV=production` fails closed unless HTTPS, strong secrets, encryption, and Google client credentials are configured. Meta credentials are required only when `WHATSAPP_CLOUD_API_ENABLED=true`; the assisted personal workflow does not require them.
 
 ## Provider onboarding
 
@@ -77,6 +77,7 @@ Set `WHATSAPP_CLOUD_API_ENABLED=true` to enable the signed webhook and Business 
 ```powershell
 python -m scheduler.cli doctor
 python -m scheduler.cli migrate
+python -m scheduler.cli hash-password
 python -m scheduler.cli worker --once
 python -m scheduler.cli worker --interval 30
 python -m scheduler.cli backup
@@ -89,6 +90,8 @@ Restore is deliberately explicit and first preserves the previous database:
 ```powershell
 python -m scheduler.cli restore C:\safe\agenda-relay-backup.sqlite3 --confirm RESTORE
 ```
+
+`hash-password` prompts interactively; do not pass a password as a command-line argument, where it could be retained in shell history or process listings.
 
 ## Docker
 
@@ -204,7 +207,7 @@ Start from [.env.example](.env.example). Set values locally; do not commit `.env
 | `PORT` | Local web port; default 5000 |
 | `WORKER_INTERVAL_SECONDS` | Standalone/source-launcher polling interval; default 30 |
 | `WAITRESS_THREADS`, `WAITRESS_CONNECTION_LIMIT` | Packaged server limits; defaults 4 and 100 |
-| `BIND_HOST` | Python/packaged bind address; default loopback; not listed in the example file |
+| `BIND_HOST` | Server bind address; default loopback. Development/test entrypoints reject non-loopback binds; network access requires production configuration. |
 | `GOOGLE_CLIENT_SECRETS_FILE_HOST` | Docker Compose host path for the read-only OAuth credential mount |
 
 The source Windows launcher fixes Waitress at four threads and 100 connections. Docker Compose fixes host port 5000 and the worker interval at 30 seconds; change the Compose definition to alter those values.

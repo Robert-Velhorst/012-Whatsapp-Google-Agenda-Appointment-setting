@@ -34,8 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     restore.add_argument("--confirm", required=True, help="Must equal RESTORE")
     bundle = sub.add_parser("support-bundle", help="Create a redacted diagnostic bundle")
     bundle.add_argument("--output", type=Path)
-    password = sub.add_parser("hash-password", help="Generate ADMIN_PASSWORD_HASH without storing the password")
-    password.add_argument("password", nargs="?")
+    sub.add_parser("hash-password", help="Generate ADMIN_PASSWORD_HASH without storing the password")
     return parser
 
 
@@ -130,7 +129,7 @@ def main(argv: list[str] | None = None) -> int:
         return interactive_setup()
     if args.command == "hash-password":
         import getpass
-        password = args.password or getpass.getpass("Operator password: ")
+        password = getpass.getpass("Operator password: ")
         if len(password) < 12:
             print("Password must be at least 12 characters", file=sys.stderr)
             return 2

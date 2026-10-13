@@ -4,11 +4,13 @@ import sqlite3
 from contextlib import closing
 
 import pytest
+from werkzeug.security import check_password_hash
 
 from scheduler.cli import (
     _database_is_healthy_and_writable,
     _online_backup,
     _restore_database,
+    main,
 )
 
 
@@ -69,3 +71,14 @@ def test_restore_rejects_non_app_sqlite_database(app_bundle, tmp_path):
 
     with pytest.raises(ValueError, match="application schema"):
         _restore_database(invalid, app.extensions["settings"].database_path, store)
+
+
+def test_hash_password_requires_interactive_prompt(monkeypatch, capsys):
+    monkeypatch.setattr("getpass.getpass", lambda prompt: "a private operator password")
+
+    assert main(["hash-password"]) == 0
+    generated_hash = capsys.readouterr().out.strip()
+    assert check_password_hash(generated_hash, "a private operator password")
+
+    with pytest.raises(SystemExit):
+        main(["hash-password", "a private operator password"])

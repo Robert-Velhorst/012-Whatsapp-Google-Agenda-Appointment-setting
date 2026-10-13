@@ -7,7 +7,7 @@ services:
     env_file: .env
     volumes:
       - ./data:/app/data
-      - ${GOOGLE_CLIENT_SECRETS_FILE_HOST:-./credentials.json}:/run/secrets/google-client.json:ro
+      - ${GOOGLE_CLIENT_SECRETS_FILE_HOST:?Set GOOGLE_CLIENT_SECRETS_FILE_HOST to an OAuth client JSON file outside the repository}:/run/secrets/google-client.json:ro
     environment:
       APP_ENV: production
       GOOGLE_CLIENT_SECRETS_FILE: /run/secrets/google-client.json
@@ -23,7 +23,7 @@ services:
     env_file: .env
     volumes:
       - ./data:/app/data
-      - ${GOOGLE_CLIENT_SECRETS_FILE_HOST:-./credentials.json}:/run/secrets/google-client.json:ro
+      - ${GOOGLE_CLIENT_SECRETS_FILE_HOST:?Set GOOGLE_CLIENT_SECRETS_FILE_HOST to an OAuth client JSON file outside the repository}:/run/secrets/google-client.json:ro
     environment:
       APP_ENV: production
       GOOGLE_CLIENT_SECRETS_FILE: /run/secrets/google-client.json

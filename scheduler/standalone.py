@@ -8,6 +8,7 @@ import threading
 from waitress import serve
 
 from scheduler.app import create_app
+from scheduler.config import Settings, validate_server_bind
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,9 @@ def main() -> None:
     if args.setup:
         from scheduler.setup import interactive_setup
         raise SystemExit(interactive_setup())
+    settings = Settings.from_env()
+    host = os.getenv("BIND_HOST", "127.0.0.1")
+    validate_server_bind(settings.app_env, host)
     app = create_app()
     service = app.extensions["scheduling"]
     interval = max(int(os.getenv("WORKER_INTERVAL_SECONDS", "30")), 5)
@@ -37,7 +41,7 @@ def main() -> None:
     try:
         serve(
             app,
-            host=os.getenv("BIND_HOST", "127.0.0.1"),
+            host=host,
             port=int(os.getenv("PORT", "5000")),
             threads=max(2, min(int(os.getenv("WAITRESS_THREADS", "4")), 16)),
             connection_limit=max(20, min(int(os.getenv("WAITRESS_CONNECTION_LIMIT", "100")), 1000)),
