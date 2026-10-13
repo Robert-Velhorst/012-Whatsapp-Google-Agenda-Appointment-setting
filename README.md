@@ -102,7 +102,7 @@ The optional HAI integration is a local-network-only, read-only JSON feed contai
 
 ## Performance
 
-The persistent SQLite/WAL path is measured at 601.5 request records per second with 4.792 ms median dashboard reads over 1,000 records on the development host. Results and the repeatable benchmark are documented in [performance and resource profile](docs/PERFORMANCE.md).
+The current 1,000-record Windows benchmark reports 874–1,171 writes/second, 0.554–1.113 ms median dashboard reads, and 4.551–7.680 ms for a 500-item HAI page across three repeated runs. These are local observations, not production guarantees; the benchmark separates performance timing from Python allocation tracing. See [performance and resource profile](docs/PERFORMANCE.md).
 
 ## Administrative API
 

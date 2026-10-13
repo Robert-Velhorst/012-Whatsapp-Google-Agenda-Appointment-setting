@@ -32,6 +32,22 @@ The same bounded command was rerun on the Windows 11 development host:
 
 This is a dated local observation from one run, not a production capacity guarantee. It is not directly comparable to the 2026-08-09 baseline as a promise of a fixed speedup; hardware load, cache state, and measurement variability can affect the result. Re-run the command on the intended deployment machine before capacity planning.
 
+## Benchmark methodology correction — 2026-10-13
+
+The original benchmark enabled `tracemalloc` during the timed write, dashboard-read, and feed workloads. Allocation tracing adds runtime overhead, so those timings were instrumented and should be treated as historical rather than directly comparable to uninstrumented application performance. The benchmark now runs the timed pass without tracing and repeats the workload separately for Python allocation measurement. The allocation figure excludes native SQLite memory and is not process working set.
+
+Three consecutive runs of `python -m scripts.benchmark --records 1000 --reads 500` on this Windows 11 host produced:
+
+| Workload | Observed range |
+|---|---:|
+| Create 1,000 contacts and requests | 874–1,171 records/second |
+| Dashboard query median | 0.554–1.113 ms |
+| Dashboard query p95 | 0.593–1.769 ms |
+| HAI feed page of 500 items | 4.551–7.680 ms |
+| Traced Python peak allocation | 0.48 MiB in each run |
+
+Write throughput and tail latency vary across repeat runs on the same host, which is why the table reports a range and not a performance guarantee. Re-run on the deployment machine under representative load before sizing or making latency commitments.
+
 Calendar availability uses one Google FreeBusy query for the full 21-day search window and filters returned busy ranges against local business hours. In the regression scenario with two weeks of full weekdays, this reduced the provider-call count from 11 per-day queries to one batched query. Booking still performs a separate final availability check before event insertion. The call-count result is a deterministic test, not a live Google latency benchmark.
 
 The executable's larger idle footprint comes from bundled Python and provider libraries. For horizontal scaling, multiple operators, or sustained write concurrency, move persistence and rate/job coordination to PostgreSQL rather than sharing the SQLite file across machines.

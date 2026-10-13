@@ -61,3 +61,9 @@ This later update supersedes the pending publication/CI statements above for the
 - GitHub push CI run `38370672877` passed on commit `0a3d9fa7d61c68cc38640e577fa888b22f517101` (dependency audit, compilation, tests, Docker build).
 - Browser QA limitation: the attached Chrome DevTools instance refused a new tab because its profile was already in use; an isolated Browserbase session could not reach the local `127.0.0.1` test server (`ERR_CONNECTION_REFUSED`). The changed operator behavior was verified with Flask's test client, but no fresh browser screenshot/console audit is claimed.
 - No ngrok tunnel or live provider action was run. The actual public HTTPS callback, Google consent, Meta webhook delivery, personal WhatsApp, and real calendar event path remain unverified. Follow-up commits `2fd92d5`, `27c4b73`, and `0a3d9fa` were pushed to the existing branch after PR #1 had already merged; they are not part of that earlier merge.
+
+## Performance measurement correction — 2026-10-13
+
+- `scripts/benchmark.py` no longer runs `tracemalloc` during timed writes/reads. It performs a separate allocation pass so instrumentation overhead cannot distort the latency numbers.
+- Three local 1,000-record/500-read runs measured 874–1,171 writes/second, 0.554–1.113 ms dashboard median, 0.593–1.769 ms dashboard p95, 4.551–7.680 ms for a 500-item HAI feed, and 0.48 MiB traced Python peak allocation. Repeat-run spread is reported rather than hidden; these are single-machine measurements, not deployment guarantees.
+- The earlier 2026-08 and 2026-09 figures remain historical results from the instrumented benchmark and are not directly comparable to this corrected method.
