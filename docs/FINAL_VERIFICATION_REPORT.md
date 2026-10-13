@@ -109,7 +109,7 @@ This later update supersedes the pending publication/CI statements above for the
 - Agenda Relay previously returned only `cursor`. HAI therefore did not persist the continuation cursor and could keep retrieving only the initial bounded snapshot, missing later request updates. The older integration note incorrectly said HAI never returned a cursor.
 - The feed now emits `nextCursor` and preserves `cursor` as a compatibility alias. The local integration test starts with a snapshot, adds a new request, then verifies the subsequent cursor request returns it.
 - HAI integration tests: 5 passed. Full local suite: 112 passed. Live HAI source creation/sync and historical backfill remain unverified.
-- The HAI code and documentation were pushed before this launcher follow-up; live HAI source creation/sync and historical backfill remain unverified.
+- Live HAI source creation/sync and historical backfill remain unverified.
 
 ## Current Windows 11 package and launcher verification — 2026-10-14
 

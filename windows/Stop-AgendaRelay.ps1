@@ -8,6 +8,7 @@ $Root = Split-Path -Parent $PSScriptRoot
 $state = Join-Path $Root "data\runtime\standalone.json"
 if (-not (Test-Path -LiteralPath $state)) { Write-Host "Agenda Relay is not running."; return }
 $runtime = Get-Content -LiteralPath $state -Raw | ConvertFrom-Json
+$stillRunning = $false
 foreach ($role in @('web','worker')) {
     $id = 0
     $property = if ($role -eq 'web') { 'webPid' } else { 'workerPid' }
@@ -18,9 +19,15 @@ foreach ($role in @('web','worker')) {
     $process = Get-AgendaRelayProcess -ProcessId $id -Root $Root -Role $role
     if ($process) {
         Stop-Process -Id $id -Force
+        try { Wait-Process -Id $id -Timeout 5 -ErrorAction Stop } catch {}
+        if (Get-AgendaRelayProcess -ProcessId $id -Root $Root -Role $role) {
+            Write-Warning "Agenda Relay $role process $id is still running; runtime state will be retained so it can be checked again."
+            $stillRunning = $true
+        }
     } else {
         Write-Warning "Process ID $id is no longer the recorded Agenda Relay $role process; it was left untouched."
     }
 }
+if ($stillRunning) { throw "Agenda Relay did not stop completely. Review the warnings above and retry after resolving the remaining process." }
 Remove-Item -LiteralPath $state -Force
-Write-Host "Agenda Relay stopped."
+Write-Host "Agenda Relay processes stopped; standalone runtime state removed."

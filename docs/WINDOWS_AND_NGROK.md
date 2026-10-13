@@ -12,7 +12,7 @@ The source distribution also includes guided launchers:
 .\windows\Stop-AgendaRelay.ps1
 ```
 
-The source launcher refuses to start if its port is already occupied. When recovering an existing run, it verifies that recorded process IDs still belong to the expected Agenda Relay executables and command lines, checks the web health endpoint, and restarts a missing worker without launching a duplicate web server. The stop script likewise leaves unrelated or PID-reused processes untouched. Runtime state, SQLite data, and logs stay below `data/` and are excluded from Git. The Windows workflow tests launcher identity/recovery decisions and builds and smoke-tests the packaged executable on version tags and manual runs.
+The source launcher refuses to start if its port is already occupied. When recovering an existing run, it verifies that recorded process IDs still belong to the expected Agenda Relay executables and command lines, checks the web health endpoint, and restarts a missing worker without launching a duplicate web server. It removes a restarted worker if its updated runtime state cannot be saved. The stop script leaves unrelated or PID-reused processes untouched and retains runtime state if an owned process does not exit. Runtime state, SQLite data, and logs stay below `data/` and are excluded from Git. The Windows workflow tests launcher identity/recovery decisions and builds and smoke-tests the packaged executable on version tags and manual runs.
 
 ## Local testing and operator acceptance through ngrok
 
