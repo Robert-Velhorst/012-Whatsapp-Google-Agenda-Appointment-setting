@@ -6,7 +6,7 @@ python-dateutil==2.9.0.post0
 requests==2.33.0
 pytest==9.0.3
 tzdata==2025.2
-python-dotenv==1.2.2
+python-dotenv==1.2.4
 cryptography==50.0.0
 waitress==3.0.2
 oauthlib==4.0.0
