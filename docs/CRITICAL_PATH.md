@@ -22,7 +22,7 @@ Google FreeBusy is queried for business-hour gaps in the configured timezone. Th
 
 ## 4. User confirms
 
-After the proposal is sent through official WhatsApp Cloud API, the contact can reply with 1, 2, or 3. The app resolves that reply only against the contact's most recent unexpired sent proposal. The contact can alternatively choose through `/book/<private-token>` and must check an explicit consent box. The public form is CSRF-protected and displays slots in the saved contact timezone.
+After a proposal is accepted by the official WhatsApp Cloud API, signed status callbacks can report sent, delivered, read, failed, or deleted. The app stores these receipts idempotently and displays the latest provider timestamp; a missing callback remains unknown and never causes a retry or booking transition. The contact can reply with 1, 2, or 3. The app resolves that reply only against the contact's most recent unexpired sent proposal. The contact can alternatively choose through `/book/<private-token>` and must check an explicit consent box. The public form is CSRF-protected and displays slots in the saved contact timezone.
 
 Confirmation atomically closes the proposal and creates exactly one pending appointment for the request, including under concurrent replies.
 

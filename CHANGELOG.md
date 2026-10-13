@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Store signed WhatsApp Cloud API delivery-status callbacks idempotently and show the latest provider-reported status; receipts are included in contact export/deletion and retention.
+
 ## 1.0.0 - 2026-08-09
 
 - Complete local critical path from signed WhatsApp message through reviewed proposal, contact confirmation, idempotent Google event, confirmation, reminder job, and audit trail.

@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from datetime import timedelta
 
@@ -30,6 +31,17 @@ def test_retention_purge_runs_while_automation_is_paused(app_bundle):
     received_at = (utc_now() - timedelta(days=settings.data_retention_days + 1)).isoformat()
     store.record_inbound("default", "wamid.expired", sender, "old scheduling message", received_at)
     store.record_inbound("default", "wamid.current", sender, "current scheduling message", utc_now().isoformat())
+    with store.connect() as db:
+        db.execute(
+            "INSERT INTO whatsapp_delivery_events(workspace_id,provider_message_id,status,provider_timestamp,error_code,received_at) "
+            "VALUES(?,?,?,?,?,?)",
+            ("default", "wamid.old", "delivered", received_at, None, received_at),
+        )
+        db.execute(
+            "INSERT INTO audit_events(workspace_id,actor,action,entity_type,entity_id,detail_json,created_at) "
+            "VALUES(?,?,?,?,?,?,?)",
+            ("default", "whatsapp_webhook", "whatsapp.delivery_status", "provider_message", "wamid.old", "{}", received_at),
+        )
     store.schedule_job("default", "appointment_reminder", "paused-reminder", utc_now().isoformat(), {"appointment_id": 999})
     store.set_state("default", "automation_paused", "true")
 
@@ -37,6 +49,17 @@ def test_retention_purge_runs_while_automation_is_paused(app_bundle):
 
     assert [item["external_id"] for item in store.recent_messages("default", sender)] == ["wamid.current"]
     assert result["claimed"] == 0
+    with store.connect() as db:
+        assert db.execute("SELECT COUNT(*) FROM whatsapp_delivery_events").fetchone()[0] == 0
+        assert db.execute(
+            "SELECT COUNT(*) FROM audit_events WHERE action='whatsapp.delivery_status'",
+        ).fetchone()[0] == 0
+        purge_event = db.execute(
+            "SELECT detail_json FROM audit_events WHERE workspace_id=? AND action='privacy.retention_purge'",
+            ("default",),
+        ).fetchone()
+    assert json.loads(purge_event[0])["delivery_events_deleted"] == 1
+    assert json.loads(purge_event[0])["delivery_audit_events_deleted"] == 1
     with store.connect() as db:
         first_purge_audits = db.execute(
             "SELECT COUNT(*) FROM audit_events WHERE workspace_id=? AND action='privacy.retention_purge'",

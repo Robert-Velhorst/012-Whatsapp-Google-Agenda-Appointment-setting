@@ -95,6 +95,102 @@ def test_webhook_is_idempotent_and_creates_reviewable_proposal(app_bundle, auth_
     assert whatsapp.sent == []
 
 
+def test_signed_status_webhooks_store_latest_provider_receipt_idempotently(app_bundle):
+    app, _, _ = app_bundle
+    client = app.test_client()
+    app.extensions["scheduling"].process_payload(webhook())
+    proposal = app.extensions["store"].dashboard("default")["items"][0]
+    app.extensions["scheduling"].send_proposal(proposal["proposal_id"])
+
+    def status_event(status, timestamp, **extra):
+        return {
+            "entry": [{"changes": [{"value": {
+                "metadata": {"phone_number_id": "123"},
+                "statuses": [{
+                    "id": "wamid.out.1", "status": status, "timestamp": str(timestamp),
+                    "recipient_id": "31612345678", **extra,
+                }],
+            }}]}]
+        }
+
+    delivered = post_webhook(client, status_event("delivered", 1786000010))
+    duplicate = post_webhook(client, status_event("delivered", 1786000010))
+    read = post_webhook(client, status_event("read", 1786000020))
+    late_delivery = post_webhook(client, status_event("delivered", 1786000010))
+
+    assert delivered.get_json()["delivery_statuses"] == 1
+    assert duplicate.get_json()["duplicate_statuses"] == 1
+    assert read.get_json()["delivery_statuses"] == 1
+    assert late_delivery.get_json()["duplicate_statuses"] == 1
+    detail = app.extensions["store"].request_detail("default", proposal["id"])
+    assert detail["delivery_status"] == {
+        "status": "read", "provider_timestamp": "2026-08-06T07:07:00+00:00", "error_code": None,
+    }
+    with client.session_transaction() as current:
+        current["operator_authenticated"] = True
+        current["csrf_token"] = "webhook-status-test"
+    page = client.get(f"/?view=scheduling&request={proposal['id']}")
+    assert b"WhatsApp delivery status" in page.data
+    assert b"read" in page.data
+    assert b"31612345678" not in page.data
+    with app.extensions["store"].connect() as db:
+        columns = {row[1] for row in db.execute("PRAGMA table_info(whatsapp_delivery_events)")}
+        rows = db.execute("SELECT * FROM whatsapp_delivery_events").fetchall()
+        audit_count = db.execute(
+            "SELECT COUNT(*) FROM audit_events WHERE action='whatsapp.delivery_status'",
+        ).fetchone()[0]
+    assert len(rows) == 2
+    assert audit_count == 2
+    assert "recipient_id" not in columns
+    assert "raw_payload" not in columns
+
+
+def test_status_receipts_are_phone_scoped_and_invalid_statuses_are_ignored(app_bundle):
+    app, _, _ = app_bundle
+
+    def payload(status, phone_number_id="123"):
+        return {"entry": [{"changes": [{"value": {
+            "metadata": {"phone_number_id": phone_number_id},
+            "statuses": [{"id": "wamid.unknown", "status": status, "timestamp": "1786000010"}],
+        }}]}]}
+
+    client = app.test_client()
+    wrong_number = post_webhook(client, payload("delivered", "another-number"))
+    invalid_status = post_webhook(client, payload("sent-but-unknown"))
+    # A malformed timestamp cannot produce a trusted ordering key.
+    invalid_timestamp_payload = payload("read")
+    invalid_timestamp_payload["entry"][0]["changes"][0]["value"]["statuses"][0]["timestamp"] = "not-a-time"
+    invalid_timestamp = post_webhook(client, invalid_timestamp_payload)
+
+    assert wrong_number.get_json()["ignored"] == 1
+    assert invalid_status.get_json()["ignored"] == 1
+    assert invalid_timestamp.get_json()["ignored"] == 1
+    with app.extensions["store"].connect() as db:
+        assert db.execute("SELECT COUNT(*) FROM whatsapp_delivery_events").fetchone()[0] == 0
+
+
+def test_failed_status_retains_only_the_bounded_provider_error_code(app_bundle):
+    app, _, _ = app_bundle
+    payload = {"entry": [{"changes": [{"value": {
+        "metadata": {"phone_number_id": "123"},
+        "statuses": [{
+            "id": "wamid.failed", "status": "failed", "timestamp": "1786000010",
+            "recipient_id": "31612345678",
+            "errors": [{"code": 131014, "title": "Provider failure", "message": "private provider details"}],
+        }],
+    }}]}]}
+
+    response = post_webhook(app.test_client(), payload)
+
+    assert response.get_json()["delivery_statuses"] == 1
+    with app.extensions["store"].connect() as db:
+        event = db.execute("SELECT * FROM whatsapp_delivery_events").fetchone()
+        audit = db.execute("SELECT detail_json FROM audit_events WHERE action='whatsapp.delivery_status'").fetchone()
+    assert event["error_code"] == "131014"
+    assert "private provider details" not in str(dict(event))
+    assert "private provider details" not in audit[0]
+
+
 def test_webhook_ignores_messages_for_another_phone_number(app_bundle, auth_headers):
     app, _, whatsapp = app_bundle
     payload = webhook()

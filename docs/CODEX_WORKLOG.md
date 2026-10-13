@@ -111,3 +111,13 @@ Checkpoint at that time: browser QA, Docker/config checks, final reports/publica
 - Expanded the automated suite from 25 to 37 tests, including real SQLite contention checks.
 
 Remaining external gate: authorized Meta/Google credentials and approvals, a stable available ngrok endpoint, and real-provider acceptance/cleanup.
+
+## WhatsApp delivery-status callback follow-up — 2026-10-14
+
+- Added storage for signed Cloud API status callbacks, including `sent`, `delivered`, `read`, `failed`, and `deleted`; callbacks are scoped to the configured phone-number ID and deduplicated by message/status/provider timestamp.
+- The request detail displays the latest provider-timestamped receipt. Older/out-of-order events are retained without regressing booking state; callback processing never retries a send or marks an appointment booked.
+- Only provider message ID, status, timestamp, bounded provider error code, and local receipt time are stored. Recipient IDs and raw callback bodies are excluded; events are included in contact export/deletion and retention purge.
+- TDD regression tests first failed because status callbacks were ignored. Follow-up tests cover signed status-only payloads, phone-number mismatch, malformed status/time, duplicates, ordering, UI display, PII minimization, export/deletion, and retention.
+- Regression proof: new tests failed first because delivery callbacks were ignored; after implementation, the full suite passed 115 tests. `compileall`, `pip check`, and `git diff --check` passed. Local Ruff is not installed in this venv; current hosted CI remains the lint/dependency/security gate.
+- Rebuilt and smoke-tested the standalone executable on Windows 11 Pro build 26300: health true, development mode, login HTTP 200, 66.1 MiB working set. ZIP SHA-256: `365E3258E1E258550012B297936B7420810B2CF81CFC1AFA67350A34CBFEDF92`.
+- Real Meta callback delivery/subscription remains an external provider acceptance step; no live webhook or customer data was used.

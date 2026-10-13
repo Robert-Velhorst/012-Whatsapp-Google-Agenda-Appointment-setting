@@ -116,3 +116,11 @@ This later update supersedes the pending publication/CI statements above for the
 - The process-identity/recovery self-check passed under PowerShell 7 and Windows PowerShell 5.1; all `windows/*.ps1` files parsed under PowerShell 7. The full Python suite passed (112 tests), `compileall` passed, and `pip check` reported no broken requirements. These checks do not replace real Google OAuth, ngrok exposure, or HAI runtime acceptance.
 - This checkout has no `.env`, so no Google OAuth or application provider credentials were used. The ngrok executable and agent configuration are present, but no tunnel was opened.
 - Exact SHA `01b45886928844b9c92087abad5ca6bf5407d9f9` passed the push CI run `38478527287`, PR CI run `38478532204`, Windows package run `38478532233`, and both CodeQL analyses in run `38478527776`. This includes the new Windows launcher self-check in the package workflow. GitHub emitted a Node.js 20 action deprecation advisory; it did not fail the run.
+
+## WhatsApp delivery-status webhook follow-up — 2026-10-14
+
+Signed Cloud API status receipts are now stored idempotently, displayed on the corresponding request, and included in privacy export/deletion and retention purge. The local test evidence covers phone-number scoping, malformed callback rejection, duplicate/out-of-order receipt handling, and absence of recipient IDs/raw payload fields. No live Meta webhook was configured or exercised.
+
+- Full local suite: `115 passed`; `compileall`, `pip check`, and `git diff --check` passed. Ruff is not installed in the local venv; hosted CI is still pending for this follow-up.
+- Windows 11 standalone package rebuilt and smoke-tested: health `true`, development mode, branded login HTTP 200, working set 66.1 MiB. ZIP SHA-256: `365E3258E1E258550012B297936B7420810B2CF81CFC1AFA67350A34CBFEDF92`.
+- Build used no application/Google/Meta credentials. No live webhook subscription, ngrok tunnel, Google OAuth, or HAI runtime was exercised.

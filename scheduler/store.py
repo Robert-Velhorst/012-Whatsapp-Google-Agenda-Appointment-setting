@@ -262,6 +262,51 @@ class Store:
             db.execute("UPDATE proposals SET status='sent',provider_message_id=?,sent_at=?,error_text=NULL WHERE id=?", (provider_message_id, utc_now().isoformat(), proposal_id))
         self.transition_request(workspace_id, int(row["request_id"]), "awaiting_confirmation", "operator", {"proposal_id": proposal_id})
 
+    def record_whatsapp_delivery_status(
+        self, workspace_id: str, provider_message_id: str, status: str, provider_timestamp: str,
+        error_code: str | None = None,
+    ) -> bool:
+        if not provider_message_id or len(provider_message_id) > 255:
+            raise ValueError("Invalid WhatsApp provider message ID")
+        if status not in {"sent", "delivered", "read", "failed", "deleted"}:
+            raise ValueError("Invalid WhatsApp delivery status")
+        if error_code is not None and (not error_code or len(error_code) > 32):
+            raise ValueError("Invalid WhatsApp provider error code")
+        try:
+            datetime.fromisoformat(provider_timestamp)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Invalid WhatsApp provider timestamp") from exc
+        received_at = utc_now().isoformat()
+        with self.connect() as db:
+            cursor = db.execute(
+                "INSERT OR IGNORE INTO whatsapp_delivery_events "
+                "(workspace_id,provider_message_id,status,provider_timestamp,error_code,received_at) "
+                "VALUES(?,?,?,?,?,?)",
+                (workspace_id, provider_message_id, status, provider_timestamp, error_code, received_at),
+            )
+            if cursor.rowcount:
+                db.execute(
+                    "INSERT INTO audit_events(workspace_id,actor,action,entity_type,entity_id,detail_json,created_at) "
+                    "VALUES(?,?,?,?,?,?,?)",
+                    (
+                        workspace_id, "whatsapp_webhook", "whatsapp.delivery_status", "provider_message",
+                        provider_message_id,
+                        json.dumps({"status": status, "provider_timestamp": provider_timestamp, "error_code": error_code}, sort_keys=True),
+                        received_at,
+                    ),
+                )
+        return cursor.rowcount == 1
+
+    def latest_whatsapp_delivery_status(self, workspace_id: str, provider_message_id: str) -> dict[str, str | None] | None:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT status,provider_timestamp,error_code FROM whatsapp_delivery_events "
+                "WHERE workspace_id=? AND provider_message_id=? "
+                "ORDER BY provider_timestamp DESC,received_at DESC,id DESC LIMIT 1",
+                (workspace_id, provider_message_id),
+            ).fetchone()
+        return dict(row) if row else None
+
     def mark_assisted_proposal_shared(self, workspace_id: str, proposal_id: int, actor: str) -> None:
         """Activate a booking link only after the operator confirms manual sharing."""
         now = utc_now().isoformat()
@@ -637,7 +682,7 @@ class Store:
     def request_detail(self, workspace_id: str, request_id: int) -> dict[str, Any] | None:
         with self.connect() as db:
             row = db.execute(
-                "SELECT r.*,c.sender,c.display_name,c.email,c.consent_status,p.id proposal_id,p.status proposal_status,p.slots_json,p.selected_slot,a.id appointment_id,a.status appointment_status,a.start_at,a.google_event_link "
+                "SELECT r.*,c.sender,c.display_name,c.email,c.consent_status,p.id proposal_id,p.status proposal_status,p.slots_json,p.selected_slot,p.provider_message_id,a.id appointment_id,a.status appointment_status,a.start_at,a.google_event_link "
                 "FROM scheduling_requests r JOIN contacts c ON c.id=r.contact_id LEFT JOIN proposals p ON p.request_id=r.id LEFT JOIN appointments a ON a.request_id=r.id "
                 "WHERE r.workspace_id=? AND r.id=?",
                 (workspace_id, request_id),
@@ -648,6 +693,10 @@ class Store:
             contact = db.execute("SELECT * FROM contacts WHERE workspace_id=? AND id=?", (workspace_id, request_data["contact_id"])).fetchone()
             audit_rows = db.execute("SELECT * FROM audit_events WHERE workspace_id=? AND ((entity_type='request' AND entity_id=?) OR (entity_type='proposal' AND entity_id=?) OR (entity_type='appointment' AND entity_id=?)) ORDER BY created_at", (workspace_id, str(request_id), str(request_data.get("proposal_id")), str(request_data.get("appointment_id")))).fetchall()
         request_data["contact"] = dict(contact)
+        request_data["delivery_status"] = (
+            self.latest_whatsapp_delivery_status(workspace_id, request_data["provider_message_id"])
+            if request_data.get("provider_message_id") else None
+        )
         request_data["messages"] = self.recent_messages(workspace_id, request_data["sender"], 8)
         request_data["audit"] = [self._audit_row(row) for row in audit_rows]
         return request_data
@@ -683,6 +732,13 @@ class Store:
                 (workspace_id, workspace_id, contact_id),
             ).fetchall()
             proposals = [dict(row) for row in proposal_rows]
+            delivery_events = db.execute(
+                "SELECT d.provider_message_id,d.status,d.provider_timestamp,d.error_code,d.received_at "
+                "FROM whatsapp_delivery_events d JOIN proposals p ON p.workspace_id=d.workspace_id AND p.provider_message_id=d.provider_message_id "
+                "JOIN scheduling_requests r ON r.id=p.request_id "
+                "WHERE d.workspace_id=? AND r.workspace_id=? AND r.contact_id=? ORDER BY d.provider_timestamp,d.id",
+                (workspace_id, workspace_id, contact_id),
+            ).fetchall()
             appointment_rows = db.execute(
                 "SELECT a.id,a.request_id,a.proposal_id,a.start_at,a.end_at,a.timezone,a.status,a.google_event_id,a.google_event_link,a.error_text,a.created_at,a.updated_at "
                 "FROM appointments a JOIN scheduling_requests r ON r.id=a.request_id "
@@ -699,6 +755,7 @@ class Store:
             "messages": messages,
             "requests": requests,
             "proposals": proposals,
+            "delivery_events": [dict(row) for row in delivery_events],
             "appointments": appointments,
             "exported_at": utc_now().isoformat(),
         }
@@ -717,6 +774,19 @@ class Store:
                 ).fetchone()
                 if unresolved:
                     raise ValueError("Cancel or manually resolve this contact's appointments before deleting the contact")
+                db.execute(
+                    "DELETE FROM whatsapp_delivery_events WHERE workspace_id=? AND provider_message_id IN ("
+                    "SELECT p.provider_message_id FROM proposals p JOIN scheduling_requests r ON r.id=p.request_id "
+                    "WHERE p.workspace_id=? AND r.workspace_id=? AND r.contact_id=? AND p.provider_message_id IS NOT NULL)",
+                    (workspace_id, workspace_id, workspace_id, contact_id),
+                )
+                db.execute(
+                    "DELETE FROM audit_events WHERE workspace_id=? AND action='whatsapp.delivery_status' "
+                    "AND entity_type='provider_message' AND entity_id IN ("
+                    "SELECT p.provider_message_id FROM proposals p JOIN scheduling_requests r ON r.id=p.request_id "
+                    "WHERE p.workspace_id=? AND r.workspace_id=? AND r.contact_id=? AND p.provider_message_id IS NOT NULL)",
+                    (workspace_id, workspace_id, workspace_id, contact_id),
+                )
                 appointment_ids = [row[0] for row in db.execute(f"SELECT id FROM appointments WHERE request_id IN ({placeholders})", request_ids)]
                 for appointment_id in appointment_ids:
                     db.execute("DELETE FROM background_jobs WHERE workspace_id=? AND payload_json LIKE ?", (workspace_id, f'%"appointment_id": {appointment_id}%'))
@@ -733,16 +803,27 @@ class Store:
         with self.connect() as db:
             cursor = db.execute("DELETE FROM inbound_messages WHERE workspace_id=? AND received_at<?", (workspace_id, cutoff))
             rate_cursor = db.execute("DELETE FROM rate_events WHERE workspace_id=? AND created_at<?", (workspace_id, cutoff))
+            delivery_cursor = db.execute("DELETE FROM whatsapp_delivery_events WHERE workspace_id=? AND received_at<?", (workspace_id, cutoff))
+            delivery_audit_cursor = db.execute(
+                "DELETE FROM audit_events WHERE workspace_id=? AND action='whatsapp.delivery_status' AND created_at<?",
+                (workspace_id, cutoff),
+            )
         count = cursor.rowcount
         rate_count = rate_cursor.rowcount
-        if count or rate_count:
+        delivery_count = delivery_cursor.rowcount
+        delivery_audit_count = delivery_audit_cursor.rowcount
+        if count or rate_count or delivery_count or delivery_audit_count:
             self.audit(
                 workspace_id,
                 "worker",
                 "privacy.retention_purge",
                 "workspace",
                 workspace_id,
-                {"messages_deleted": count, "rate_events_deleted": rate_count, "cutoff": cutoff},
+                {
+                    "messages_deleted": count, "rate_events_deleted": rate_count,
+                    "delivery_events_deleted": delivery_count,
+                    "delivery_audit_events_deleted": delivery_audit_count, "cutoff": cutoff,
+                },
             )
         return count
 

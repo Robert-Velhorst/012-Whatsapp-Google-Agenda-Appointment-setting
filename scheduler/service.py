@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -21,7 +22,10 @@ class SchedulingService:
         self.intent_provider = intent_provider or DEFAULT_PROVIDER
 
     def process_payload(self, payload: Any) -> dict[str, int]:
-        result = {"accepted": 0, "duplicates": 0, "proposals": 0, "confirmations": 0, "ignored": 0}
+        result = {
+            "accepted": 0, "duplicates": 0, "proposals": 0, "confirmations": 0, "ignored": 0,
+            "delivery_statuses": 0, "duplicate_statuses": 0,
+        }
         if not isinstance(payload, dict):
             result["ignored"] += 1
             return result
@@ -47,17 +51,37 @@ class SchedulingService:
                     continue
                 messages = value.get("messages", [])
                 if messages is None:
-                    continue
-                if not isinstance(messages, list):
+                    messages = []
+                elif not isinstance(messages, list):
                     result["ignored"] += 1
-                    continue
+                    messages = []
+                statuses = value.get("statuses", [])
+                if statuses is None:
+                    statuses = []
+                elif not isinstance(statuses, list):
+                    result["ignored"] += 1
+                    statuses = []
                 metadata = value.get("metadata", {})
-                if messages and (
+                if (messages or statuses) and (
                     not isinstance(metadata, dict)
                     or str(metadata.get("phone_number_id", "")) != str(self.settings.whatsapp_phone_number_id)
                 ):
-                    result["ignored"] += len(messages)
+                    result["ignored"] += len(messages) + len(statuses)
                     continue
+                # Bound database work per signed provider callback while allowing
+                # Meta to batch statuses and inbound messages in the same value.
+                for status_event in statuses[:200]:
+                    parsed = self._parse_delivery_status(status_event)
+                    if parsed is None:
+                        result["ignored"] += 1
+                        continue
+                    message_id, status, provider_timestamp, error_code = parsed
+                    inserted = self.store.record_whatsapp_delivery_status(
+                        self.settings.workspace_id, message_id, status, provider_timestamp, error_code,
+                    )
+                    result["delivery_statuses" if inserted else "duplicate_statuses"] += 1
+                if len(statuses) > 200:
+                    result["ignored"] += len(statuses) - 200
                 contacts = value.get("contacts", [])
                 names = {}
                 if isinstance(contacts, list):
@@ -443,3 +467,33 @@ class SchedulingService:
             return datetime.fromtimestamp(int(message.get("timestamp")), tz=UTC).isoformat()
         except (TypeError, ValueError, OverflowError, OSError):
             return utc_now().isoformat()
+
+    @staticmethod
+    def _parse_delivery_status(event: Any) -> tuple[str, str, str, str | None] | None:
+        if not isinstance(event, dict):
+            return None
+        message_id = event.get("id")
+        status = event.get("status")
+        raw_timestamp = event.get("timestamp")
+        if (
+            not isinstance(message_id, str) or not message_id.strip() or len(message_id) > 255
+            or not isinstance(status, str) or status not in {"sent", "delivered", "read", "failed", "deleted"}
+            or isinstance(raw_timestamp, bool) or not isinstance(raw_timestamp, (str, int))
+        ):
+            return None
+        timestamp_text = str(raw_timestamp)
+        if not timestamp_text.isdigit() or len(timestamp_text) > 12:
+            return None
+        try:
+            provider_timestamp = datetime.fromtimestamp(int(timestamp_text), tz=UTC).isoformat()
+        except (ValueError, OverflowError, OSError):
+            return None
+        error_code = None
+        errors = event.get("errors")
+        if isinstance(errors, list) and errors and isinstance(errors[0], dict):
+            raw_code = errors[0].get("code")
+            if isinstance(raw_code, int) and not isinstance(raw_code, bool):
+                raw_code = str(raw_code)
+            if isinstance(raw_code, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,32}", raw_code):
+                error_code = raw_code
+        return message_id.strip(), status, provider_timestamp, error_code

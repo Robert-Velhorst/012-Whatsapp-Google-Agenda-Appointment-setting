@@ -6,6 +6,7 @@
 |---|---|---|
 | Signed webhook | `test_health_webhook_verification_and_security_headers`, `test_bad_signature_is_rejected` | Valid verification works; unsigned POST is rejected |
 | Deduplication | `test_webhook_is_idempotent_and_creates_reviewable_proposal` | One Meta message creates one request/proposal |
+| Delivery status callbacks | `tests/test_webhook.py::test_signed_status_webhooks_store_latest_provider_receipt_idempotently`, `test_status_receipts_are_phone_scoped_and_invalid_statuses_are_ignored` | Signed status-only callbacks are phone-number-scoped, idempotently retained, ordered by provider time, PII-minimized, and displayed without changing booking state |
 | Pause safety | `test_pause_records_message_but_stops_processing` | Inbound retained; no proposal/provider action |
 | Intent | `tests/test_intent.py` | Dutch/English dates, bounded duration, and confirmation index |
 | Critical path | `test_message_to_proposal_to_confirmation_to_calendar_event` | Proposal -> contact choice -> one calendar event -> confirmation |

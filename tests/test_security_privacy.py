@@ -222,6 +222,7 @@ def test_contact_export_delete_and_workspace_isolation(app_bundle, auth_headers)
     contact = store.contacts("default")[0]
     item = store.dashboard("default")["items"][0]
     app.extensions["scheduling"].send_proposal(item["proposal_id"])
+    store.record_whatsapp_delivery_status("default", "wamid.out.1", "delivered", "2026-08-06T07:06:50+00:00")
     post_webhook(client, webhook("wamid.2", body="1"))
     exported = client.get(f"/api/contacts/{contact['id']}/export", headers=auth_headers)
     assert exported.status_code == 200
@@ -230,6 +231,8 @@ def test_contact_export_delete_and_workspace_isolation(app_bundle, auth_headers)
     assert export_data["messages"][0]["body"].startswith("Could we")
     assert len(export_data["proposals"]) == 1
     assert export_data["proposals"][0]["reply"]
+    assert export_data["delivery_events"][0]["status"] == "delivered"
+    assert "recipient_id" not in str(export_data)
     assert len(export_data["appointments"]) == 1
     assert "booking_token" not in str(export_data)
     assert "booking_token_hash" not in str(export_data)
@@ -240,6 +243,11 @@ def test_contact_export_delete_and_workspace_isolation(app_bundle, auth_headers)
     deleted = client.delete(f"/api/contacts/{contact['id']}", headers=auth_headers)
     assert deleted.get_json()["deleted"] is True
     assert store.contacts("default") == []
+    with store.connect() as db:
+        assert db.execute("SELECT COUNT(*) FROM whatsapp_delivery_events").fetchone()[0] == 0
+        assert db.execute(
+            "SELECT COUNT(*) FROM audit_events WHERE action='whatsapp.delivery_status'",
+        ).fetchone()[0] == 0
 
 
 def test_contact_delete_refuses_unresolved_calendar_appointments(app_bundle, auth_headers):

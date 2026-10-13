@@ -10,6 +10,7 @@ from scheduler.cli import (
     _online_backup,
     _restore_database,
 )
+from scheduler.migrations import MIGRATIONS
 
 
 def test_database_doctor_checks_integrity_and_write_lock(app_bundle, tmp_path):
@@ -34,7 +35,7 @@ def test_online_backup_is_consistent_and_refuses_live_database_overwrite(app_bun
     _online_backup(database, output)
     with closing(sqlite3.connect(output)) as connection:
         assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
-        assert connection.execute("SELECT max(version) FROM schema_migrations").fetchone() == (5,)
+        assert connection.execute("SELECT max(version) FROM schema_migrations").fetchone() == (max(version for version, _ in MIGRATIONS),)
 
 
 def test_restore_stages_backup_and_keeps_verified_safety_copy(app_bundle, tmp_path):

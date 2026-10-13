@@ -16,7 +16,7 @@ Status is evidence-based as of 2026-10-14. `Implemented` means locally wired and
 | 009 | API/error envelope | Implemented | Protected JSON endpoints and structured errors |
 | 010 | Frontend/navigation | Implemented | Server-rendered accessible application shell |
 | 011 | Core vertical slice | Implemented | Webhook through event/reminder/audit |
-| 012 | Provider reality review | Partial | Official adapters wired; real credentials not available |
+| 012 | Provider reality review | Partial | Official adapters wired; signed WhatsApp status callbacks are retained and displayed; real credentials/acceptance remain unavailable |
 | 013 | Compliance boundaries | Implemented | Official APIs only; reminder-template/manual boundary |
 | 014 | No fake production success | Implemented | Fakes confined to tests; truthful provider states |
 | 015 | Upload/media safety | Not applicable | Product exposes no upload/media routes |
