@@ -519,23 +519,39 @@ class Store:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def hai_feed(self, workspace_id: str, cursor: str = "", limit: int = 100) -> tuple[list[dict[str, Any]], str]:
-        """Return a PII-minimized, cursor-based request feed for HAI's json-feed connector."""
-        timestamp, cursor_id = self._decode_feed_cursor(cursor)
+    def hai_feed(self, workspace_id: str, cursor: str | None = None, limit: int = 100) -> tuple[list[dict[str, Any]], str]:
+        """Return a recent snapshot or a cursor-based continuation for HAI's JSON feed."""
         page_size = min(max(limit, 1), 500)
         with self.connect() as db:
-            rows = db.execute(
-                "SELECT r.id,r.title,r.duration_minutes,r.timezone,r.requested_start,r.status,r.confidence,r.created_at,r.updated_at,"
-                "p.status proposal_status,a.status appointment_status,a.start_at,a.end_at "
-                "FROM scheduling_requests r "
-                "LEFT JOIN proposals p ON p.request_id=r.id "
-                "LEFT JOIN appointments a ON a.request_id=r.id "
-                "WHERE r.workspace_id=? AND (r.updated_at>? OR (r.updated_at=? AND r.id>?)) "
-                "ORDER BY r.updated_at,r.id LIMIT ?",
-                (workspace_id, timestamp, timestamp, cursor_id, page_size),
-            ).fetchall()
+            if cursor:
+                timestamp, cursor_id = self._decode_feed_cursor(cursor)
+                rows = db.execute(
+                    "SELECT r.id,r.title,r.duration_minutes,r.timezone,r.requested_start,r.status,r.confidence,r.created_at,r.updated_at,"
+                    "p.status proposal_status,a.status appointment_status,a.start_at,a.end_at "
+                    "FROM scheduling_requests r "
+                    "LEFT JOIN proposals p ON p.request_id=r.id "
+                    "LEFT JOIN appointments a ON a.request_id=r.id "
+                    "WHERE r.workspace_id=? AND (r.updated_at>? OR (r.updated_at=? AND r.id>?)) "
+                    "ORDER BY r.updated_at,r.id LIMIT ?",
+                    (workspace_id, timestamp, timestamp, cursor_id, page_size),
+                ).fetchall()
+            else:
+                # HAI's current HTTP feed reader performs a plain GET and does not
+                # send the previously returned cursor. Give it a useful bounded
+                # snapshot instead of repeatedly exposing the oldest first page.
+                rows = db.execute(
+                    "SELECT r.id,r.title,r.duration_minutes,r.timezone,r.requested_start,r.status,r.confidence,r.created_at,r.updated_at,"
+                    "p.status proposal_status,a.status appointment_status,a.start_at,a.end_at "
+                    "FROM scheduling_requests r "
+                    "LEFT JOIN proposals p ON p.request_id=r.id "
+                    "LEFT JOIN appointments a ON a.request_id=r.id "
+                    "WHERE r.workspace_id=? ORDER BY r.updated_at DESC,r.id DESC LIMIT ?",
+                    (workspace_id, page_size),
+                ).fetchall()
         items = [dict(row) for row in rows]
-        next_cursor = cursor
+        if not cursor:
+            items.reverse()
+        next_cursor = cursor or ""
         if items:
             last = items[-1]
             next_cursor = self._encode_feed_cursor(last["updated_at"], int(last["id"]))

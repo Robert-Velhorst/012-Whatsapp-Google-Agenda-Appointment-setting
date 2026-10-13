@@ -196,7 +196,7 @@ Start from [.env.example](.env.example). Set values locally; do not commit `.env
 | `MAX_OUTBOUND_PER_CONTACT_PER_HOUR` | Atomic per-contact send-attempt allowance; default 10 |
 | `HAI_CONNECTOR_ENABLED` | Enables the metadata feed; default false |
 | `HAI_ALLOWED_NETWORKS` | Allowed client CIDRs; defaults to IPv4/IPv6 loopback |
-| `HAI_FEED_PAGE_SIZE` | Feed page size, 1–500; default 100 |
+| `HAI_FEED_PAGE_SIZE` | Recent HAI snapshot size, 1–500; default 100 |
 | `HAI_PROJECT_KEY` | HAI project mapping label |
 | `NGROK_DOMAIN` | Assigned hostname for the guarded public tunnel |
 | `NGROK_CONFIG_FILE` | Optional ngrok authentication-config path |
@@ -227,7 +227,7 @@ ngrok forwards public HTTPS requests to the application on your Windows computer
 
 Google OAuth bootstrap requires the public callback to be reachable before Calendar can report connected. The ngrok launcher checks protected production-ingress readiness: valid production configuration and signed WhatsApp webhook credentials, with automation paused if Google is not connected. Keep automation paused during bootstrap, complete Google consent, run the real-provider acceptance checks, and only then resume automation. See [Windows/ngrok](docs/WINDOWS_AND_NGROK.md) and [operator runbook](docs/OPERATOR_RUNBOOK.md).
 
-For HAI, enable the feed and configure an owner-scoped `json-feed` source using `http://127.0.0.1:5000/api/integrations/hai/feed`. The envelope is `{ "items": [], "nextCursor": "..." }`; send the returned cursor with the next request. The feed contains request state, duration, timezone and timestamps, not contact names, messages, tokens or calendar URLs. Network allowlisting protects this endpoint; it has no separate bearer authentication. HAI must enforce source ownership and access control. Docker-to-host networking requires specific observed gateway allowlisting, described in [HAI integration](docs/HAI_INTEGRATION.md).
+For HAI, enable the feed and configure an owner-scoped `json-feed` source using `http://127.0.0.1:5000/api/integrations/hai/feed`. The envelope and required item fields match HAI's generic-feed parser. HAI currently performs a plain GET, so the endpoint returns the most recently updated bounded snapshot (100 items by default, up to 500), not a paged historical export; see [HAI integration](docs/HAI_INTEGRATION.md). The feed contains request state, duration, timezone and timestamps, not contact names, messages, tokens or calendar URLs. Network allowlisting protects this endpoint; it has no separate bearer authentication. HAI must enforce source ownership and access control. Docker-to-host networking requires specific observed gateway allowlisting.
 
 ## Limits and release evidence
 

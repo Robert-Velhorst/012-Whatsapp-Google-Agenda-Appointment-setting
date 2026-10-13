@@ -3,7 +3,6 @@ from __future__ import annotations
 import csv
 import io
 import ipaddress
-import json
 import os
 import secrets
 from datetime import datetime
@@ -370,7 +369,12 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
         if not store.reserve_rate_event(settings.workspace_id, subject, "hai.feed", 60, 1):
             return _error("connector_rate_limited", "HAI feed rate limit reached", 429)
         try:
-            rows, next_cursor = store.hai_feed(settings.workspace_id, request.args.get("cursor", "")[:500], settings.hai_feed_page_size)
+            cursor = request.args.get("cursor")
+            rows, next_cursor = store.hai_feed(
+                settings.workspace_id,
+                cursor[:500] if cursor is not None else None,
+                settings.hai_feed_page_size,
+            )
         except ValueError as exc:
             return _error("invalid_cursor", str(exc), 400)
         items = []
@@ -394,12 +398,13 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
                 "externalId": f"agenda-relay-request-{row['id']}",
                 "title": f"Scheduling request {row['id']}",
                 "content": f"Scheduling request is {row['status']}; duration {row['duration_minutes']} minutes in {row['timezone']}.",
-                "sourceUri": f"agenda-relay://request/{row['id']}",
-                "itemType": "scheduling_request",
+                "itemType": "message",
+                "provider": "generic_json_feed",
                 "projectKey": settings.hai_project_key,
-                "metadata": json.dumps(metadata, sort_keys=True, separators=(",", ":")),
+                "receivedAt": row["updated_at"],
+                "metadata": metadata,
             })
-        return jsonify({"items": items, "nextCursor": next_cursor})
+        return jsonify({"items": items, "cursor": next_cursor})
 
     @app.get("/api/google/connect")
     @admin_required
