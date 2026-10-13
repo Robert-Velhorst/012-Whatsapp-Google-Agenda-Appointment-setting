@@ -31,7 +31,9 @@ All production secrets, Meta credentials, Google client JSON, operator password 
 .\windows\Start-Ngrok.ps1
 ```
 
-The launcher refuses public exposure unless production validation and local readiness both pass. It uses a project-specific local inspector port, verifies the exact assigned HTTPS URL, calls the public health endpoint, and records the verified process before reporting success. Stop only this tunnel with `.\windows\Stop-Ngrok.ps1`.
+The launcher refuses public exposure unless production configuration and WhatsApp webhook credentials pass the protected local `public_ingress` check. When Google OAuth is not connected, this check allows ingress only while automation is paused; that lets the operator complete consent without processing scheduling webhooks against a disconnected calendar. A deliberate pause also does not prevent the tunnel from recording signed inbound webhooks. The ordinary scheduling readiness endpoint remains false until Google is connected and automation is resumed. Test the complete real-provider flow before enabling automation.
+
+The launcher requires the operator API token to read this local ingress check; it does not send that token through ngrok. It uses a project-specific local inspector port, verifies the exact assigned HTTPS URL, calls the public health endpoint, and records the verified process before reporting success. Stop only this tunnel with `.\windows\Stop-Ngrok.ps1`.
 
 Register these exact provider URLs only after verification:
 

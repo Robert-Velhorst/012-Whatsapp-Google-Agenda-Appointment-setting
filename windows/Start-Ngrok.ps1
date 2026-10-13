@@ -9,6 +9,7 @@ Get-Content -LiteralPath ".env" | ForEach-Object { if ($_ -match '^\s*([^#][A-Za
 if ($env:APP_ENV -ne "production") { throw "Public tunnelling requires APP_ENV=production." }
 if (-not $env:NGROK_DOMAIN) { throw "Set NGROK_DOMAIN to an assigned ngrok domain." }
 if (-not $env:PUBLIC_BASE_URL) { throw "Set PUBLIC_BASE_URL to the public HTTPS URL." }
+if (-not $env:ADMIN_API_TOKEN) { throw "ADMIN_API_TOKEN is required to verify local production readiness." }
 $expected = "https://$($env:NGROK_DOMAIN.Trim('/'))"
 if ($env:PUBLIC_BASE_URL.TrimEnd('/') -ne $expected) { throw "PUBLIC_BASE_URL must exactly equal $expected so booking and OAuth links are correct." }
 $port = if ($env:PORT) { [int]$env:PORT } else { 5000 }
@@ -16,8 +17,15 @@ $inspectorPort = if ($env:NGROK_INSPECTOR_PORT) { [int]$env:NGROK_INSPECTOR_PORT
 $baseConfig = if ($env:NGROK_CONFIG_FILE) { $env:NGROK_CONFIG_FILE } else { Join-Path $env:LOCALAPPDATA "ngrok\ngrok.yml" }
 if (-not (Test-Path -LiteralPath $baseConfig)) { throw "ngrok authentication configuration was not found. Run: ngrok config add-authtoken <token>" }
 if (Get-NetTCPConnection -LocalPort $inspectorPort -State Listen -ErrorAction SilentlyContinue) { throw "NGROK_INSPECTOR_PORT $inspectorPort is already in use." }
-try { $ready = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$port/api/readiness" -TimeoutSec 5 } catch { throw "Local readiness is not green; public exposure was refused." }
-if ($ready.StatusCode -ne 200) { throw "Local readiness is not green; public exposure was refused." }
+try {
+    $headers = @{ Authorization = "Bearer $($env:ADMIN_API_TOKEN)" }
+    $readiness = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/operator/readiness" -Headers $headers -TimeoutSec 5
+} catch { throw "Could not verify local operator readiness; public exposure was refused. Check that Agenda Relay is running and ADMIN_API_TOKEN matches its configuration." }
+if (-not $readiness.public_ingress.ready) {
+    $reasons = @($readiness.errors) -join "; "
+    if (-not $reasons) { $reasons = $readiness.public_ingress.detail }
+    throw "Production ingress prerequisites are not satisfied; public exposure was refused. $reasons"
+}
 $runtime = Join-Path $Root "data\runtime"; $logs = Join-Path $Root "data\logs"
 New-Item -ItemType Directory -Force -Path $runtime,$logs | Out-Null
 $agentConfig = Join-Path $runtime "ngrok-agent.yml"
@@ -45,6 +53,9 @@ try {
     if ($public.TrimEnd('/') -ne $expected) { throw "ngrok did not publish the configured domain." }
     $health = Invoke-RestMethod -Uri "$public/api/health" -TimeoutSec 10
     if (-not $health.ok) { throw "Public health verification failed." }
+    if (-not $readiness.ready) {
+        Write-Warning "The HTTPS ingress is verified, but scheduling readiness is not green. Complete Google OAuth if it is disconnected, run the real-provider acceptance checks, and keep automation paused until verified."
+    }
     @{ pid=$process.Id; publicUrl=$public; startedAt=(Get-Date).ToUniversalTime().ToString('o') } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $runtime "ngrok.json") -Encoding utf8
 } catch {
     Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue

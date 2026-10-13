@@ -46,6 +46,23 @@ def test_browser_login_and_csrf(app_bundle):
     assert client.post("/actions/automation/toggle").status_code == 403
 
 
+def test_automation_cannot_resume_before_providers_are_ready(app_bundle):
+    app, _, _ = app_bundle
+    client = app.test_client()
+    app.extensions["calendar"].connected = lambda: False
+    app.extensions["whatsapp"].configured = lambda: False
+    app.extensions["store"].set_state("default", "automation_paused", "true", "test")
+    with client.session_transaction() as current:
+        current["operator_authenticated"] = True
+        current["csrf_token"] = "valid-test-csrf"
+
+    response = client.post("/actions/automation/toggle", data={"csrf_token": "valid-test-csrf"})
+
+    assert response.status_code == 302
+    assert app.extensions["scheduling"].is_paused() is True
+    assert b"Automation cannot resume until setup issues are resolved" in client.get("/").data
+
+
 def test_browser_login_rejects_external_next_redirect(app_bundle):
     app, _, _ = app_bundle
     client = app.test_client()

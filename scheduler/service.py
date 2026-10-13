@@ -260,10 +260,27 @@ class SchedulingService:
             "google_calendar": {"ready": google_connected, "detail": "Connected" if google_connected else "OAuth connection required"},
             "whatsapp": {"ready": whatsapp_configured, "detail": "Configured" if whatsapp_configured else "Cloud API credentials required"},
         }
-        ready = not errors and all(item["ready"] for item in providers.values()) and not self.is_paused()
+        can_resume = not errors and all(item["ready"] for item in providers.values())
+        paused = self.is_paused()
+        ingress_ready = self.settings.is_production and not errors and whatsapp_configured and (google_connected or paused)
+        if ingress_ready:
+            ingress_detail = "Production configuration and signed WhatsApp webhook settings are valid"
+        elif not self.settings.is_production:
+            ingress_detail = "APP_ENV=production is required before public exposure"
+        elif errors:
+            ingress_detail = "Production configuration errors must be resolved before public exposure"
+        elif not whatsapp_configured:
+            ingress_detail = "WhatsApp Cloud API credentials are required before public exposure"
+        else:
+            ingress_detail = "Connect Google Calendar or pause automation before public OAuth bootstrap"
+        ready = can_resume and not paused
         return {
-            "ready": ready, "mode": self.settings.app_env, "automation_paused": self.is_paused(),
+            "ready": ready, "can_resume": can_resume, "mode": self.settings.app_env, "automation_paused": paused,
             "providers": providers, "errors": errors, "warnings": warnings,
+            "public_ingress": {
+                "ready": ingress_ready,
+                "detail": ingress_detail,
+            },
             "storage_encrypted": bool(self.settings.data_encryption_key),
             "integrations": {
                 "hai": {

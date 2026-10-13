@@ -185,6 +185,13 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
     def toggle_automation():
         if not valid_csrf():
             abort(403)
+        if scheduling.is_paused():
+            readiness = scheduling.readiness()
+            if not readiness["can_resume"]:
+                blockers = list(readiness["errors"])
+                blockers.extend(provider["detail"] for provider in readiness["providers"].values() if not provider["ready"])
+                flash("Automation cannot resume until setup issues are resolved: " + "; ".join(blockers), "error")
+                return redirect(safe_next_url(request.referrer))
         value = "false" if scheduling.is_paused() else "true"
         store.set_state(settings.workspace_id, "automation_paused", value, settings.operator_name)
         flash("Automation resumed." if value == "false" else "Automation paused. Incoming messages will still be recorded.", "success")
