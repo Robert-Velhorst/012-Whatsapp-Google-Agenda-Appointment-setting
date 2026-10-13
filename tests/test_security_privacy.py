@@ -251,10 +251,23 @@ def test_contact_export_delete_and_workspace_isolation(app_bundle, auth_headers)
     post_webhook(client, webhook())
     store = app.extensions["store"]
     contact = store.contacts("default")[0]
+    item = store.dashboard("default")["items"][0]
+    app.extensions["scheduling"].send_proposal(item["proposal_id"])
+    post_webhook(client, webhook("wamid.2", body="1"))
     exported = client.get(f"/api/contacts/{contact['id']}/export", headers=auth_headers)
     assert exported.status_code == 200
-    assert exported.get_json()["messages"][0]["body"].startswith("Could we")
+    assert exported.headers["Content-Disposition"] == f'attachment; filename="contact-{contact["id"]}-export.json"'
+    export_data = exported.get_json()
+    assert export_data["messages"][0]["body"].startswith("Could we")
+    assert len(export_data["proposals"]) == 1
+    assert export_data["proposals"][0]["reply"]
+    assert len(export_data["appointments"]) == 1
+    assert "booking_token" not in str(export_data)
+    assert "booking_token_hash" not in str(export_data)
+    assert "booking_token_ciphertext" not in str(export_data)
+    assert any(event["action"] == "privacy.contact_exported" for event in store.recent_audit("default", 10))
     assert store.dashboard("other-workspace")["total"] == 0
+    assert client.post(f"/api/appointments/{export_data['appointments'][0]['id']}/cancel", headers=auth_headers).status_code == 200
     deleted = client.delete(f"/api/contacts/{contact['id']}", headers=auth_headers)
     assert deleted.get_json()["deleted"] is True
     assert store.contacts("default") == []
@@ -365,3 +378,4 @@ def test_sensitive_message_is_encrypted_in_database(app_bundle):
         raw = db.execute("SELECT body_ciphertext FROM inbound_messages").fetchone()[0]
     assert raw.startswith("enc:")
     assert "Private scheduling sentence" not in raw
+

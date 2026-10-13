@@ -557,7 +557,12 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
     @admin_required
     def api_contact_export(contact_id: int):
         data = store.export_contact(settings.workspace_id, contact_id)
-        return jsonify(data) if data else _error("not_found", "Contact not found", 404)
+        if not data:
+            return _error("not_found", "Contact not found", 404)
+        store.audit(settings.workspace_id, "operator", "privacy.contact_exported", "contact", contact_id, {})
+        response = jsonify(data)
+        response.headers["Content-Disposition"] = f'attachment; filename="contact-{contact_id}-export.json"'
+        return response
 
     @app.delete("/api/contacts/<int:contact_id>")
     @admin_required
@@ -589,3 +594,4 @@ def _csv_safe(value: object) -> object:
     if isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\t", "\r")):
         return "'" + value
     return value
+

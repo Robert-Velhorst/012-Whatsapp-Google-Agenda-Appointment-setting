@@ -675,9 +675,34 @@ class Store:
                 return None
             requests = [dict(row) for row in db.execute("SELECT * FROM scheduling_requests WHERE workspace_id=? AND contact_id=?", (workspace_id, contact_id)).fetchall()]
             messages = [dict(row) for row in db.execute("SELECT * FROM inbound_messages WHERE workspace_id=? AND sender=?", (workspace_id, contact["sender"])).fetchall()]
+            proposals: list[dict[str, Any]] = []
+            appointments: list[dict[str, Any]] = []
+            proposal_rows = db.execute(
+                "SELECT p.id,p.request_id,p.reply_ciphertext,p.slots_json,p.status,p.provider_message_id,p.error_text,p.created_at,p.sent_at,p.confirmed_at,p.selected_slot "
+                "FROM proposals p JOIN scheduling_requests r ON r.id=p.request_id "
+                "WHERE p.workspace_id=? AND r.workspace_id=? AND r.contact_id=? ORDER BY p.id",
+                (workspace_id, workspace_id, contact_id),
+            ).fetchall()
+            proposals = [dict(row) for row in proposal_rows]
+            appointment_rows = db.execute(
+                "SELECT a.id,a.request_id,a.proposal_id,a.start_at,a.end_at,a.timezone,a.status,a.google_event_id,a.google_event_link,a.error_text,a.created_at,a.updated_at "
+                "FROM appointments a JOIN scheduling_requests r ON r.id=a.request_id "
+                "WHERE a.workspace_id=? AND r.workspace_id=? AND r.contact_id=? ORDER BY a.id",
+                (workspace_id, workspace_id, contact_id),
+            ).fetchall()
+            appointments = [dict(row) for row in appointment_rows]
         for message in messages:
             message["body"] = self.crypto.decrypt(message.pop("body_ciphertext"))
-        return {"contact": dict(contact), "messages": messages, "requests": requests, "exported_at": utc_now().isoformat()}
+        for proposal in proposals:
+            proposal["reply"] = self.crypto.decrypt(proposal.pop("reply_ciphertext"))
+        return {
+            "contact": dict(contact),
+            "messages": messages,
+            "requests": requests,
+            "proposals": proposals,
+            "appointments": appointments,
+            "exported_at": utc_now().isoformat(),
+        }
 
     def delete_contact(self, workspace_id: str, contact_id: int) -> bool:
         with self.connect() as db:
@@ -741,3 +766,4 @@ class Store:
         data = dict(row)
         data["detail"] = json.loads(data.pop("detail_json"))
         return data
+

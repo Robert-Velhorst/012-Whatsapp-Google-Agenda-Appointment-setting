@@ -24,7 +24,7 @@ All operator endpoints require bearer token or authenticated session. Session st
 | `POST /api/appointments/<id>/book` | Dashboard/API users | Idempotent Google event creation |
 | `POST /api/appointments/<id>/cancel` | Dashboard/API users | Calendar cancellation and job stop |
 | `GET /api/audit` | Audit view/API users | Workspace-scoped event history, clamped to 1–500 rows |
-| `GET /api/contacts/<id>/export` | Privacy workflow | Contact JSON export |
+| `GET /api/contacts/<id>/export` | Privacy workflow | Downloadable contact JSON export containing contact, decrypted messages, scheduling requests, proposal drafts/slots, and appointments; excludes booking tokens and records successful exports in the audit trail |
 | `DELETE /api/contacts/<id>` | Privacy workflow | Deletes contact/domain data only after related appointments are cancelled; returns `409 contact_has_unresolved_appointments` otherwise |
 | `GET /api/export/requests.csv` | Dashboard/API users | Workspace CSV export |
 
@@ -40,3 +40,4 @@ Browser contact deletion is handled by `POST /actions/contacts/<id>/delete`, not
 - WhatsApp `https://wa.me/?text=...` is only a browser link with a prefilled draft; the operator must choose a recipient and send. Agenda Relay makes no personal WhatsApp API call.
 
 HTTP 200 from Meta means API acceptance, not confirmed delivery/read. The data model intentionally does not fabricate delivery status because status webhooks are not yet persisted.
+
