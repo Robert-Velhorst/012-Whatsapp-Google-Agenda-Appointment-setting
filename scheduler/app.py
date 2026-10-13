@@ -443,8 +443,8 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
                 cursor[:500] if cursor is not None else None,
                 settings.hai_feed_page_size,
             )
-        except ValueError as exc:
-            return _error("invalid_cursor", str(exc), 400)
+        except ValueError:
+            return _error("invalid_cursor", "The HAI feed cursor is invalid.", 400)
         items = []
         for row in rows:
             metadata = {
@@ -512,24 +512,24 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
     def api_send_proposal(proposal_id: int):
         try:
             return jsonify(scheduling.send_proposal(proposal_id, settings.operator_name))
-        except (KeyError, ValueError) as exc:
-            return _error("proposal_not_sendable", str(exc), 409)
+        except (KeyError, ValueError):
+            return _error("proposal_not_sendable", "The proposal cannot be sent in its current state.", 409)
 
     @app.post("/api/appointments/<int:appointment_id>/book")
     @admin_required
     def api_book(appointment_id: int):
         try:
             return jsonify(scheduling.book_appointment(appointment_id, settings.operator_name))
-        except (KeyError, ValueError) as exc:
-            return _error("appointment_not_bookable", str(exc), 409)
+        except (KeyError, ValueError):
+            return _error("appointment_not_bookable", "The appointment cannot be booked in its current state.", 409)
 
     @app.post("/api/appointments/<int:appointment_id>/cancel")
     @admin_required
     def api_cancel(appointment_id: int):
         try:
             return jsonify(scheduling.cancel_appointment(appointment_id, settings.operator_name))
-        except KeyError as exc:
-            return _error("not_found", str(exc), 404)
+        except KeyError:
+            return _error("not_found", "Appointment not found", 404)
 
     @app.get("/api/audit")
     @admin_required
@@ -552,8 +552,8 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
     def api_contact_delete(contact_id: int):
         try:
             return jsonify({"deleted": store.delete_contact(settings.workspace_id, contact_id)})
-        except ValueError as exc:
-            return _error("contact_has_unresolved_appointments", str(exc), 409)
+        except ValueError:
+            return _error("contact_has_unresolved_appointments", "Cancel or resolve this contact's appointments before deleting it.", 409)
 
     @app.get("/api/export/requests.csv")
     @admin_required

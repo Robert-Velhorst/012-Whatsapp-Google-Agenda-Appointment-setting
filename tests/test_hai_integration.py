@@ -74,6 +74,33 @@ def test_hai_feed_rejects_invalid_cursor(tmp_path):
     app.extensions["store"].close()
 
 
+def test_hai_feed_does_not_return_exception_details_to_client(tmp_path, monkeypatch):
+    from scheduler.app import create_app
+
+    from .conftest import FakeCalendar, FakeWhatsApp
+
+    app = create_app({
+        "app_env": "test", "database_path": tmp_path / "hai-error.sqlite3", "flask_secret_key": "test-secret",
+        "admin_api_token": "test-token", "data_encryption_key": "test-encryption", "hai_connector_enabled": True,
+        "hai_allowed_networks": "127.0.0.1/32",
+    }, calendar=FakeCalendar(), whatsapp=FakeWhatsApp())
+    app.extensions["store"].hai_feed = lambda *_args: (_ for _ in ()).throw(
+        ValueError("Traceback (most recent call last): /srv/private/database.py:42")
+    )
+
+    response = app.test_client().get("/api/integrations/hai/feed?cursor=malformed")
+
+    assert response.status_code == 400
+    assert response.get_json()["error"] == {
+        "code": "invalid_cursor",
+        "message": "The HAI feed cursor is invalid.",
+        "retryable": False,
+    }
+    assert b"Traceback" not in response.data
+    assert b"/srv/private" not in response.data
+    app.extensions["store"].close()
+
+
 @pytest.mark.parametrize("automation_paused", [True, False])
 def test_public_ingress_allows_google_oauth_bootstrap_only_while_automation_is_paused(tmp_path, automation_paused):
     from scheduler.app import create_app
