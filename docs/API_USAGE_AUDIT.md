@@ -25,7 +25,7 @@ All operator endpoints require bearer token or authenticated session. Session st
 | `POST /api/appointments/<id>/cancel` | Dashboard/API users | Calendar cancellation and job stop |
 | `GET /api/audit` | Audit view/API users | Workspace-scoped event history, clamped to 1–500 rows |
 | `GET /api/contacts/<id>/export` | Privacy workflow | Contact JSON export |
-| `DELETE /api/contacts/<id>` | Privacy workflow | Contact/domain-data deletion |
+| `DELETE /api/contacts/<id>` | Privacy workflow | Deletes contact/domain data only after related appointments are cancelled; returns `409 contact_has_unresolved_appointments` otherwise |
 | `GET /api/export/requests.csv` | Dashboard/API users | Workspace CSV export |
 
 The personal WhatsApp screen is session-only (not bearer API): `POST /actions/assisted/analyze` performs transient local analysis and a Calendar availability query, while `POST /actions/assisted/<id>/shared` activates the private booking link only after the operator confirms manual sharing. Both require CSRF and create no WhatsApp API calls.

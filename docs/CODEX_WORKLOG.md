@@ -1,5 +1,12 @@
 # Codex worklog
 
+## 2026-10-13 - Prevent contact deletion from orphaning Calendar appointments
+
+- Reproduced that `DELETE /api/contacts/<id>` removed the contact and appointment rows even when a booked Google Calendar event remained active.
+- Contact deletion now fails closed with HTTP 409 while any linked appointment is not cancelled. The operator must cancel or resolve appointments first; successful deletion still removes the linked application records and leaves its minimal privacy audit event.
+- A regression test exercises the full proposal -> confirmation -> Calendar booking -> refused delete -> Calendar cancellation -> successful delete path with test-only providers.
+- The re-authenticated browser deletion flow remains a documented product gap; this change hardens the existing API rather than claiming that workflow is complete.
+
 ## 2026-10-13 - Prevent stale conversation intent from duplicating/changing requests
 
 - Reproduced two defects in `SchedulingService.process_payload`: an unrelated “Thanks!” after a scheduling message created a second proposal, and a new scheduling request without a date inherited the prior request's explicit date.

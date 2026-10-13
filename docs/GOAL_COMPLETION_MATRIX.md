@@ -32,7 +32,7 @@ Status is evidence-based as of 2026-10-13. `Implemented` means locally wired and
 | 025 | AI abstraction/fallback | Implemented | `IntentProvider` with deterministic local default |
 | 026 | Review/approval gates | Implemented | Separate proposal and booking approvals by default |
 | 027 | Notifications/reminders | Partial | Worker complete; real approved template not available |
-| 028 | Privacy/delete | Implemented | Export, deletion, retention purge, consent controls |
+| 028 | Privacy/delete | Partial | Export, retention purge, consent controls, and guarded API deletion; re-authenticated browser deletion workflow remains absent |
 | 029 | Web security | Implemented | CSP, HSTS production, no-store, anti-frame/sniff/referrer |
 | 030 | Secret management/rotation | Partial | Env/secret mounts and docs; no external vault integration |
 | 031 | One-command local development | Implemented | README/Makefile/locked environment commands |
