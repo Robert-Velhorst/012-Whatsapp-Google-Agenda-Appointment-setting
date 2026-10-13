@@ -1,5 +1,13 @@
 # Codex worklog
 
+## 2026-10-13 - Add reauthenticated browser contact deletion
+
+- Closed the documented gap between the guarded contact-deletion API and the Contacts screen.
+- The browser action now requires session authentication, CSRF, and current-password reauthentication; attempts are rate-limited and audit records never include the supplied password.
+- Existing fail-closed appointment guard applies unchanged: active appointments must be cancelled/resolved first, and deletion never cancels a Calendar event as a side effect.
+- Fixed invalid nested-form markup in the Contacts table by associating each row's edit/delete controls with separate external forms.
+- Added regressions for CSRF, wrong/correct password, and refusal while a Calendar appointment remains active.
+
 ## 2026-10-13 - Prevent contact deletion from orphaning Calendar appointments
 
 - Reproduced that `DELETE /api/contacts/<id>` removed the contact and appointment rows even when a booked Google Calendar event remained active.

@@ -338,6 +338,34 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             flash(f"Contact not updated: {exc}", "error")
         return redirect(url_for("dashboard", view="contacts"))
 
+    @app.post("/actions/contacts/<int:contact_id>/delete")
+    @operator_required
+    def action_contact_delete(contact_id: int):
+        if not valid_csrf():
+            abort(403)
+
+        login_subject = request.remote_addr or "unknown"
+        if not store.reserve_rate_event(settings.workspace_id, login_subject, "auth.contact_delete_attempt", 5, 15):
+            store.audit(settings.workspace_id, "operator", "auth.contact_delete_throttled", "contact", contact_id, {"remote": login_subject})
+            flash("Too many deletion attempts. Try again in 15 minutes.", "error")
+            return redirect(url_for("dashboard", view="contacts"))
+
+        password = request.form.get("password", "")
+        if not settings.admin_password_hash or not check_password_hash(settings.admin_password_hash, password):
+            store.audit(settings.workspace_id, "operator", "auth.contact_delete_reauth_failed", "contact", contact_id, {"remote": login_subject})
+            flash("Contact was not deleted: enter the current operator password to confirm.", "error")
+            return redirect(url_for("dashboard", view="contacts"))
+
+        try:
+            deleted = store.delete_contact(settings.workspace_id, contact_id)
+            if deleted:
+                flash("Contact data deleted.", "success")
+            else:
+                flash("Contact was not found or was already deleted.", "error")
+        except ValueError as exc:
+            flash(f"Contact was not deleted: {exc}", "error")
+        return redirect(url_for("dashboard", view="contacts"))
+
     @app.get("/book/<token>")
     def booking_page(token: str):
         try:

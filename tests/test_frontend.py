@@ -71,3 +71,29 @@ def test_settings_explains_missing_google_oauth_file_and_hides_unavailable_actio
     assert unavailable_action.status_code == 302
     assert unavailable_action.headers["Location"] == "/?view=settings"
     assert b"Google OAuth is not configured" in client.get(unavailable_action.headers["Location"]).data
+
+
+def test_contacts_screen_exposes_valid_csrf_and_reauthenticated_delete_controls(app_bundle):
+    app, _, _ = app_bundle
+    store = app.extensions["store"]
+    contact_id = store.upsert_contact("default", "31600000098", "Europe/Amsterdam")
+    client = app.test_client()
+    with client.session_transaction() as current:
+        current["operator_authenticated"] = True
+        current["csrf_token"] = "contacts-csrf"
+
+    page = client.get("/?view=contacts")
+    html = page.get_data(as_text=True)
+
+    assert page.status_code == 200
+    assert f'id="contact-update-{contact_id}"' in html
+    assert f'id="contact-delete-{contact_id}"' in html
+    assert f'form="contact-update-{contact_id}"' in html
+    assert f'form="contact-delete-{contact_id}"' in html
+    assert 'name="csrf_token" value="contacts-csrf"' in html
+    assert 'autocomplete="current-password" required' in html
+    assert "Deletion permanently removes" in html
+    assert "<tr>\n        <form" not in html
+    stylesheet = client.get("/static/app.css").get_data(as_text=True)
+    assert ".contacts-panel{max-width:100%;overflow-x:auto}" in stylesheet
+    assert ".contacts-table th:nth-child(3),.contacts-table td:nth-child(3){display:table-cell}" in stylesheet

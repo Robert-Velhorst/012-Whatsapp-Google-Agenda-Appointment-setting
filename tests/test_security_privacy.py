@@ -288,6 +288,75 @@ def test_contact_delete_refuses_unresolved_calendar_appointments(app_bundle, aut
     assert store.get_contact("default", item["contact_id"]) is None
 
 
+def test_browser_contact_delete_requires_csrf_and_recent_password(app_bundle):
+    app, _, _ = app_bundle
+    client = app.test_client()
+    post_webhook(client, webhook())
+    contact = app.extensions["store"].contacts("default")[0]
+    with client.session_transaction() as current:
+        current["operator_authenticated"] = True
+        current["csrf_token"] = "valid-test-csrf"
+
+    action = f"/actions/contacts/{contact['id']}/delete"
+    assert client.post(action, data={"password": "correct horse battery staple"}).status_code == 403
+    assert app.extensions["store"].get_contact("default", contact["id"]) is not None
+
+    rejected = client.post(action, data={"csrf_token": "valid-test-csrf", "password": "wrong"})
+    assert rejected.status_code == 302
+    assert app.extensions["store"].get_contact("default", contact["id"]) is not None
+    assert b"enter the current operator password" in client.get(rejected.headers["Location"]).data
+
+    deleted = client.post(action, data={"csrf_token": "valid-test-csrf", "password": "correct horse battery staple"})
+    assert deleted.status_code == 302
+    assert app.extensions["store"].get_contact("default", contact["id"]) is None
+
+
+def test_browser_contact_delete_keeps_contact_when_appointment_is_active(app_bundle):
+    app, calendar, _ = app_bundle
+    client = app.test_client()
+    post_webhook(client, webhook())
+    store = app.extensions["store"]
+    item = store.dashboard("default")["items"][0]
+    app.extensions["scheduling"].send_proposal(item["proposal_id"])
+    post_webhook(client, webhook("wamid.2", body="1"))
+    item = store.dashboard("default")["items"][0]
+    app.extensions["scheduling"].book_appointment(item["appointment_id"])
+    with client.session_transaction() as current:
+        current["operator_authenticated"] = True
+        current["csrf_token"] = "valid-test-csrf"
+
+    response = client.post(
+        f"/actions/contacts/{item['contact_id']}/delete",
+        data={"csrf_token": "valid-test-csrf", "password": "correct horse battery staple"},
+    )
+
+    assert response.status_code == 302
+    assert store.get_contact("default", item["contact_id"]) is not None
+    assert calendar.cancelled == []
+    assert b"Cancel or manually resolve" in client.get(response.headers["Location"]).data
+
+
+def test_browser_contact_delete_reauthentication_is_rate_limited_and_not_logged(app_bundle):
+    app, _, _ = app_bundle
+    client = app.test_client()
+    contact_id = app.extensions["store"].upsert_contact("default", "31600000099", "Europe/Amsterdam")
+    with client.session_transaction() as current:
+        current["operator_authenticated"] = True
+        current["csrf_token"] = "valid-test-csrf"
+    action = f"/actions/contacts/{contact_id}/delete"
+
+    for _ in range(5):
+        response = client.post(action, data={"csrf_token": "valid-test-csrf", "password": "wrong-secret"})
+        assert response.status_code == 302
+    blocked = client.post(action, data={"csrf_token": "valid-test-csrf", "password": "correct horse battery staple"})
+
+    assert blocked.status_code == 302
+    assert app.extensions["store"].get_contact("default", contact_id) is not None
+    events = app.extensions["store"].recent_audit("default", 50)
+    assert any(event["action"] == "auth.contact_delete_throttled" for event in events)
+    assert all("wrong-secret" not in str(event["detail"]) for event in events)
+
+
 def test_sensitive_message_is_encrypted_in_database(app_bundle):
     app, _, _ = app_bundle
     post_webhook(app.test_client(), webhook(body="Private scheduling sentence"))
