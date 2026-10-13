@@ -550,8 +550,9 @@ class Store:
         return request_data
 
     def recent_audit(self, workspace_id: str, limit: int = 100) -> list[dict[str, Any]]:
+        bounded_limit = min(max(limit, 1), 500)
         with self.connect() as db:
-            rows = db.execute("SELECT * FROM audit_events WHERE workspace_id=? ORDER BY id DESC LIMIT ?", (workspace_id, min(limit, 500))).fetchall()
+            rows = db.execute("SELECT * FROM audit_events WHERE workspace_id=? ORDER BY id DESC LIMIT ?", (workspace_id, bounded_limit)).fetchall()
         return [self._audit_row(row) for row in rows]
 
     def contacts(self, workspace_id: str, query: str = "") -> list[dict[str, Any]]:

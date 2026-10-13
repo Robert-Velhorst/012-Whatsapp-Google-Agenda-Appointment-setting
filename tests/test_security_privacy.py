@@ -34,6 +34,18 @@ def test_api_requires_authentication(app_bundle):
     assert response.get_json()["error"]["code"] == "authentication_required"
 
 
+def test_audit_api_clamps_negative_limit(app_bundle, auth_headers):
+    app, _, _ = app_bundle
+    store = app.extensions["store"]
+    for index in range(3):
+        store.audit("default", "test", f"audit-{index}", "test")
+
+    response = app.test_client().get("/api/audit?limit=-1", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert len(response.get_json()) == 1
+
+
 def test_browser_login_and_csrf(app_bundle):
     app, _, _ = app_bundle
     client = app.test_client()

@@ -23,7 +23,7 @@ All operator endpoints require bearer token or authenticated session. Session st
 | `POST /api/proposals/<id>/send` | Dashboard/API users | Rate-limited official WhatsApp send |
 | `POST /api/appointments/<id>/book` | Dashboard/API users | Idempotent Google event creation |
 | `POST /api/appointments/<id>/cancel` | Dashboard/API users | Calendar cancellation and job stop |
-| `GET /api/audit` | Audit view/API users | Workspace-scoped event history |
+| `GET /api/audit` | Audit view/API users | Workspace-scoped event history, clamped to 1–500 rows |
 | `GET /api/contacts/<id>/export` | Privacy workflow | Contact JSON export |
 | `DELETE /api/contacts/<id>` | Privacy workflow | Contact/domain-data deletion |
 | `GET /api/export/requests.csv` | Dashboard/API users | Workspace CSV export |

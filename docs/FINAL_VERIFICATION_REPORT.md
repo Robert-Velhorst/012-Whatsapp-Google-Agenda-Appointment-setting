@@ -82,3 +82,9 @@ This later update supersedes the pending publication/CI statements above for the
 - `windows/Test-Package.ps1` passed against the extracted package: health `ok: true`, development mode, branded login HTTP 200, and 67.5 MiB working set. Test configuration, database, and logs were isolated; provider credentials were absent and automation was paused.
 - A localhost browser check signed in with a test-only password, rendered the scheduling dashboard, and navigated to the Scheduling view. The browser reported no console warnings or errors. Provider readiness correctly showed WhatsApp Cloud API and Google Calendar as unconfigured. No real message or calendar event was sent or created.
 - The package and UI checks are local evidence only. GitHub CI run `38373387020`, for the same code commit, remains queued without a runner; its outcome is pending. The branch tip and `origin/agent/agenda-relay-production` were both `afd170f88a4df4136b03d58ea28e3e529b04bbb9` before this report update.
+
+## Audit endpoint limit hardening — 2026-10-13
+
+- Authenticated `GET /api/audit?limit=-1` previously passed a negative SQLite `LIMIT`, which returns every matching audit row. The store now clamps the value to 1–500 before querying.
+- An API-level regression test reproduced the unbounded response before the fix and now verifies the negative-limit request returns one row. The full local suite passes 80 tests; compilation, `pip check`, `pip-audit -r requirements.lock`, and `git diff --check` pass.
+- These are local checks; GitHub CI for this follow-up is pending and will be checked against the pushed commit.
