@@ -35,3 +35,17 @@ These checks apply to the current branch after the hardening changes; they suppl
 - Browser-visible readiness correctly reported that WhatsApp Cloud API credentials and Google Calendar OAuth were not configured. No WhatsApp message or Google Calendar event was sent or created.
 - Fresh performance measurements are recorded in [PERFORMANCE.md](PERFORMANCE.md); they are single-host observations, not deployment guarantees.
 - The open draft PR's current source commit at the start of this addendum was `98007a0f18ce222cef5290e071290b8ef6badb27`; its two CI checks and Windows package check were successful. This source-check result is point-in-time and precedes this documentation-only addendum.
+
+## Current branch verification addendum — 2026-10-13
+
+These checks apply to the current branch after the scheduling, calendar-query, and Windows package-script changes.
+
+- Scheduling-language regression: English “next week” / “following week” and Dutch “volgende week” / “komende week” now resolve to the next Monday. Regression tests cover the English and Dutch forms.
+- Calendar availability regression: the 21-day search now makes one batched FreeBusy request. The deterministic test confirms the previous per-day approach made 11 calls in its scenario and the new implementation makes one; event creation still has a separate final availability check.
+- Python test suite: 63 passed. `pip check`, `compileall`, and `git diff --check` passed.
+- Windows package: built on Windows 11 with Python 3.13.14 through `windows/Build-Windows.ps1` using explicit temporary output/work directories. ZIP SHA-256: `6DB165EF617B855BD7C591314E8F50B875BCA2A4D794CC9E87B5A4CAF1854751`.
+- Packaged-app smoke test: `windows/Test-Package.ps1` reported health `ok: true`, development mode, branded login HTTP 200, and 67.4 MiB working set. It ran with provider credentials cleared, automation paused, test-only secrets, and a temporary database/log directory; the repository's existing `data` and `dist` were not used as test state.
+- Synthetic webhook check: a locally signed scheduling webhook was accepted and persisted with requested date `2026-10-19`. Processing then stopped at the expected missing-Google-OAuth gate; no Calendar query/event or WhatsApp message was made.
+- Package-script note: a prior build using the default PyInstaller work directory failed on this host while writing into the repository's existing build folder. The revised script supports a unique temporary work path; the isolated invocation above passed.
+- Product boundary: this repository still integrates with WhatsApp Business Cloud API only. It does not connect to a personal WhatsApp inbox. The opt-in WhatsApp Agent Platform is a separate feature and cannot access a user's other chats, per the [WhatsApp Help Center](https://faq.whatsapp.com/1050934623978152). No real WhatsApp or Google Calendar operation was verified.
+- Publication: these changes are pending commit/push and CI verification; no claim is made here that this addendum or code has reached GitHub.

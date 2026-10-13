@@ -32,4 +32,6 @@ The same bounded command was rerun on the Windows 11 development host:
 
 This is a dated local observation from one run, not a production capacity guarantee. It is not directly comparable to the 2026-08-09 baseline as a promise of a fixed speedup; hardware load, cache state, and measurement variability can affect the result. Re-run the command on the intended deployment machine before capacity planning.
 
+Calendar availability uses one Google FreeBusy query for the full 21-day search window and filters returned busy ranges against local business hours. In the regression scenario with two weeks of full weekdays, this reduced the provider-call count from 11 per-day queries to one batched query. Booking still performs a separate final availability check before event insertion. The call-count result is a deterministic test, not a live Google latency benchmark.
+
 The executable's larger idle footprint comes from bundled Python and provider libraries. For horizontal scaling, multiple operators, or sustained write concurrency, move persistence and rate/job coordination to PostgreSQL rather than sharing the SQLite file across machines.

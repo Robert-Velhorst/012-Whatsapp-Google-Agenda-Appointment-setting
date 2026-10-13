@@ -18,6 +18,17 @@ def test_intent_handles_hours_and_invalid_duration():
     assert analyse("schedule a call for 900 minutes", date(2026, 8, 8), 30).duration_minutes == 30
 
 
+@pytest.mark.parametrize("message", [
+    "Could we schedule a call next week?",
+    "Kunnen we volgende week een afspraak inplannen?",
+])
+def test_intent_maps_next_week_to_next_monday(message):
+    intent = analyse(message, date(2026, 10, 13), 30)
+
+    assert intent.is_scheduling
+    assert intent.requested_start == date(2026, 10, 19)
+
+
 def test_confirmation_index_is_bounded():
     assert confirmation_index("The second one works", 3) == 1
     assert confirmation_index("derde graag", 3) == 2

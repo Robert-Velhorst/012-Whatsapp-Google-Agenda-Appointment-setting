@@ -42,7 +42,11 @@ class DeterministicIntentProvider:
         lower = text.lower()
         matched_terms = [term for term in SCHEDULING_TERMS if re.search(rf"\b{re.escape(term)}\b", lower)]
         is_scheduling = bool(matched_terms)
-        language = "nl" if any(term in lower for term in ("afspraak", "morgen", "maandag", "dinsdag", "woensdag", "donderdag", "vrijdag", "uur", "beschikbaar")) else "en"
+        dutch_markers = (
+            "afspraak", "morgen", "maandag", "dinsdag", "woensdag", "donderdag", "vrijdag",
+            "uur", "beschikbaar", "volgende week", "komende week",
+        )
+        language = "nl" if any(term in lower for term in dutch_markers) else "en"
 
         duration = default_duration
         duration_match = re.search(r"\b(\d{1,3})\s*(min(?:uten|utes?)?|mins?|uur|u|hours?|hrs?)\b", lower)
@@ -66,6 +70,10 @@ class DeterministicIntentProvider:
                     target = date(year + 1, month, day)
             except ValueError:
                 target = today
+        elif re.search(r"\b(?:next week|following week|volgende week|komende week)\b", lower):
+            # A week-level request is a date window, not a request for today's slots.
+            days_until_monday = 7 - today.weekday()
+            target = today + timedelta(days=days_until_monday)
         elif "tomorrow" in lower or "morgen" in lower:
             target = today + timedelta(days=1)
         else:

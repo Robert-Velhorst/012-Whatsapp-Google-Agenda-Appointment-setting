@@ -128,7 +128,7 @@ Real-provider verification cannot be completed without the operator's Meta busin
 
 Agenda Relay is a scheduling desk for one operator using one configured Google Calendar and a WhatsApp Business integration. A contact can ask for an appointment in WhatsApp, receive suggested times, and choose a time in the conversation. They do not need to enter a name or email into a separate booking form. The optional private link provides another way to choose a proposed time.
 
-The operator connects the accounts once, sets business hours and meeting duration, and reviews proposals and bookings by default. Automatic sending and booking are separate opt-in settings. The application does not read an arbitrary personal WhatsApp inbox: it processes incoming text webhooks delivered to the configured Meta integration. It does not import old chat exports, voice notes, images, or group history.
+The operator connects the accounts once, sets business hours and meeting duration, and reviews proposals and bookings by default. Automatic sending and booking are separate opt-in settings. The application does not read an arbitrary personal WhatsApp inbox: it processes incoming text webhooks delivered to the configured Meta Business integration. It does not import old chat exports, voice notes, images, or group history. WhatsApp's newer opt-in Agent Platform is a separate feature; WhatsApp says an agent cannot access the user's other chats, and this repository does not implement that API ([WhatsApp Help Center](https://faq.whatsapp.com/1050934623978152)). As a result, this release does not automate scheduling from, or send booking links through, a personal WhatsApp account.
 
 ## Architecture and developer guide
 
