@@ -492,7 +492,10 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
     @app.delete("/api/contacts/<int:contact_id>")
     @admin_required
     def api_contact_delete(contact_id: int):
-        return jsonify({"deleted": store.delete_contact(settings.workspace_id, contact_id)})
+        try:
+            return jsonify({"deleted": store.delete_contact(settings.workspace_id, contact_id)})
+        except ValueError as exc:
+            return _error("contact_has_unresolved_appointments", str(exc), 409)
 
     @app.get("/api/export/requests.csv")
     @admin_required

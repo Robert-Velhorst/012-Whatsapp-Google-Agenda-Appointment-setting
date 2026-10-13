@@ -15,7 +15,7 @@
 | Production guard | `test_production_configuration_fails_closed` | Unsafe production startup raises |
 | Auth/CSRF | `test_api_requires_authentication`, `test_browser_login_and_csrf` | Protected data inaccessible; session mutations require CSRF |
 | Redirect/CSV safety | `test_browser_login_rejects_external_next_redirect`, `test_csv_export_neutralizes_spreadsheet_formulas` | External redirects refused; spreadsheet formulas neutralized |
-| Privacy/isolation | `test_contact_export_delete_and_workspace_isolation` | Export/deletion work; other workspace sees zero records |
+| Privacy/isolation | `test_contact_export_delete_and_workspace_isolation`, `test_contact_delete_refuses_unresolved_calendar_appointments` | Export/deletion work; delete is refused until calendar appointments are cancelled/resolved; other workspace sees zero records |
 | Encryption | `test_sensitive_message_is_encrypted_in_database` | Plain conversation absent from SQLite field |
 | Jobs | `tests/test_worker.py` | Missing/unknown reminders are never reported sent |
 | Concurrency/recovery | `tests/test_provider_safety.py` | Atomic rate/send/confirmation claims; ambiguous delivery and stale work require manual review |

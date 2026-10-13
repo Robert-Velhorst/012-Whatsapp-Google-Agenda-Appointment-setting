@@ -687,6 +687,12 @@ class Store:
             request_ids = [row[0] for row in db.execute("SELECT id FROM scheduling_requests WHERE workspace_id=? AND contact_id=?", (workspace_id, contact_id))]
             if request_ids:
                 placeholders = ",".join("?" for _ in request_ids)
+                unresolved = db.execute(
+                    f"SELECT id FROM appointments WHERE workspace_id=? AND request_id IN ({placeholders}) AND status!='cancelled' LIMIT 1",
+                    [workspace_id, *request_ids],
+                ).fetchone()
+                if unresolved:
+                    raise ValueError("Cancel or manually resolve this contact's appointments before deleting the contact")
                 appointment_ids = [row[0] for row in db.execute(f"SELECT id FROM appointments WHERE request_id IN ({placeholders})", request_ids)]
                 for appointment_id in appointment_ids:
                     db.execute("DELETE FROM background_jobs WHERE workspace_id=? AND payload_json LIKE ?", (workspace_id, f'%"appointment_id": {appointment_id}%'))

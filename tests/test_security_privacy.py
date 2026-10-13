@@ -211,6 +211,34 @@ def test_contact_export_delete_and_workspace_isolation(app_bundle, auth_headers)
     assert store.contacts("default") == []
 
 
+def test_contact_delete_refuses_unresolved_calendar_appointments(app_bundle, auth_headers):
+    app, calendar, _ = app_bundle
+    client = app.test_client()
+    post_webhook(client, webhook())
+    store = app.extensions["store"]
+    item = store.dashboard("default")["items"][0]
+    app.extensions["scheduling"].send_proposal(item["proposal_id"])
+    post_webhook(client, webhook("wamid.2", body="1"))
+    item = store.dashboard("default")["items"][0]
+    app.extensions["scheduling"].book_appointment(item["appointment_id"])
+
+    deleted = client.delete(f"/api/contacts/{item['contact_id']}", headers=auth_headers)
+
+    assert deleted.status_code == 409
+    assert deleted.get_json()["error"]["code"] == "contact_has_unresolved_appointments"
+    assert store.get_contact("default", item["contact_id"]) is not None
+    assert store.get_appointment("default", item["appointment_id"])["status"] == "booked"
+    assert calendar.cancelled == []
+
+    cancelled = client.post(f"/api/appointments/{item['appointment_id']}/cancel", headers=auth_headers)
+    assert cancelled.status_code == 200
+    assert calendar.cancelled == [f"event-{item['appointment_id']}"]
+    deleted = client.delete(f"/api/contacts/{item['contact_id']}", headers=auth_headers)
+    assert deleted.status_code == 200
+    assert deleted.get_json()["deleted"] is True
+    assert store.get_contact("default", item["contact_id"]) is None
+
+
 def test_sensitive_message_is_encrypted_in_database(app_bundle):
     app, _, _ = app_bundle
     post_webhook(app.test_client(), webhook(body="Private scheduling sentence"))
