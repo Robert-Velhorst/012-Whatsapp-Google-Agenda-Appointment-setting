@@ -88,3 +88,10 @@ This later update supersedes the pending publication/CI statements above for the
 - Authenticated `GET /api/audit?limit=-1` previously passed a negative SQLite `LIMIT`, which returns every matching audit row. The store now clamps the value to 1–500 before querying.
 - An API-level regression test reproduced the unbounded response before the fix and now verifies the negative-limit request returns one row. The full local suite passes 80 tests; compilation, `pip check`, `pip-audit -r requirements.lock`, and `git diff --check` pass.
 - These are local checks; GitHub CI for this follow-up is pending and will be checked against the pushed commit.
+
+## Request pagination overflow hardening — 2026-10-13
+
+- Authenticated `GET /api/requests?page=<1000 digits>` previously reached SQLite with an out-of-range `OFFSET` and raised `OverflowError`. The store now clamps requested pages to the filtered result set before computing the offset.
+- An API-level regression reproduces the overflow before the fix and confirms an oversized page now resolves safely. The full local suite passes 81 tests; compilation, dependency consistency, and dependency audit pass.
+- Windows 11 standalone package rebuilt from the combined source: ZIP SHA-256 `0AA5E9500066ACCB7D5FF86C117DCD1C23A9A8D20EF78DB6C30335C73465EE4B`. `windows/Test-Package.ps1` passed: health true, development mode, branded login HTTP 200, and 67.3 MiB working set. Build output/work, test database, and logs were isolated under temporary directories; no provider credentials were used.
+- GitHub CI for this combined source is pending and will be checked against the pushed commit.

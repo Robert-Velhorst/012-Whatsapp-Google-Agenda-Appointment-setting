@@ -46,6 +46,15 @@ def test_audit_api_clamps_negative_limit(app_bundle, auth_headers):
     assert len(response.get_json()) == 1
 
 
+def test_requests_api_clamps_page_to_available_results(app_bundle, auth_headers):
+    app, _, _ = app_bundle
+
+    response = app.test_client().get("/api/requests?page=" + ("9" * 1000), headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.get_json()["page"] == 1
+
+
 def test_browser_login_and_csrf(app_bundle):
     app, _, _ = app_bundle
     client = app.test_client()
