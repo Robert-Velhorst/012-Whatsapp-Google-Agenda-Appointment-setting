@@ -121,6 +121,7 @@ This later update supersedes the pending publication/CI statements above for the
 
 Signed Cloud API status receipts are now stored idempotently, displayed on the corresponding request, and included in privacy export/deletion and retention purge. The local test evidence covers phone-number scoping, malformed callback rejection, duplicate/out-of-order receipt handling, and absence of recipient IDs/raw payload fields. No live Meta webhook was configured or exercised.
 
-- Full local suite: `115 passed`; `compileall`, `pip check`, and `git diff --check` passed. Ruff is not installed in the local venv; hosted CI is still pending for this follow-up.
+- Full local suite: `115 passed`; `compileall`, `pip check`, and `git diff --check` passed. Ruff is not installed in the local venv; hosted CI and analysis gates passed for source commit `5374b1b786575173998a8dacf131f5ccd17fbe46`.
 - Windows 11 standalone package rebuilt and smoke-tested: health `true`, development mode, branded login HTTP 200, working set 66.1 MiB. ZIP SHA-256: `365E3258E1E258550012B297936B7420810B2CF81CFC1AFA67350A34CBFEDF92`.
 - Build used no application/Google/Meta credentials. No live webhook subscription, ngrok tunnel, Google OAuth, or HAI runtime was exercised.
+- Exact source SHA `5374b1b786575173998a8dacf131f5ccd17fbe46` passed PR verification `38483821835`, push verification `38483815562`, Windows package `38483821965`, Actions/Python analysis `38483817822`, and CodeQL run `115592808146`.
