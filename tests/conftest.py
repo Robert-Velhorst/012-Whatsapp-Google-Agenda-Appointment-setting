@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -22,8 +22,10 @@ class FakeCalendar:
 
     def free_slots(self, start_day, duration, count=3):
         tz = ZoneInfo("Europe/Amsterdam")
-        base = datetime.now(tz).replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=2)
-        while base.weekday() >= 5:
+        now = datetime.now(tz)
+        start_day = max(start_day, now.date())
+        base = datetime.combine(start_day, time(10), tzinfo=tz)
+        while base.weekday() >= 5 or base <= now:
             base += timedelta(days=1)
         return [base + timedelta(hours=index) for index in range(min(count, 3))]
 

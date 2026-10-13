@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+
 
 def signed_in_client(app):
     client = app.test_client()
@@ -42,6 +44,8 @@ def test_assisted_proposal_requires_operator_confirmation_before_booking_link_wo
     proposal_id = int(response.headers["Location"].split("proposal=")[1])
     proposal = app.extensions["store"].get_proposal("default", proposal_id)
     token = proposal["booking_token"]
+    requested_start = date.fromisoformat(proposal["requested_start"])
+    assert all(date.fromisoformat(slot[:10]) >= requested_start for slot in proposal["slots"])
     assert "Reply with 1" not in proposal["reply_text"]
     assert "choose a time on this booking page" in proposal["reply_text"]
 
