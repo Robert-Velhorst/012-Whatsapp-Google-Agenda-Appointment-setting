@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.pytest-work*/
+.pytest-*/
+data/
+.env
+*.pyc
+*.sqlite*
+*.log
+backups/
+support-bundles/
+.coverage
+htmlcov/
+build/
+dist/
