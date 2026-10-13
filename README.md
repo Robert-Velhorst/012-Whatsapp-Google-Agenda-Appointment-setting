@@ -1,10 +1,12 @@
 # Agenda Relay
 
-Agenda Relay turns consented WhatsApp Cloud API conversations into reviewed time proposals, confirmed slots, Google Calendar events, reminders, and an auditable operator workflow.
+Agenda Relay turns scheduling requests into reviewed time proposals, confirmed slots, Google Calendar events, reminders, and an auditable operator workflow. It supports consented WhatsApp Cloud API messages and an assisted workflow for personal WhatsApp.
 
-It uses official provider APIs only. There is no WhatsApp Web scraping, browser automation, fake provider success, or automatic calendar write before a contact confirms a specific slot. The default mode requires operator approval before both sending a proposal and creating a calendar event.
+The Business integration uses official provider APIs only. Personal mode opens WhatsApp with a prefilled draft for you to review and send. There is no WhatsApp Web scraping, inbox access, fake provider success, or automatic calendar write before a contact confirms a specific slot. The default mode requires operator approval before both Business API proposal sending and calendar event creation.
 
 ## Working critical path
+
+For WhatsApp Business Cloud API:
 
 1. Meta delivers a signed WhatsApp text webhook.
 2. Agenda Relay verifies the HMAC signature, deduplicates the message, encrypts its body at rest, and derives scheduling intent from the sender's recent context.
@@ -14,6 +16,8 @@ It uses official provider APIs only. There is no WhatsApp Web scraping, browser 
 6. The operator reviews the confirmed slot and creates an idempotent Google Calendar event, or explicitly enables `AUTO_BOOK_CONFIRMED`.
 7. Agenda Relay sends the confirmation and queues a reminder. Outside WhatsApp's permitted conversation window, reminders require an approved template; otherwise they remain visibly `manual_required`.
 8. Every state change and external action is recorded in the audit trail.
+
+For personal WhatsApp, open **Personal WhatsApp**, paste only the relevant message, review the locally detected request and suggested times, then open WhatsApp with a prepared draft. You choose the recipient and send it yourself. After confirming that you shared it, activate its private booking link. The recipient selects a time and consents on that link; Google Calendar booking then follows the configured approval or auto-book setting. Personal-account confirmations and reminders remain manual. The app does not read your personal inbox or send personal WhatsApp messages.
 
 ## Local installation (Windows PowerShell)
 
@@ -27,7 +31,7 @@ Open PowerShell in the extracted folder and initialize a new installation:
 
 Choose and repeat an operator password of at least 12 characters. Setup generates independent application secrets, stores a password hash, and writes `.env`. It refuses to overwrite an existing `.env`, because replacing its encryption key would make stored data unreadable. If `.env` already exists, keep its keys and finish configuration in that file.
 
-Add the Meta and Google settings described below, then run `AgendaRelay.exe` from that same folder. Open [http://127.0.0.1:5000/login](http://127.0.0.1:5000/login) and sign in with your chosen password. The executable runs the web application and reminder worker together. Keep the computer awake and the process running to receive messages.
+For the assisted personal flow, configure Google Calendar and a reachable HTTPS `PUBLIC_BASE_URL` for booking links; Meta settings are not required. Configure Meta as well only if you want the separate WhatsApp Business webhook/API path. Then run `AgendaRelay.exe` from that same folder. Open [http://127.0.0.1:5000/login](http://127.0.0.1:5000/login) and sign in with your chosen password. The executable runs the web application and reminder worker together. Keep the computer awake and the process running while using the app.
 
 For source installation, Python 3.11–3.13 is supported; Python 3.13 is used by the package workflow:
 
@@ -44,7 +48,7 @@ The source setup command performs the same password and key initialization as th
 
 The included Windows launchers install, start, stop, package, and smoke-test the application. See [Windows 11 and ngrok](docs/WINDOWS_AND_NGROK.md).
 
-Development mode is visibly labelled and may start with incomplete provider settings. `APP_ENV=production` fails closed unless HTTPS, strong secrets, encryption, WhatsApp credentials, and Google client credentials are configured.
+Development mode is visibly labelled and may start with incomplete provider settings. `APP_ENV=production` fails closed unless HTTPS, strong secrets, encryption, and Google client credentials are configured. Meta credentials are required only when `WHATSAPP_CLOUD_API_ENABLED=true`; the assisted personal workflow does not require them.
 
 ## Provider onboarding
 
@@ -58,13 +62,15 @@ Development mode is visibly labelled and may start with incomplete provider sett
 
 The OAuth token is encrypted with `DATA_ENCRYPTION_KEY`. The app requests only FreeBusy and Calendar Events scopes.
 
-### WhatsApp Cloud API
+### WhatsApp Cloud API (optional)
 
 1. Create or use an approved Meta WhatsApp Business app and phone-number ID.
 2. Set the HTTPS callback to `${PUBLIC_BASE_URL}/webhook/whatsapp`.
 3. Use `WHATSAPP_VERIFY_TOKEN` for the verification handshake and subscribe to the `messages` field.
 4. Set `WHATSAPP_APP_SECRET`, `WHATSAPP_ACCESS_TOKEN`, and `WHATSAPP_PHONE_NUMBER_ID`.
 5. If reminders may occur outside the customer-service window, obtain an approved utility template and set `WHATSAPP_REMINDER_TEMPLATE`.
+
+Set `WHATSAPP_CLOUD_API_ENABLED=true` to enable the signed webhook and Business API path. Leave it `false` for personal WhatsApp assisted mode. With the Business API disabled, webhook endpoints reject requests and the app cannot send Business API messages. Existing installations that do not yet define the flag infer the setting from their existing Meta credentials; set it explicitly when changing modes.
 
 ## Commands
 
@@ -122,13 +128,13 @@ Start with [critical path](docs/CRITICAL_PATH.md), [security](docs/SECURITY.md),
 
 ## Current external gates
 
-Real-provider verification cannot be completed without the operator's Meta business/phone approval, WhatsApp access token, public HTTPS callback, Google OAuth client, consented Google account, and approved reminder template where required. Local tests use provider fakes that are confined to `tests/`; they are never selected by production configuration.
+For the optional Business API path, real-provider verification requires Meta business/phone approval, WhatsApp credentials, public HTTPS webhook reachability, Google OAuth, a consented Google account, and an approved reminder template where required. Personal assisted mode does not require Meta; it still requires real Google Calendar OAuth and a publicly reachable HTTPS booking URL (ngrok in the documented Windows setup). Local tests use provider fakes confined to `tests/`; they are never selected by production configuration.
 
 ## Who this tool is for
 
-Agenda Relay is a scheduling desk for one operator using one configured Google Calendar and a WhatsApp Business integration. A contact can ask for an appointment in WhatsApp, receive suggested times, and choose a time in the conversation. They do not need to enter a name or email into a separate booking form. The optional private link provides another way to choose a proposed time.
+Agenda Relay is a scheduling desk for one operator using one configured Google Calendar. It can process verified incoming WhatsApp Business webhooks, or assist an operator using personal WhatsApp by analyzing a message they paste, checking availability, and preparing a response with a booking link. A contact can choose a proposed time on that private link without entering a name or email.
 
-The operator connects the accounts once, sets business hours and meeting duration, and reviews proposals and bookings by default. Automatic sending and booking are separate opt-in settings. The application does not read an arbitrary personal WhatsApp inbox: it processes incoming text webhooks delivered to the configured Meta Business integration. It does not import old chat exports, voice notes, images, or group history. WhatsApp's newer opt-in Agent Platform is a separate feature; WhatsApp says an agent cannot access the user's other chats, and this repository does not implement that API ([WhatsApp Help Center](https://faq.whatsapp.com/1050934623978152)). As a result, this release does not automate scheduling from, or send booking links through, a personal WhatsApp account.
+The operator sets business hours and meeting duration and can review proposals and bookings by default. Automatic Business API sending and calendar booking are separate opt-in settings. The personal workflow is assisted, not inbox automation: the operator supplies the relevant text, the app processes it locally using deterministic English/Dutch rules, and the operator manually sends the prepared draft. Pasted text is not retained or sent to an AI or WhatsApp API; the structured request and proposal are stored in the local workflow database so the booking link can work. Do not paste unrelated or sensitive conversation content. Personal messages, confirmations, and reminders are never sent by the Business API. The app does not import chat exports, voice notes, images, or group history. WhatsApp's newer opt-in Agent Platform is separate; WhatsApp says an agent cannot access the user's other chats, and this repository does not implement that API ([WhatsApp Help Center](https://faq.whatsapp.com/1050934623978152)).
 
 ## Architecture and developer guide
 
@@ -137,7 +143,7 @@ The frontend is server-rendered Flask/Jinja with local CSS and JavaScript assets
 | Source | Responsibility |
 |---|---|
 | `scheduler/app.py` | Browser pages, authentication, CSRF, webhook and operator APIs |
-| `scheduler/service.py` | Message analysis, proposals, confirmation, calendar booking, reminders and recovery |
+| `scheduler/service.py` | Message analysis, assisted personal proposals, confirmation, calendar booking, reminders and recovery |
 | `scheduler/intent.py` | Local English/Dutch rules and the replaceable `IntentProvider` interface |
 | `scheduler/calendar.py` | Google OAuth, FreeBusy, event creation and cancellation |
 | `scheduler/whatsapp.py` | Meta signatures, replies, templates and ambiguous-delivery errors |
@@ -147,7 +153,7 @@ The frontend is server-rendered Flask/Jinja with local CSS and JavaScript assets
 | `scheduler/setup.py` | First-run password and security-key initialization |
 | `scheduler/cli.py` | Operator commands |
 | `scheduler/standalone.py` | Packaged server with embedded worker |
-| `scheduler/templates/`, `scheduler/static/` | Operator and booking interface |
+| `scheduler/templates/`, `scheduler/static/` | Operator, assisted personal WhatsApp, and public booking interfaces |
 | `tests/` | Isolated regression and workflow tests with test-only provider adapters |
 | `windows/` | Source installation, start/stop, ngrok and package scripts |
 

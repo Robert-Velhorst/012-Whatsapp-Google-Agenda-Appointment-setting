@@ -74,6 +74,7 @@ def test_public_ingress_allows_google_oauth_bootstrap_only_while_automation_is_p
         "admin_api_token": "a" * 40,
         "admin_password_hash": "configured-password-hash",
         "data_encryption_key": "e" * 64,
+        "whatsapp_cloud_api_enabled": True,
         "whatsapp_verify_token": "v" * 32,
         "whatsapp_app_secret": "s" * 32,
         "whatsapp_access_token": "t" * 32,

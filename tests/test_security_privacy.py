@@ -27,6 +27,47 @@ def test_production_rejects_short_encryption_key(tmp_path):
         })
 
 
+def test_production_personal_assisted_mode_does_not_require_business_api(tmp_path):
+    from .conftest import FakeCalendar, FakeWhatsApp
+
+    google_client = tmp_path / "google-client.json"
+    google_client.write_text("{}", encoding="utf-8")
+    app = create_app({
+        "app_env": "production",
+        "database_path": tmp_path / "personal.sqlite3",
+        "public_base_url": "https://agenda.example.ngrok.app",
+        "flask_secret_key": "f" * 64,
+        "admin_api_token": "a" * 64,
+        "admin_password_hash": "configured-password-hash",
+        "data_encryption_key": "e" * 64,
+        "whatsapp_cloud_api_enabled": False,
+        "google_client_secrets_file": str(google_client),
+        "automation_paused": True,
+    }, calendar=FakeCalendar(), whatsapp=FakeWhatsApp())
+
+    readiness = app.extensions["scheduling"].readiness()
+    assert readiness["providers"]["whatsapp"]["ready"] is True
+    assert readiness["providers"]["whatsapp"]["enabled"] is False
+    assert readiness["public_ingress"]["ready"] is True
+    assert app.test_client().get("/webhook/whatsapp?hub.verify_token=x").status_code == 403
+    app.extensions["store"].close()
+
+
+def test_cloud_api_mode_preserves_existing_credential_installations(monkeypatch):
+    from scheduler.config import Settings
+
+    monkeypatch.delenv("WHATSAPP_CLOUD_API_ENABLED", raising=False)
+    settings = Settings.from_env({
+        "whatsapp_verify_token": "verify", "whatsapp_app_secret": "secret",
+        "whatsapp_access_token": "token", "whatsapp_phone_number_id": "123",
+    })
+    assert settings.whatsapp_cloud_api_enabled is True
+
+    monkeypatch.setenv("WHATSAPP_CLOUD_API_ENABLED", "false")
+    settings = Settings.from_env({"whatsapp_access_token": "legacy-token"})
+    assert settings.whatsapp_cloud_api_enabled is False
+
+
 def test_api_requires_authentication(app_bundle):
     app, _, _ = app_bundle
     response = app.test_client().get("/api/requests")

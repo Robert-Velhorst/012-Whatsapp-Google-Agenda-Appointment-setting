@@ -25,13 +25,13 @@ NGROK_DOMAIN=your-assigned-domain.ngrok.app
 NGROK_INSPECTOR_PORT=4042
 ```
 
-All production secrets, Meta credentials, Google client JSON, operator password hash, and encryption key must also be valid. Start Agenda Relay first, then run:
+All production secrets, Google client JSON, operator password hash, and encryption key must also be valid. Meta credentials are required only when `WHATSAPP_CLOUD_API_ENABLED=true`. In personal-only mode, the HTTPS tunnel serves private booking links and the Google OAuth callback; it does not connect to your WhatsApp account. Start Agenda Relay first, then run:
 
 ```powershell
 .\windows\Start-Ngrok.ps1
 ```
 
-The launcher refuses public exposure unless production configuration and WhatsApp webhook credentials pass the protected local `public_ingress` check. When Google OAuth is not connected, this check allows ingress only while automation is paused; that lets the operator complete consent without processing scheduling webhooks against a disconnected calendar. A deliberate pause also does not prevent the tunnel from recording signed inbound webhooks. The ordinary scheduling readiness endpoint remains false until Google is connected and automation is resumed. Test the complete real-provider flow before enabling automation.
+The launcher refuses public exposure unless production configuration and the selected integration mode pass the protected local `public_ingress` check. When WhatsApp Cloud API is enabled, valid webhook credentials are required. When it is disabled, no WhatsApp webhook is accepted and the tunnel supports the assisted personal flow and private booking links. When Google OAuth is not connected, ingress is allowed only while automation is paused so the operator can complete consent safely. The ordinary scheduling readiness endpoint remains false until Google is connected and automation is resumed. Test real Google Calendar access and public booking-link reachability before using the workflow.
 
 The launcher requires the operator API token to read this local ingress check; it does not send that token through ngrok. It uses a project-specific local inspector port, verifies the exact assigned HTTPS URL, calls the public health endpoint, and records the verified process before reporting success. Stop only this tunnel with `.\windows\Stop-Ngrok.ps1`.
 

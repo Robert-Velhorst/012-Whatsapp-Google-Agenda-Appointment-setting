@@ -133,12 +133,62 @@ class SchedulingService:
                         self.send_proposal(proposal_id, actor="automation")
         return result
 
+    def create_assisted_proposal(self, message_text: str) -> int:
+        """Create a manual-only personal WhatsApp proposal without retaining pasted text."""
+        text = message_text.strip()
+        if not text or len(text) > 5000:
+            raise ValueError("Paste a message between 1 and 5,000 characters.")
+        local_today = datetime.now(ZoneInfo(self.settings.timezone)).date()
+        intent = self.intent_provider.analyse(text, local_today, self.settings.default_duration_minutes)
+        if not intent.is_scheduling:
+            raise ValueError("I could not identify a scheduling request. Review the message and try again.")
+        if not self.calendar.connected():
+            raise RuntimeError("Google Calendar is not connected. Connect it before checking availability.")
+        # The identifier is deliberately synthetic: there is no personal WhatsApp API
+        # identity or phone number available, and neither is needed for the booking link.
+        sender = f"assisted:{secrets.token_urlsafe(18)}"
+        contact_id = self.store.upsert_contact(
+            self.settings.workspace_id, sender, self.settings.timezone, intent.language,
+            display_name="Personal WhatsApp (manual)",
+        )
+        source_id = f"assisted:{secrets.token_urlsafe(18)}"
+        request_id = self.store.create_request(
+            self.settings.workspace_id, contact_id, source_id, intent.title,
+            intent.duration_minutes, self.settings.timezone, intent.requested_start.isoformat(), intent.confidence,
+        )
+        try:
+            slots = self.calendar.free_slots(intent.requested_start, intent.duration_minutes)
+        except Exception as exc:
+            self.store.transition_request(
+                self.settings.workspace_id, request_id, "failed", "assisted_personal",
+                {"provider": "google_calendar", "error": str(exc)[:200]},
+            )
+            raise
+        if not slots:
+            self.store.transition_request(
+                self.settings.workspace_id, request_id, "needs_clarification", "assisted_personal",
+                {"reason": "no_slots_in_search_window"},
+            )
+            raise ValueError("No suitable times were found in the next three weeks. Try a broader date or check your calendar settings.")
+        token = secrets.token_urlsafe(32)
+        reply = self._assisted_proposal_reply(intent.language, slots, token, self.settings.timezone)
+        proposal_id, _ = self.store.create_proposal(
+            self.settings.workspace_id, request_id, reply, [slot.isoformat() for slot in slots], token,
+        )
+        self.store.audit(
+            self.settings.workspace_id, "assisted_personal", "proposal.prepared_for_manual_share",
+            "proposal", proposal_id, {"text_retained": False, "source": "operator_paste"},
+        )
+        return proposal_id
+
     def send_proposal(self, proposal_id: int, actor: str = "operator") -> dict:
         if self.is_paused():
             raise RuntimeError("Automation is paused; resume it before sending")
         proposal = self.store.get_proposal(self.settings.workspace_id, proposal_id)
         if not proposal:
             raise KeyError("Proposal not found")
+        if proposal["sender"].startswith("assisted:"):
+            raise ValueError("Personal WhatsApp proposals are manual-only and cannot be sent through the Business API.")
         if proposal["status"] not in {"pending_approval", "send_failed"}:
             raise ValueError("Proposal is no longer sendable")
         if proposal["consent_status"] == "revoked":
@@ -236,7 +286,7 @@ class SchedulingService:
             warning = "Calendar event was booked, but WhatsApp confirmation requires operator attention."
             self.store.audit(self.settings.workspace_id, actor, "confirmation.send_failed", "appointment", appointment_id, {"error": str(exc)[:200]})
         reminder_at = datetime.fromisoformat(appointment["start_at"]).astimezone(timezone.utc) - timedelta(minutes=self.settings.reminder_minutes_before)
-        if reminder_at > utc_now():
+        if reminder_at > utc_now() and not appointment["sender"].startswith("assisted:"):
             self.store.schedule_job(
                 self.settings.workspace_id, "appointment_reminder", f"reminder:{appointment_id}:{self.settings.reminder_minutes_before}",
                 reminder_at.isoformat(), {"appointment_id": appointment_id},
@@ -303,20 +353,25 @@ class SchedulingService:
         errors, warnings = self.settings.validation()
         google_connected = bool(getattr(self.calendar, "connected", lambda: False)())
         whatsapp_configured = bool(getattr(self.whatsapp, "configured", lambda: False)())
+        whatsapp_ready = not self.settings.whatsapp_cloud_api_enabled or whatsapp_configured
         providers = {
             "google_calendar": {"ready": google_connected, "detail": "Connected" if google_connected else "OAuth connection required"},
-            "whatsapp": {"ready": whatsapp_configured, "detail": "Configured" if whatsapp_configured else "Cloud API credentials required"},
+            "whatsapp": {
+                "ready": whatsapp_ready,
+                "enabled": self.settings.whatsapp_cloud_api_enabled,
+                "detail": ("Configured" if whatsapp_configured else "Cloud API credentials required") if self.settings.whatsapp_cloud_api_enabled else "Disabled; personal WhatsApp assisted mode",
+            },
         }
-        can_resume = not errors and all(item["ready"] for item in providers.values())
+        can_resume = not errors and google_connected and whatsapp_ready
         paused = self.is_paused()
-        ingress_ready = self.settings.is_production and not errors and whatsapp_configured and (google_connected or paused)
+        ingress_ready = self.settings.is_production and not errors and whatsapp_ready and (google_connected or paused)
         if ingress_ready:
-            ingress_detail = "Production configuration and signed WhatsApp webhook settings are valid"
+            ingress_detail = "Production ingress is valid" if self.settings.whatsapp_cloud_api_enabled else "Production HTTPS booking links are valid; WhatsApp Cloud API is disabled"
         elif not self.settings.is_production:
             ingress_detail = "APP_ENV=production is required before public exposure"
         elif errors:
             ingress_detail = "Production configuration errors must be resolved before public exposure"
-        elif not whatsapp_configured:
+        elif not whatsapp_ready:
             ingress_detail = "WhatsApp Cloud API credentials are required before public exposure"
         else:
             ingress_detail = "Connect Google Calendar or pause automation before public OAuth bootstrap"
@@ -349,6 +404,14 @@ class SchedulingService:
             return "Ik kan deze momenten aanbieden:\n" + "\n".join(rendered) + f"\n\nTijdzone: {timezone_name}. Antwoord met 1, 2 of 3, of kies via {link}"
         return "I can offer these times:\n" + "\n".join(rendered) + f"\n\nTime zone: {timezone_name}. Reply with 1, 2 or 3, or choose at {link}"
 
+    def _assisted_proposal_reply(self, language: str, slots: list[datetime], token: str, timezone_name: str) -> str:
+        target_timezone = ZoneInfo(timezone_name)
+        rendered = [self._format_slot(slot.astimezone(target_timezone), language, index + 1) for index, slot in enumerate(slots)]
+        link = f"{self.settings.public_base_url}/book/{token}"
+        if language == "nl":
+            return "Ik kan deze momenten aanbieden:\n" + "\n".join(rendered) + f"\n\nTijdzone: {timezone_name}. Kies een moment via deze boekingspagina: {link}"
+        return "I can offer these times:\n" + "\n".join(rendered) + f"\n\nTime zone: {timezone_name}. Please choose a time on this booking page: {link}"
+
     @staticmethod
     def _format_slot(slot: datetime, language: str, number: int) -> str:
         if language == "nl":
@@ -357,6 +420,8 @@ class SchedulingService:
         return f"{number}. {slot:%A} {slot.day} {slot:%B} at {slot:%H:%M}"
 
     def _send_booking_confirmation(self, appointment: dict) -> None:
+        if appointment["sender"].startswith("assisted:"):
+            raise RuntimeError("Personal WhatsApp confirmations must be sent manually by the operator.")
         self._enforce_rate_limit(appointment["sender"])
         display_timezone = appointment.get("contact_timezone") or appointment["timezone"]
         local = datetime.fromisoformat(appointment["start_at"]).astimezone(ZoneInfo(display_timezone))

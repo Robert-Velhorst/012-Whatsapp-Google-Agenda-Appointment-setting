@@ -108,6 +108,12 @@ Status is evidence-based as of 2026-08-09. `Implemented` means locally wired and
 | 101 | Support bundle | Implemented | Redacted CLI bundle excludes PII/secrets |
 | 102 | Retention/archive policy | Implemented | Configured purge, backup policy, privacy docs |
 | 103 | Prototype-to-production | Partial | Guards/Docker/ops complete; real deployment/security validation blocked |
+
+## Personal WhatsApp assisted-flow update (2026-10-13)
+
+The operator can now paste a relevant message into the authenticated **Personal WhatsApp** screen. Local English/Dutch rules detect a scheduling request, Google FreeBusy returns candidate times, and the app prepares a private booking link and a WhatsApp draft. The pasted text is not persisted or sent to an AI or WhatsApp API. The operator manually opens WhatsApp, chooses the recipient, sends the message, and confirms sharing before the booking link becomes active. The recipient selects a time and grants consent; Calendar booking follows the configured approval setting. Personal confirmations and reminders remain manual, and Personal-flow records are blocked from Business API sending. Regression coverage is in `tests/test_assisted_personal.py` and `tests/test_security_privacy.py`.
+
+`WHATSAPP_CLOUD_API_ENABLED=false` supports a production personal-only setup without Meta credentials; Google OAuth, strong secrets, HTTPS `PUBLIC_BASE_URL`, and a reachable public booking link are still required. No live WhatsApp inbox, ngrok tunnel, Google account, or calendar was connected or exercised by this change. Full CI and hosted/provider acceptance are separate gates.
 | 104 | Emergency controls | Implemented | Persistent pause and inbound record-only behavior; resume is blocked until required integrations are ready |
 | 105 | First-run onboarding | Partial | Login/readiness/help guide; no multi-step credential wizard |
 | 106 | Roles/team permissions | Partial | Single operator only; no teams/RBAC |

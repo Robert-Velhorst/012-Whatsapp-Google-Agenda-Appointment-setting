@@ -190,7 +190,7 @@ class Store:
     def get_proposal(self, workspace_id: str, proposal_id: int) -> dict[str, Any] | None:
         with self.connect() as db:
             row = db.execute(
-                "SELECT p.*,r.title,r.duration_minutes,r.contact_id,r.timezone request_timezone,c.sender,c.display_name,c.email,c.language,c.consent_status,c.timezone contact_timezone "
+                "SELECT p.*,r.title,r.duration_minutes,r.contact_id,r.timezone request_timezone,r.requested_start,c.sender,c.display_name,c.email,c.language,c.consent_status,c.timezone contact_timezone "
                 "FROM proposals p JOIN scheduling_requests r ON r.id=p.request_id JOIN contacts c ON c.id=r.contact_id "
                 "WHERE p.workspace_id=? AND p.id=?",
                 (workspace_id, proposal_id),
@@ -201,7 +201,7 @@ class Store:
         token_hash = hashlib.sha256(token.encode()).hexdigest()
         with self.connect() as db:
             row = db.execute(
-                "SELECT p.*,r.title,r.duration_minutes,r.contact_id,r.timezone request_timezone,c.sender,c.display_name,c.email,c.language,c.consent_status,c.timezone contact_timezone "
+                "SELECT p.*,r.title,r.duration_minutes,r.contact_id,r.timezone request_timezone,r.requested_start,c.sender,c.display_name,c.email,c.language,c.consent_status,c.timezone contact_timezone "
                 "FROM proposals p JOIN scheduling_requests r ON r.id=p.request_id JOIN contacts c ON c.id=r.contact_id "
                 "WHERE p.booking_token_hash=?",
                 (token_hash,),
@@ -211,7 +211,7 @@ class Store:
     def latest_sent_proposal(self, workspace_id: str, sender: str, minimum_sent_at: str | None = None) -> dict[str, Any] | None:
         with self.connect() as db:
             row = db.execute(
-                "SELECT p.*,r.title,r.duration_minutes,r.contact_id,r.timezone request_timezone,c.sender,c.display_name,c.email,c.language,c.consent_status,c.timezone contact_timezone "
+                "SELECT p.*,r.title,r.duration_minutes,r.contact_id,r.timezone request_timezone,r.requested_start,c.sender,c.display_name,c.email,c.language,c.consent_status,c.timezone contact_timezone "
                 "FROM proposals p JOIN scheduling_requests r ON r.id=p.request_id JOIN contacts c ON c.id=r.contact_id "
                 "WHERE p.workspace_id=? AND c.sender=? AND p.status='sent' AND (? IS NULL OR COALESCE(p.sent_at,p.created_at)>=?) ORDER BY p.id DESC LIMIT 1",
                 (workspace_id, sender, minimum_sent_at, minimum_sent_at),
@@ -261,6 +261,34 @@ class Store:
                 raise ValueError("Proposal is not sendable")
             db.execute("UPDATE proposals SET status='sent',provider_message_id=?,sent_at=?,error_text=NULL WHERE id=?", (provider_message_id, utc_now().isoformat(), proposal_id))
         self.transition_request(workspace_id, int(row["request_id"]), "awaiting_confirmation", "operator", {"proposal_id": proposal_id})
+
+    def mark_assisted_proposal_shared(self, workspace_id: str, proposal_id: int, actor: str) -> None:
+        """Activate a booking link only after the operator confirms manual sharing."""
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT p.request_id,p.status,r.source_message_id FROM proposals p "
+                "JOIN scheduling_requests r ON r.id=p.request_id WHERE p.workspace_id=? AND p.id=?",
+                (workspace_id, proposal_id),
+            ).fetchone()
+            if not row or not str(row["source_message_id"]).startswith("assisted:"):
+                raise KeyError("Assisted personal proposal not found")
+            if row["status"] != "pending_approval":
+                raise ValueError("This assisted proposal is no longer awaiting manual sharing.")
+            cursor = db.execute(
+                "UPDATE proposals SET status='sent',provider_message_id=NULL,sent_at=?,error_text=NULL WHERE workspace_id=? AND id=? AND status='pending_approval'",
+                (now, workspace_id, proposal_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("This assisted proposal is no longer awaiting manual sharing.")
+        self.transition_request(
+            workspace_id, int(row["request_id"]), "awaiting_confirmation", actor,
+            {"proposal_id": proposal_id, "delivery": "operator_confirmed_manual_share"},
+        )
+        self.audit(
+            workspace_id, actor, "proposal.shared_manually", "proposal", proposal_id,
+            {"provider_delivery_verified": False, "channel": "personal_whatsapp"},
+        )
 
     def mark_proposal_failed(self, workspace_id: str, proposal_id: int, error: str) -> None:
         with self.connect() as db:

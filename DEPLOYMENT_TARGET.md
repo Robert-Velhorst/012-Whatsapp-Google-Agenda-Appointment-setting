@@ -1,8 +1,8 @@
 # Deployment target
 
-For this project, the required cloud-access mode is the single-operator Windows 11 application exposed through the operator's assigned ngrok HTTPS domain. The ngrok tunnel is a transport for the app's signed WhatsApp provider webhook and Google OAuth callback; it is not a general-purpose public access path.
+For this project, the required cloud-access mode is the single-operator Windows 11 application exposed through the operator's assigned ngrok HTTPS domain. For personal WhatsApp assisted mode, the tunnel makes private booking links and Google OAuth callbacks reachable; it does not connect to or automate the personal WhatsApp account. If the optional Business Cloud API is enabled, the tunnel also carries its signed webhook.
 
-The deployment remains single-host and single-instance. Do not describe it as highly available or suitable for horizontally scaled SaaS. Before opening the tunnel, require `APP_ENV=production`, strong non-default secrets, configured provider credentials, a valid exact `PUBLIC_BASE_URL`, a dedicated ngrok inspector port bound to loopback, and a passing authenticated `public_ingress` readiness check. Verify the assigned HTTPS hostname and public health response before registering provider callbacks.
+The deployment remains single-host and single-instance. Do not describe it as highly available or suitable for horizontally scaled SaaS. Before opening the tunnel, require `APP_ENV=production`, strong non-default secrets, Google OAuth client configuration, a valid exact `PUBLIC_BASE_URL`, a dedicated ngrok inspector port bound to loopback, and a passing authenticated `public_ingress` readiness check. Meta credentials are additionally required only when `WHATSAPP_CLOUD_API_ENABLED=true`. Verify the assigned HTTPS hostname and public health response before sharing booking links or registering provider callbacks.
 
 Keep the HAI JSON feed local and owner-scoped. Never expose it through ngrok or another public tunnel; use loopback or a narrowly allowlisted local Docker Desktop gateway as documented in [HAI integration](docs/HAI_INTEGRATION.md).
 
