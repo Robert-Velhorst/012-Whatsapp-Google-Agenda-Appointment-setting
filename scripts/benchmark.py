@@ -17,6 +17,21 @@ def percentile(values: list[float], fraction: float) -> float:
     return ordered[min(int(len(ordered) * fraction), len(ordered) - 1)]
 
 
+def populate(store: Store, records: int) -> None:
+    for index in range(records):
+        contact_id = store.upsert_contact("benchmark", f"316000{index:05d}", "Europe/Amsterdam")
+        store.create_request(
+            "benchmark",
+            contact_id,
+            f"benchmark-{index}",
+            "Benchmark scheduling request",
+            30,
+            "Europe/Amsterdam",
+            "2026-08-10T09:00:00+02:00",
+            0.95,
+        )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Measure Agenda Relay's local SQLite workload.")
     parser.add_argument("--records", type=int, default=500)
@@ -25,24 +40,12 @@ def main() -> None:
     if not 1 <= args.records <= 10_000 or not 1 <= args.reads <= 10_000:
         parser.error("records and reads must be between 1 and 10000")
 
-    tracemalloc.start()
     with tempfile.TemporaryDirectory(prefix="agenda-relay-benchmark-") as folder:
         store = Store(Path(folder) / "benchmark.sqlite3", CryptoBox("benchmark-key"))
         try:
             store.ensure_workspace("benchmark", "Benchmark", "Europe/Amsterdam")
             write_started = time.perf_counter()
-            for index in range(args.records):
-                contact_id = store.upsert_contact("benchmark", f"316000{index:05d}", "Europe/Amsterdam")
-                store.create_request(
-                    "benchmark",
-                    contact_id,
-                    f"benchmark-{index}",
-                    "Benchmark scheduling request",
-                    30,
-                    "Europe/Amsterdam",
-                    "2026-08-10T09:00:00+02:00",
-                    0.95,
-                )
+            populate(store, args.records)
             write_seconds = time.perf_counter() - write_started
 
             latencies: list[float] = []
@@ -53,9 +56,26 @@ def main() -> None:
             feed_started = time.perf_counter()
             feed, _ = store.hai_feed("benchmark", limit=500)
             feed_ms = (time.perf_counter() - feed_started) * 1000
-            _, peak_bytes = tracemalloc.get_traced_memory()
         finally:
             store.close()
+
+    # Measure Python allocation in a separate identical pass. Tracemalloc adds
+    # substantial per-allocation overhead and must not contaminate latency data.
+    tracemalloc.start()
+    try:
+        with tempfile.TemporaryDirectory(prefix="agenda-relay-benchmark-memory-") as folder:
+            store = Store(Path(folder) / "benchmark.sqlite3", CryptoBox("benchmark-key"))
+            try:
+                store.ensure_workspace("benchmark", "Benchmark", "Europe/Amsterdam")
+                populate(store, args.records)
+                for _ in range(args.reads):
+                    store.dashboard("benchmark", page=1, per_page=50)
+                store.hai_feed("benchmark", limit=500)
+                _, peak_bytes = tracemalloc.get_traced_memory()
+            finally:
+                store.close()
+    finally:
+        tracemalloc.stop()
 
     report = {
         "records": args.records,

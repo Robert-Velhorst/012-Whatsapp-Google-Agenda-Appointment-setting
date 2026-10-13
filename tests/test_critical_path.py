@@ -2,8 +2,9 @@ from dataclasses import replace
 
 import pytest
 
-from .conftest import post_webhook, webhook
 from scheduler.calendar import CalendarUnavailable
+
+from .conftest import post_webhook, webhook
 
 
 def test_message_to_proposal_to_confirmation_to_calendar_event(app_bundle, auth_headers):

@@ -4,7 +4,7 @@ import base64
 import hashlib
 import json
 import os
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -46,48 +46,52 @@ class GoogleCalendar:
         try:
             self._credentials()
             return True
-        except Exception:
+        except Exception:  # noqa: BLE001 - Google auth/transport libraries expose several unrelated credential failure types.
             return False
 
     def free_slots(self, start_day, duration_minutes: int, count: int = 3) -> list[datetime]:
+        if count <= 0:
+            return []
         service = self._service()
         tz = ZoneInfo(self.settings.timezone)
-        day = start_day
-        slots: list[datetime] = []
         now = datetime.now(tz)
-        for _ in range(21):
-            if day.weekday() < 5:
-                lower = datetime.combine(day, time(self.settings.business_hours_start), tzinfo=tz)
-                upper = datetime.combine(day, time.min, tzinfo=tz) + timedelta(hours=self.settings.business_hours_end)
-                if lower.date() == now.date() and lower < now:
-                    interval = self.settings.slot_interval_minutes
-                    minutes = ((now.minute + interval - 1) // interval) * interval
-                    lower = now.replace(minute=0, second=0, microsecond=0) + timedelta(minutes=minutes)
-                if lower >= upper or upper <= now:
-                    day += timedelta(days=1)
-                    continue
-                busy_response = service.freebusy().query(body={
-                    "timeMin": lower.isoformat(), "timeMax": upper.isoformat(), "timeZone": self.settings.timezone,
-                    "items": [{"id": self.settings.google_calendar_id}],
-                }).execute()
-                calendar_data = busy_response.get("calendars", {}).get(self.settings.google_calendar_id)
-                if not isinstance(calendar_data, dict) or not isinstance(calendar_data.get("busy"), list):
-                    raise CalendarUnavailable("Google Calendar did not return valid availability; no slots were proposed.")
-                if calendar_data.get("errors"):
-                    raise CalendarUnavailable(f"Google Calendar FreeBusy error: {calendar_data['errors']}")
-                ranges = [
-                    (datetime.fromisoformat(item["start"]).astimezone(tz), datetime.fromisoformat(item["end"]).astimezone(tz))
-                    for item in calendar_data.get("busy", [])
-                ]
-                candidate = lower
-                while candidate + timedelta(minutes=duration_minutes) <= upper:
-                    end = candidate + timedelta(minutes=duration_minutes)
-                    if candidate >= now and not any(candidate < busy_end and end > busy_start for busy_start, busy_end in ranges):
-                        slots.append(candidate)
-                        if len(slots) == count:
-                            return slots
-                    candidate += timedelta(minutes=self.settings.slot_interval_minutes)
-            day += timedelta(days=1)
+        window_start = datetime.combine(start_day, time.min, tzinfo=tz)
+        window_end = datetime.combine(start_day + timedelta(days=21), time.min, tzinfo=tz)
+        busy_response = service.freebusy().query(body={
+            "timeMin": window_start.isoformat(), "timeMax": window_end.isoformat(), "timeZone": self.settings.timezone,
+            "items": [{"id": self.settings.google_calendar_id}],
+        }).execute()
+        calendar_data = busy_response.get("calendars", {}).get(self.settings.google_calendar_id)
+        if not isinstance(calendar_data, dict) or not isinstance(calendar_data.get("busy"), list):
+            raise CalendarUnavailable("Google Calendar did not return valid availability; no slots were proposed.")
+        if calendar_data.get("errors"):
+            raise CalendarUnavailable(f"Google Calendar FreeBusy error: {calendar_data['errors']}")
+        ranges = [
+            (datetime.fromisoformat(item["start"]).astimezone(tz), datetime.fromisoformat(item["end"]).astimezone(tz))
+            for item in calendar_data.get("busy", [])
+        ]
+
+        slots: list[datetime] = []
+        for offset in range(21):
+            day = start_day + timedelta(days=offset)
+            if day.weekday() >= 5:
+                continue
+            lower = datetime.combine(day, time(self.settings.business_hours_start), tzinfo=tz)
+            upper = datetime.combine(day, time.min, tzinfo=tz) + timedelta(hours=self.settings.business_hours_end)
+            if lower.date() == now.date() and lower < now:
+                interval = self.settings.slot_interval_minutes
+                minutes = ((now.minute + interval - 1) // interval) * interval
+                lower = now.replace(minute=0, second=0, microsecond=0) + timedelta(minutes=minutes)
+            if lower >= upper or upper <= now:
+                continue
+            candidate = lower
+            while candidate + timedelta(minutes=duration_minutes) <= upper:
+                end = candidate + timedelta(minutes=duration_minutes)
+                if candidate >= now and not any(candidate < busy_end and end > busy_start for busy_start, busy_end in ranges):
+                    slots.append(candidate)
+                    if len(slots) == count:
+                        return slots
+                candidate += timedelta(minutes=self.settings.slot_interval_minutes)
         return slots
 
     def is_slot_available(self, start_at: datetime, end_at: datetime) -> bool:

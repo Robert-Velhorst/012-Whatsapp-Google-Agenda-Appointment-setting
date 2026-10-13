@@ -8,6 +8,7 @@
     <nav aria-label="Primary navigation">
       <a class="nav-link {{ 'active' if view == 'overview' }}" href="{{ url_for('dashboard') }}"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5v8a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Overview</a>
       <a class="nav-link {{ 'active' if view == 'scheduling' }}" href="{{ url_for('dashboard', view='scheduling') }}"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4m10-4v4M3 10h18m-14 4h3m4 0h3m-10 4h3"/></svg>Scheduling</a>
+      <a class="nav-link {{ 'active' if view == 'assisted' }}" href="{{ url_for('dashboard', view='assisted') }}"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 5h16v12H8l-4 4z"/><path d="M8 9h8m-8 4h5"/></svg>Personal WhatsApp</a>
       <a class="nav-link {{ 'active' if view == 'contacts' }}" href="{{ url_for('dashboard', view='contacts') }}"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="9" cy="8" r="4"/><path d="M2.5 21a6.5 6.5 0 0 1 13 0M16 8h6m-3-3v6"/></svg>Contacts</a>
       <a class="nav-link {{ 'active' if view == 'audit' }}" href="{{ url_for('dashboard', view='audit') }}"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 4h14v17H5zM8 8h8m-8 4h8m-8 4h5"/></svg>Audit</a>
       <a class="nav-link {{ 'active' if view == 'settings' }}" href="{{ url_for('dashboard', view='settings') }}"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"/></svg>Settings</a>
@@ -45,7 +46,7 @@
       </div>
 
       <section class="readiness-strip" aria-label="Provider readiness">
-        <div class="provider"><span class="provider-mark whatsapp">W</span><span><strong>WhatsApp connection</strong><small>{{ readiness.providers.whatsapp.detail }}</small></span><span class="provider-state {{ 'ok' if readiness.providers.whatsapp.ready else 'attention' }}">{{ 'Ready' if readiness.providers.whatsapp.ready else 'Action required' }}</span></div>
+        <div class="provider"><span class="provider-mark whatsapp">W</span><span><strong>WhatsApp connection</strong><small>{{ readiness.providers.whatsapp.detail }}</small></span><span class="provider-state {{ 'ok' if readiness.providers.whatsapp.ready else 'attention' }}">{{ 'Ready' if readiness.providers.whatsapp.ready and readiness.providers.whatsapp.enabled else ('Not used' if not readiness.providers.whatsapp.enabled else 'Action required') }}</span></div>
         <div class="provider"><span class="provider-mark calendar">31</span><span><strong>Google Calendar connection</strong><small>{{ readiness.providers.google_calendar.detail }}</small></span><span class="provider-state {{ 'ok' if readiness.providers.google_calendar.ready else 'attention' }}">{{ 'Ready' if readiness.providers.google_calendar.ready else 'Action required' }}</span></div>
       </section>
 
@@ -82,12 +83,16 @@
               {% for item in data['items'] %}
                 <tr class="{{ 'selected' if selected and selected.id == item.id }}">
                   <td><a class="contact-link" href="{{ url_for('dashboard', view='scheduling', request=item.id, q=query, status=status) }}"><strong>{{ item.display_name or 'WhatsApp contact' }}</strong><small>•••• {{ item.sender[-4:] }}</small></a></td>
-                  <td>{{ 'Review proposal' if item.status == 'proposal_pending' else ('Book confirmed slot' if item.status in ['slot_confirmed','booking_pending'] else ('Awaiting contact reply' if item.status == 'awaiting_confirmation' else ('Provider attention' if item.status == 'failed' else 'View details'))) }}</td>
+                  <td>{% if item.proposal_status == 'manual_required' %}Verify WhatsApp delivery{% elif item.status == 'proposal_pending' %}Review proposal{% elif item.status in ['slot_confirmed','booking_pending'] %}Book confirmed slot{% elif item.status == 'awaiting_confirmation' %}Awaiting contact reply{% elif item.status == 'failed' %}Provider attention{% else %}View details{% endif %}</td>
                   <td>{{ item.requested_start }}<small>{{ item.duration_minutes }} minutes · {{ item.timezone }}</small></td>
                   <td><span class="state {{ item.status }}">{{ item.status.replace('_',' ') }}</span></td>
                   <td>{{ (item.confidence * 100)|round|int }}%</td>
                   <td>
-                    {% if item.proposal_id and item.proposal_status in ['pending_approval','send_failed'] %}
+                    {% if item.sender.startswith('assisted:') and item.proposal_id and item.proposal_status == 'pending_approval' %}
+                    <a class="row-action" href="{{ url_for('dashboard', view='assisted', proposal=item.proposal_id) }}">Review personal draft</a>
+                    {% elif item.proposal_id and item.proposal_status == 'manual_required' %}
+                    <a class="row-action" href="{{ url_for('dashboard', view='scheduling', request=item.id) }}">Reconcile delivery</a>
+                    {% elif item.proposal_id and item.proposal_status in ['pending_approval','send_failed'] %}
                     <form method="post" action="{{ url_for('action_send_proposal', proposal_id=item.proposal_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="row-action" type="submit">Review proposal</button></form>
                     {% elif item.appointment_id and item.appointment_status in ['pending_approval','failed'] %}
                     <form method="post" action="{{ url_for('action_book', appointment_id=item.appointment_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="row-action" type="submit">Book confirmed slot</button></form>
@@ -109,8 +114,16 @@
           <div class="detail-heading"><div><h2>{{ selected.display_name or 'WhatsApp contact' }}</h2><span>•••• {{ selected.sender[-4:] }}</span></div><span class="state {{ selected.status }}">{{ selected.status.replace('_',' ') }}</span></div>
           <div class="detail-section"><h3>Conversation excerpt</h3><div class="conversation">{% for message in selected.messages %}<div class="message">{{ message.body }}<small>{{ message.received_at[:16].replace('T',' ') }}</small></div>{% endfor %}</div></div>
           <div class="detail-section"><h3>Proposed time slots</h3><ol class="slot-list">{% for slot in selected.slots %}<li class="{{ 'chosen' if selected.selected_slot == loop.index0 }}"><span>{{ slot[:10] }}</span><strong>{{ slot[11:16] }}</strong></li>{% else %}<li>No slots available for this request.</li>{% endfor %}</ol></div>
+          {% if personal_confirmation_text %}<div class="detail-section"><h3>Personal WhatsApp confirmation draft</h3><textarea rows="3" readonly aria-label="WhatsApp confirmation draft">{{ personal_confirmation_text }}</textarea><a class="secondary-button" href="{{ personal_confirmation_url }}" target="_blank" rel="noopener noreferrer">Open WhatsApp with confirmation</a><small>Not sent or delivery-verified by Agenda Relay.</small></div>{% endif %}
           <div class="detail-section consent"><h3>Consent &amp; timezone</h3><p><span class="check">✓</span>{{ selected.contact.consent_status.replace('_',' ')|title }}</p><p>Timezone: <strong>{{ selected.timezone }}</strong></p></div>
           <div class="detail-section"><h3>Audit trail</h3><ol class="timeline">{% for event in selected.audit %}<li><time>{{ event.created_at[11:16] }}</time><span>{{ event.action.replace('.',' ') }}</span></li>{% else %}<li><span>No audit events recorded.</span></li>{% endfor %}</ol></div>
+          {% if selected.proposal_id and selected.proposal_status == 'manual_required' and not selected.sender.startswith('assisted:') %}
+          <section class="detail-section assist-warning"><h3>WhatsApp delivery is unknown</h3><p>Check the message status in the WhatsApp provider before choosing an outcome. Agenda Relay does not query the provider or send anything from these controls.</p>
+            <form method="post" action="{{ url_for('action_reconcile_proposal_delivery', proposal_id=selected.proposal_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="outcome" value="delivered"><button class="secondary-button" type="submit">I verified it was delivered</button></form>
+            <form method="post" action="{{ url_for('action_reconcile_proposal_delivery', proposal_id=selected.proposal_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="outcome" value="not_delivered"><button class="secondary-button" type="submit">I verified it was not delivered</button></form>
+            <small>Marking non-delivery only enables a separate explicit retry; it does not resend automatically. Your attestation is added to the audit trail.</small>
+          </section>
+          {% endif %}
           {% if selected.appointment_id and selected.appointment_status == 'booked' %}<form method="post" action="{{ url_for('action_cancel', appointment_id=selected.appointment_id) }}" class="danger-zone"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="danger-button" type="submit">Cancel appointment</button></form>{% endif %}
           {% else %}<div class="empty-detail"><strong>No request selected</strong><span>Select a scheduling request to review its conversation, time slots, consent, and audit trail.</span></div>{% endif %}
         </aside>
@@ -120,6 +133,41 @@
         <div><div class="section-title"><h2>Upcoming reminders</h2><span>{{ data.jobs|length }} need attention</span></div><ul class="compact-list">{% for job in data.jobs %}<li><span><strong>{{ job.job_type.replace('_',' ')|title }}</strong><small>{{ job.run_at[:16].replace('T',' ') }}</small></span><span class="state {{ job.status }}">{{ job.status.replace('_',' ') }}</span></li>{% else %}<li class="empty-row">No queued or manual reminders.</li>{% endfor %}</ul></div>
         <div><div class="section-title"><h2>Recently completed bookings</h2><span>Calendar-backed</span></div><ul class="compact-list">{% for item in data['items'] if item.status == 'booked' %}<li><span><strong>{{ item.display_name or item.sender[-4:] }}</strong><small>{{ item.start_at[:16].replace('T',' ') if item.start_at else '' }}</small></span><span class="state booked">booked</span></li>{% else %}<li class="empty-row">No completed bookings in this page.</li>{% endfor %}</ul></div>
       </section>
+
+      {% elif view == 'assisted' %}
+      <div class="page-heading"><div><h1>Personal WhatsApp assistant</h1><p>Paste the relevant message, check your calendar, then review and share the draft yourself.</p></div></div>
+      <section class="assisted-layout">
+        <div class="settings-block assisted-input">
+          <h2>Analyze a scheduling message</h2>
+          <p>Only use text you are comfortable processing locally. The message is analyzed in this app, is not sent to an AI or WhatsApp API, and is not retained. Agenda Relay stores the resulting request, selected times, and booking token so the booking link can work.</p>
+          <form method="post" action="{{ url_for('action_assisted_analyze') }}" class="stack-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label for="personal-message">Relevant WhatsApp text</label>
+            <textarea id="personal-message" name="message" rows="7" maxlength="5000" required placeholder="For example: Could we schedule a 30 minute call next Tuesday?"></textarea>
+            <small>Up to 5,000 characters. Avoid pasting unrelated conversation or sensitive information.</small>
+            <button class="primary-button" type="submit" {{ 'disabled' if not readiness.providers.google_calendar.ready }}>Check Google Calendar</button>
+          </form>
+          {% if not readiness.providers.google_calendar.ready %}<p class="assist-warning">Google Calendar is not connected. Connect it in Settings before checking availability.</p>{% endif %}
+        </div>
+        <aside class="safety-note"><h2>Personal account safeguards</h2><p>This does not read your WhatsApp inbox or send messages. You choose the recipient and press send in WhatsApp. Agenda Relay cannot verify delivery from a personal account.</p><p>Detected dates and duration are a local English/Dutch rules-based estimate. Review the times and wording before sharing.</p></aside>
+      </section>
+
+      {% if assisted_proposal %}
+      <section class="settings-block assisted-result" aria-labelledby="assisted-result-title">
+        <div class="section-title"><h2 id="assisted-result-title">Review suggested times</h2><span class="state {{ assisted_proposal.status }}">{{ assisted_proposal.status.replace('_',' ') }}</span></div>
+        <p><strong>{{ assisted_proposal.title }}</strong> · {{ assisted_proposal.duration_minutes }} minutes · {{ timezone_name }} · requested from {{ assisted_proposal.requested_start or assisted_proposal.request_timezone }}</p>
+        <ol class="slot-list">{% for slot in assisted_proposal.slots %}<li><span>{{ slot[:10] }}</span><strong>{{ slot[11:16] }}</strong></li>{% else %}<li>No available times were returned.</li>{% endfor %}</ol>
+        <label for="assisted-draft">Message to review and send yourself</label>
+        <textarea id="assisted-draft" rows="7" readonly>{{ assisted_proposal.reply_text }}</textarea>
+        <div class="assist-actions">
+          <a class="primary-button" href="{{ assisted_share_url }}" target="_blank" rel="noopener noreferrer">Open WhatsApp with this draft</a>
+          {% if assisted_proposal.status == 'pending_approval' %}
+          <form method="post" action="{{ url_for('action_assisted_shared', proposal_id=assisted_proposal.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="secondary-button" type="submit">I sent this manually</button></form>
+          {% else %}<span class="provider-state attention">Booking link active · delivery not verified</span>{% endif %}
+        </div>
+        {% if assisted_proposal.status == 'pending_approval' %}<small>The booking link becomes active only after you confirm that you shared the draft. This records your confirmation, not a WhatsApp delivery receipt.</small>{% endif %}
+      </section>
+      {% endif %}
 
       {% elif view == 'contacts' %}
       <div class="page-heading"><div><h1>Contacts</h1><p>Maintain verified email, timezone, language, and consent before external calendar actions.</p></div></div>
@@ -135,7 +183,7 @@
 
       {% else %}
       <div class="page-heading"><div><h1>Operator help</h1><p>The safe path from message to calendar event.</p></div></div>
-      <section class="help-layout"><ol><li><strong>Review detected intent.</strong><span>Check the conversation excerpt, proposed slots, timezone, and confidence.</span></li><li><strong>Send a proposal.</strong><span>The official WhatsApp Cloud API sends the reviewed time choices and booking link.</span></li><li><strong>Wait for contact confirmation.</strong><span>The contact replies with 1, 2, or 3, or confirms through the secure booking link.</span></li><li><strong>Book the confirmed slot.</strong><span>An idempotent Google Calendar event is created and the result is recorded.</span></li><li><strong>Handle reminder exceptions.</strong><span>Reminders outside the messaging window require an approved WhatsApp template or remain manual.</span></li></ol><div class="safety-note"><h2>Emergency behavior</h2><p>Pause automation to stop outbound messages, calendar changes, and reminder jobs. Signed inbound messages continue to be recorded so work can resume safely.</p></div></section>
+      <section class="help-layout"><ol><li><strong>Review detected intent.</strong><span>For Business API messages, check the conversation excerpt, proposed slots, timezone, and confidence.</span></li><li><strong>Send or share a proposal.</strong><span>Business API mode sends only when configured and approved. For personal WhatsApp, use Personal WhatsApp to paste a message, review the suggested times, then share the prepared draft yourself.</span></li><li><strong>Wait for contact confirmation.</strong><span>The contact can choose through the secure booking link. In personal mode, Agenda Relay cannot read chat replies or verify message delivery.</span></li><li><strong>Book the confirmed slot.</strong><span>An idempotent Google Calendar event is created after explicit slot selection, according to your approval settings.</span></li><li><strong>Handle follow-up manually for personal accounts.</strong><span>Personal WhatsApp confirmations and reminders are not sent by this app. Business API reminders outside the messaging window require an approved template.</span></li></ol><div class="safety-note"><h2>Emergency behavior</h2><p>Pause automation to stop Business API outbound messages, calendar changes, and reminder jobs. The assisted personal flow never sends messages on your behalf.</p></div></section>
       {% endif %}
     </main>
   </div>

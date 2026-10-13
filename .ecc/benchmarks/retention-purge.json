@@ -1,0 +1,40 @@
+{
+  "benchmark": "sqlite-retention-purge",
+  "measured_at": "2026-10-13T10:04:34Z",
+  "baseline_commit": "4f3a04c9cfbed40d4b10d96b98f5652e27774d64",
+  "command": ".venv/Scripts/python.exe -m scripts.benchmark_retention --rows 100000 --samples 100 --warmups 5",
+  "environment": {
+    "python": "3.13.14",
+    "sqlite": "3.53.1",
+    "platform": "Windows 11 10.0.26300"
+  },
+  "dataset": "Synthetic temporary SQLite databases; 100000 inbound_messages and 100000 rate_events; no records expired; no production data",
+  "before": {
+    "median_ms": 50.0263,
+    "p95_ms": 67.217,
+    "max_ms": 133.8615,
+    "message_plan": "SEARCH inbound_messages USING INDEX idx_messages_sender (workspace_id=?)",
+    "rate_plan": "SEARCH rate_events USING INDEX idx_rate_subject (workspace_id=?)",
+    "database_mib": 31.46
+  },
+  "after": {
+    "median_ms": 0.0219,
+    "p95_ms": 0.0331,
+    "max_ms": 0.0465,
+    "message_plan": "SEARCH inbound_messages USING INDEX idx_messages_retention (workspace_id=? AND received_at<?)",
+    "rate_plan": "SEARCH rate_events USING INDEX idx_rate_retention (workspace_id=? AND created_at<?)",
+    "database_mib": 42.59
+  },
+  "derived": {
+    "median_latency_reduction_percent": 99.9562,
+    "p95_latency_reduction_percent": 99.9508,
+    "database_size_increase_mib": 11.13,
+    "database_size_increase_percent": 35.4
+  },
+  "limitations": [
+    "Synthetic data and warm local filesystem cache; not a live production workload.",
+    "Database size uses one-character synthetic message bodies, so the relative storage increase differs from real conversations.",
+    "Insert-throughput microbenchmark was highly variable and is not used to claim a write-performance change.",
+    "Expired-row deletion bursts and concurrent webhook load were not measured."
+  ]
+}

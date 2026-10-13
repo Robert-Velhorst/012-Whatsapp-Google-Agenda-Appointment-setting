@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import argparse
 import logging
 import os
 import threading
-import argparse
 
 from waitress import serve
 
 from scheduler.app import create_app
+
+logger = logging.getLogger(__name__)
 
 
 def main() -> None:
@@ -27,7 +29,7 @@ def main() -> None:
             try:
                 service.run_due_jobs()
             except Exception:
-                logging.exception("Background scheduling worker failed")
+                logger.exception("Background scheduling worker failed")
             stop.wait(interval)
 
     thread = threading.Thread(target=worker, name="agenda-relay-worker", daemon=True)

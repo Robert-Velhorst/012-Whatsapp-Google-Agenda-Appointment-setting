@@ -1,4 +1,5 @@
-import json
+
+import pytest
 
 from .conftest import post_webhook, signed, webhook
 
@@ -17,6 +18,67 @@ def test_health_webhook_verification_and_security_headers(app_bundle):
 def test_bad_signature_is_rejected(app_bundle):
     app, _, _ = app_bundle
     assert app.test_client().post("/webhook/whatsapp", json={}).status_code == 403
+
+
+@pytest.mark.parametrize("payload", [
+    [1],
+    {"entry": [1]},
+    {"entry": [{"changes": 1}]},
+    {"entry": [{"changes": [{"value": None}]}]},
+    {"entry": [{"changes": [{"value": {"messages": {"not": "a list"}}}]}]},
+    {"entry": [{"changes": [{"value": {
+        "metadata": None,
+        "messages": [{"id": "wamid.no-metadata", "from": "31612345678", "type": "text", "text": {"body": "Book a call"}}],
+    }}]}]},
+])
+def test_signed_malformed_payload_shapes_are_acknowledged_and_ignored(app_bundle, payload):
+    app, _, _ = app_bundle
+
+    response = post_webhook(app.test_client(), payload)
+
+    assert response.status_code == 200
+    assert response.get_json()["ignored"] == 1
+
+
+@pytest.mark.parametrize("message", [
+    1,
+    {"id": "wamid.bad-text", "from": "31612345678", "type": "text", "text": None},
+    {"id": "wamid.bad-body", "from": "31612345678", "type": "text", "text": {"body": 7}},
+    {"id": 7, "from": "31612345678", "type": "text", "text": {"body": "Book a call"}},
+    {"id": "wamid.bad-sender", "from": 7, "type": "text", "text": {"body": "Book a call"}},
+])
+def test_signed_malformed_messages_are_ignored(app_bundle, message):
+    app, _, _ = app_bundle
+    payload = webhook()
+    payload["entry"][0]["changes"][0]["value"]["messages"] = [message]
+
+    response = post_webhook(app.test_client(), payload)
+
+    assert response.status_code == 200
+    assert response.get_json()["ignored"] == 1
+
+
+def test_malformed_optional_contacts_do_not_drop_a_valid_message(app_bundle):
+    app, _, _ = app_bundle
+    payload = webhook()
+    payload["entry"][0]["changes"][0]["value"]["contacts"] = [1]
+
+    response = post_webhook(app.test_client(), payload)
+
+    assert response.status_code == 200
+    assert response.get_json()["accepted"] == 1
+    assert response.get_json()["proposals"] == 1
+
+
+def test_out_of_range_timestamp_uses_safe_fallback(app_bundle):
+    app, _, _ = app_bundle
+    payload = webhook()
+    payload["entry"][0]["changes"][0]["value"]["messages"][0]["timestamp"] = "999999999999999999999999999999999999"
+
+    response = post_webhook(app.test_client(), payload)
+
+    assert response.status_code == 200
+    assert response.get_json()["accepted"] == 1
 
 
 def test_webhook_is_idempotent_and_creates_reviewable_proposal(app_bundle, auth_headers):

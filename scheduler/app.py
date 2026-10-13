@@ -2,16 +2,25 @@ from __future__ import annotations
 
 import csv
 import io
-import json
 import ipaddress
 import os
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime
 from functools import wraps
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from zoneinfo import ZoneInfo
 
-from flask import Flask, abort, flash, jsonify, redirect, render_template, request, session, url_for
+from flask import (
+    Flask,
+    abort,
+    flash,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
 from werkzeug.security import check_password_hash
 
 from .calendar import GoogleCalendar
@@ -172,19 +181,67 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
         data = store.dashboard(settings.workspace_id, query, status, page)
         selected_id = request.args.get("request", type=int)
         selected = store.request_detail(settings.workspace_id, selected_id) if selected_id else (store.request_detail(settings.workspace_id, data["items"][0]["id"]) if data["items"] else None)
+        personal_confirmation_text = None
+        if selected and selected["sender"].startswith("assisted:") and selected.get("appointment_status") == "booked" and selected.get("start_at"):
+            appointment_local = datetime.fromisoformat(selected["start_at"]).astimezone(ZoneInfo(selected["timezone"]))
+            if selected["contact"].get("language") == "nl":
+                personal_confirmation_text = f"Bevestigd: {selected['title']} op {appointment_local:%d-%m-%Y} om {appointment_local:%H:%M} ({selected['timezone']})."
+            else:
+                personal_confirmation_text = f"Confirmed: {selected['title']} on {appointment_local:%d-%m-%Y} at {appointment_local:%H:%M} ({selected['timezone']})."
+        personal_confirmation_url = f"https://wa.me/?text={quote(personal_confirmation_text)}" if personal_confirmation_text else None
+        assisted_proposal = None
+        if view == "assisted" and request.args.get("proposal", type=int):
+            candidate = store.get_proposal(settings.workspace_id, request.args.get("proposal", type=int))
+            if candidate and candidate["sender"].startswith("assisted:"):
+                assisted_proposal = candidate
+        assisted_share_url = f"https://wa.me/?text={quote(assisted_proposal['reply_text'])}" if assisted_proposal else None
         return render_template(
             "dashboard.html", view=view, data=data, selected=selected, readiness=scheduling.readiness(),
+            personal_confirmation_text=personal_confirmation_text, personal_confirmation_url=personal_confirmation_url,
+            assisted_proposal=assisted_proposal, assisted_share_url=assisted_share_url,
             contacts=store.contacts(settings.workspace_id, query) if view == "contacts" else [],
             audit=store.recent_audit(settings.workspace_id, 200) if view == "audit" else [],
             mode=settings.app_env, workspace_name=settings.workspace_name, operator_name=settings.operator_name,
             timezone_name=settings.timezone, query=query, status=status,
         )
 
+    @app.post("/actions/assisted/analyze")
+    @operator_required
+    def action_assisted_analyze():
+        if not valid_csrf():
+            abort(403)
+        try:
+            proposal_id = scheduling.create_assisted_proposal(request.form.get("message", ""))
+            flash("Times checked. The pasted message was not retained; review the draft before sharing it.", "success")
+            return redirect(url_for("dashboard", view="assisted", proposal=proposal_id))
+        except Exception as exc:  # noqa: BLE001 - convert provider/config failures into an operator-visible safe error.
+            flash(f"No proposal was prepared: {exc}", "error")
+            return redirect(url_for("dashboard", view="assisted"))
+
+    @app.post("/actions/assisted/<int:proposal_id>/shared")
+    @operator_required
+    def action_assisted_shared(proposal_id: int):
+        if not valid_csrf():
+            abort(403)
+        try:
+            store.mark_assisted_proposal_shared(settings.workspace_id, proposal_id, settings.operator_name)
+            flash("Marked as shared manually. Delivery was not verified by Agenda Relay.", "success")
+        except Exception as exc:  # noqa: BLE001 - store/provider validation failures must not activate an unshared link.
+            flash(f"Booking link was not activated: {exc}", "error")
+        return redirect(url_for("dashboard", view="assisted", proposal=proposal_id))
+
     @app.post("/actions/automation/toggle")
     @operator_required
     def toggle_automation():
         if not valid_csrf():
             abort(403)
+        if scheduling.is_paused():
+            readiness = scheduling.readiness()
+            if not readiness["can_resume"]:
+                blockers = list(readiness["errors"])
+                blockers.extend(provider["detail"] for provider in readiness["providers"].values() if not provider["ready"])
+                flash("Automation cannot resume until setup issues are resolved: " + "; ".join(blockers), "error")
+                return redirect(safe_next_url(request.referrer))
         value = "false" if scheduling.is_paused() else "true"
         store.set_state(settings.workspace_id, "automation_paused", value, settings.operator_name)
         flash("Automation resumed." if value == "false" else "Automation paused. Incoming messages will still be recorded.", "success")
@@ -198,8 +255,26 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
         try:
             scheduling.send_proposal(proposal_id, settings.operator_name)
             flash("The proposal was sent through WhatsApp Cloud API.", "success")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - provider SDK errors are not a stable shared exception type; preserve the review state.
             flash(f"Proposal not sent: {exc}", "error")
+        return redirect(safe_next_url(request.referrer))
+
+    @app.post("/actions/proposals/<int:proposal_id>/reconcile")
+    @operator_required
+    def action_reconcile_proposal_delivery(proposal_id: int):
+        if not valid_csrf():
+            abort(403)
+        try:
+            outcome = request.form.get("outcome", "")
+            store.reconcile_proposal_delivery(settings.workspace_id, proposal_id, outcome, settings.operator_name)
+            if outcome == "delivered":
+                flash("Recorded your provider-verified delivery. The proposal is now awaiting the contact's confirmation.", "success")
+            else:
+                flash("Recorded your provider-verified non-delivery. The proposal can be resent only with a separate explicit action.", "success")
+        except KeyError as exc:
+            flash(f"Delivery could not be reconciled: {exc}", "error")
+        except ValueError as exc:
+            flash(f"Delivery could not be reconciled: {exc}", "error")
         return redirect(safe_next_url(request.referrer))
 
     @app.post("/actions/appointments/<int:appointment_id>/book")
@@ -210,7 +285,7 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
         try:
             result = scheduling.book_appointment(appointment_id, settings.operator_name)
             flash(result.get("warning") or "The confirmed slot was booked in Google Calendar.", "success")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - report provider failures without converting them into a success state.
             flash(f"Calendar booking failed safely: {exc}", "error")
         return redirect(safe_next_url(request.referrer))
 
@@ -222,7 +297,7 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
         try:
             scheduling.cancel_appointment(appointment_id, settings.operator_name)
             flash("The appointment was cancelled and queued reminders were stopped.", "success")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - provider cancellation failures must remain visible to the operator.
             flash(f"Cancellation failed safely: {exc}", "error")
         return redirect(safe_next_url(request.referrer))
 
@@ -241,7 +316,7 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
                 consent_status=request.form.get("consent_status", "implicit_inbound"),
             )
             flash("Contact settings saved.", "success")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - validation and database failures are returned as an operator-visible form error.
             flash(f"Contact not updated: {exc}", "error")
         return redirect(url_for("dashboard", view="contacts"))
 
@@ -266,19 +341,21 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             return render_template("booking_complete.html", appointment_id=result["appointment_id"], booked=result["booked"], warning=result["warning"])
         except KeyError:
             abort(404)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - provider SDK failures return the still-reviewable booking page.
             proposal = store.get_proposal_by_token(token)
             timezone_name = (proposal or {}).get("contact_timezone") or settings.timezone
             return render_template("booking.html", proposal=proposal, token=token, timezone_name=timezone_name, display_slots=booking_slots(proposal), error=str(exc), auto_book_confirmed=settings.auto_book_confirmed and not scheduling.is_paused()), 400
 
     @app.get("/webhook/whatsapp")
     def verify_webhook():
-        if not settings.whatsapp_verify_token or request.args.get("hub.verify_token") != settings.whatsapp_verify_token:
+        if not settings.whatsapp_cloud_api_enabled or not settings.whatsapp_verify_token or request.args.get("hub.verify_token") != settings.whatsapp_verify_token:
             abort(403)
         return request.args.get("hub.challenge", "")
 
     @app.post("/webhook/whatsapp")
     def receive_webhook():
+        if not settings.whatsapp_cloud_api_enabled:
+            abort(404)
         raw_body = request.get_data()
         if not signature_is_valid(raw_body, request.headers.get("X-Hub-Signature-256"), settings.whatsapp_app_secret):
             abort(403)
@@ -310,7 +387,12 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
         if not store.reserve_rate_event(settings.workspace_id, subject, "hai.feed", 60, 1):
             return _error("connector_rate_limited", "HAI feed rate limit reached", 429)
         try:
-            rows, next_cursor = store.hai_feed(settings.workspace_id, request.args.get("cursor", "")[:500], settings.hai_feed_page_size)
+            cursor = request.args.get("cursor")
+            rows, next_cursor = store.hai_feed(
+                settings.workspace_id,
+                cursor[:500] if cursor is not None else None,
+                settings.hai_feed_page_size,
+            )
         except ValueError as exc:
             return _error("invalid_cursor", str(exc), 400)
         items = []
@@ -334,12 +416,13 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
                 "externalId": f"agenda-relay-request-{row['id']}",
                 "title": f"Scheduling request {row['id']}",
                 "content": f"Scheduling request is {row['status']}; duration {row['duration_minutes']} minutes in {row['timezone']}.",
-                "sourceUri": f"agenda-relay://request/{row['id']}",
-                "itemType": "scheduling_request",
+                "itemType": "message",
+                "provider": "generic_json_feed",
                 "projectKey": settings.hai_project_key,
-                "metadata": json.dumps(metadata, sort_keys=True, separators=(",", ":")),
+                "receivedAt": row["updated_at"],
+                "metadata": metadata,
             })
-        return jsonify({"items": items, "nextCursor": next_cursor})
+        return jsonify({"items": items, "cursor": next_cursor})
 
     @app.get("/api/google/connect")
     @admin_required

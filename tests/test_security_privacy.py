@@ -27,11 +27,79 @@ def test_production_rejects_short_encryption_key(tmp_path):
         })
 
 
+def test_production_personal_assisted_mode_does_not_require_business_api(tmp_path):
+    from .conftest import FakeCalendar, FakeWhatsApp
+
+    google_client = tmp_path / "google-client.json"
+    google_client.write_text("{}", encoding="utf-8")
+    app = create_app({
+        "app_env": "production",
+        "database_path": tmp_path / "personal.sqlite3",
+        "public_base_url": "https://agenda.example.ngrok.app",
+        "flask_secret_key": "f" * 64,
+        "admin_api_token": "a" * 64,
+        "admin_password_hash": "configured-password-hash",
+        "data_encryption_key": "e" * 64,
+        "whatsapp_cloud_api_enabled": False,
+        "google_client_secrets_file": str(google_client),
+        "automation_paused": True,
+    }, calendar=FakeCalendar(), whatsapp=FakeWhatsApp())
+
+    readiness = app.extensions["scheduling"].readiness()
+    assert readiness["providers"]["whatsapp"]["ready"] is True
+    assert readiness["providers"]["whatsapp"]["enabled"] is False
+    assert readiness["public_ingress"]["ready"] is True
+    assert app.test_client().get("/webhook/whatsapp?hub.verify_token=x").status_code == 403
+    app.extensions["store"].close()
+
+
+def test_cloud_api_mode_preserves_existing_credential_installations(monkeypatch):
+    from scheduler.config import Settings
+
+    monkeypatch.delenv("WHATSAPP_CLOUD_API_ENABLED", raising=False)
+    settings = Settings.from_env({
+        "whatsapp_verify_token": "verify", "whatsapp_app_secret": "secret",
+        "whatsapp_access_token": "token", "whatsapp_phone_number_id": "123",
+    })
+    assert settings.whatsapp_cloud_api_enabled is True
+
+    monkeypatch.setenv("WHATSAPP_CLOUD_API_ENABLED", "false")
+    settings = Settings.from_env({"whatsapp_access_token": "legacy-token"})
+    assert settings.whatsapp_cloud_api_enabled is False
+
+
 def test_api_requires_authentication(app_bundle):
     app, _, _ = app_bundle
     response = app.test_client().get("/api/requests")
     assert response.status_code == 401
     assert response.get_json()["error"]["code"] == "authentication_required"
+
+
+def test_audit_api_clamps_negative_limit(app_bundle, auth_headers):
+    app, _, _ = app_bundle
+    store = app.extensions["store"]
+    for index in range(3):
+        store.audit("default", "test", f"audit-{index}", "test")
+
+    response = app.test_client().get("/api/audit?limit=-1", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert len(response.get_json()) == 1
+
+
+def test_requests_api_clamps_page_to_available_results(app_bundle, auth_headers):
+    app, _, _ = app_bundle
+    store = app.extensions["store"]
+    contact_id = store.upsert_contact("default", "31600000002", "Europe/Amsterdam")
+    for index in range(3):
+        store.create_request("default", contact_id, f"pagination-{index}", f"Request {index}", 30, "Europe/Amsterdam", "2026-10-13", 0.8)
+
+    response = app.test_client().get("/api/requests?page=" + ("9" * 1000) + "&per_page=2", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.get_json()["page"] == 2
+    assert response.get_json()["total"] == 3
+    assert len(response.get_json()["items"]) == 1
 
 
 def test_browser_login_and_csrf(app_bundle):
@@ -44,6 +112,23 @@ def test_browser_login_and_csrf(app_bundle):
     assert client.post("/login", data={"csrf_token": csrf, "password": "correct horse battery staple"}).status_code == 302
     assert client.get("/").status_code == 200
     assert client.post("/actions/automation/toggle").status_code == 403
+
+
+def test_automation_cannot_resume_before_providers_are_ready(app_bundle):
+    app, _, _ = app_bundle
+    client = app.test_client()
+    app.extensions["calendar"].connected = lambda: False
+    app.extensions["whatsapp"].configured = lambda: False
+    app.extensions["store"].set_state("default", "automation_paused", "true", "test")
+    with client.session_transaction() as current:
+        current["operator_authenticated"] = True
+        current["csrf_token"] = "valid-test-csrf"
+
+    response = client.post("/actions/automation/toggle", data={"csrf_token": "valid-test-csrf"})
+
+    assert response.status_code == 302
+    assert app.extensions["scheduling"].is_paused() is True
+    assert b"Automation cannot resume until setup issues are resolved" in client.get("/").data
 
 
 def test_browser_login_rejects_external_next_redirect(app_bundle):

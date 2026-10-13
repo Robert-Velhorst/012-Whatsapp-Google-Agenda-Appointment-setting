@@ -1,11 +1,11 @@
 from dataclasses import replace
-from types import SimpleNamespace
 from datetime import date, datetime, timedelta
-import pytest
+from types import SimpleNamespace
 
+import pytest
 from googleapiclient.errors import HttpError
 
-from scheduler.calendar import GoogleCalendar, CalendarUnavailable
+from scheduler.calendar import CalendarUnavailable, GoogleCalendar
 from scheduler.crypto import CryptoBox
 
 
@@ -44,6 +44,39 @@ def test_google_token_write_is_atomic_and_encrypted(app_bundle, tmp_path):
     assert stored.startswith("enc:")
     assert crypto.decrypt(stored) == '{"refresh_token":"secret"}'
     assert list(token_path.parent.glob("*.tmp")) == []
+
+
+def test_free_slots_uses_one_batched_freebusy_query_for_search_window(app_bundle):
+    app, _, _ = app_bundle
+    calendar = GoogleCalendar(app.extensions["settings"])
+    start_day = date(2030, 1, 7)  # Monday
+    busy = []
+    for offset in range(14):
+        day = start_day + timedelta(days=offset)
+        if day.weekday() < 5:
+            busy.append({
+                "start": f"{day.isoformat()}T09:00:00+01:00",
+                "end": f"{day.isoformat()}T17:00:00+01:00",
+            })
+    calls = []
+
+    class FreeBusy:
+        def query(self, *, body):
+            calls.append(body)
+            return SimpleNamespace(execute=lambda: {"calendars": {"primary": {"busy": busy}}})
+
+    calendar._service = lambda: SimpleNamespace(freebusy=lambda: FreeBusy())
+
+    slots = calendar.free_slots(start_day, 30)
+
+    assert len(calls) == 1
+    assert calls[0]["timeMin"] == "2030-01-07T00:00:00+01:00"
+    assert calls[0]["timeMax"] == "2030-01-28T00:00:00+01:00"
+    assert [slot.isoformat() for slot in slots] == [
+        "2030-01-21T09:00:00+01:00",
+        "2030-01-21T09:30:00+01:00",
+        "2030-01-21T10:00:00+01:00",
+    ]
 
 
 @pytest.mark.parametrize("response", [{}, {"calendars": {}}, {"calendars": {"primary": {}}}])
