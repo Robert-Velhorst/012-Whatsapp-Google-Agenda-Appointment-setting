@@ -48,11 +48,17 @@ def test_audit_api_clamps_negative_limit(app_bundle, auth_headers):
 
 def test_requests_api_clamps_page_to_available_results(app_bundle, auth_headers):
     app, _, _ = app_bundle
+    store = app.extensions["store"]
+    contact_id = store.upsert_contact("default", "31600000002", "Europe/Amsterdam")
+    for index in range(3):
+        store.create_request("default", contact_id, f"pagination-{index}", f"Request {index}", 30, "Europe/Amsterdam", "2026-10-13", 0.8)
 
-    response = app.test_client().get("/api/requests?page=" + ("9" * 1000), headers=auth_headers)
+    response = app.test_client().get("/api/requests?page=" + ("9" * 1000) + "&per_page=2", headers=auth_headers)
 
     assert response.status_code == 200
-    assert response.get_json()["page"] == 1
+    assert response.get_json()["page"] == 2
+    assert response.get_json()["total"] == 3
+    assert len(response.get_json()["items"]) == 1
 
 
 def test_browser_login_and_csrf(app_bundle):
