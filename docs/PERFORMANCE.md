@@ -50,6 +50,18 @@ Write throughput and tail latency vary across repeat runs on the same host, whic
 
 An additional three serial runs on 2026-10-13 produced 134–564 writes/second, 0.593–0.664 ms dashboard median, 0.777–1.289 ms dashboard p95, 4.720–6.608 ms for a 500-item HAI page, and 0.48 MiB traced Python peak. The large write-throughput spread versus the earlier sample is a reason to profile under controlled, representative host load before drawing a capacity conclusion; do not treat either sample as a stable throughput guarantee. The benchmark database is temporary and does not touch the operator's configured database.
 
+Three serial runs on 2026-10-14 with the same command on Windows 11 produced:
+
+| Workload | Observed range |
+|---|---:|
+| Create 1,000 contacts and requests | 230.6–773.9 records/second |
+| Dashboard query median | 0.660–1.344 ms |
+| Dashboard query p95 | 1.154–2.039 ms |
+| HAI feed page of 500 items | 4.755–10.514 ms |
+| Traced Python peak allocation | 0.49 MiB in each run |
+
+These temporary-database runs were serial and verified 1,000 records each. The write-throughput spread remains too large to support a reliable before/after optimization claim; no write-path optimization was promoted from this sample. Profile on a controlled, representative deployment host before tuning persistence.
+
 The structured run artifact at `.ecc/benchmarks/sqlite-workload-2026-10-13.json` records another three-run sample against commit `6eb14af`. It observed 993–1,149 records/second, 0.551–0.584 ms dashboard median, 0.638–0.806 ms dashboard p95, 3.655–4.852 ms for a 500-item HAI page, and 0.48 MiB traced Python peak. These are local synthetic results only; concurrent load, cold cache, and real provider latency remain unmeasured.
 
 Calendar availability uses one Google FreeBusy query for the full 21-day search window and filters returned busy ranges against local business hours. In the regression scenario with two weeks of full weekdays, this reduced the provider-call count from 11 per-day queries to one batched query. Booking still performs a separate final availability check before event insertion. The call-count result is a deterministic test, not a live Google latency benchmark.

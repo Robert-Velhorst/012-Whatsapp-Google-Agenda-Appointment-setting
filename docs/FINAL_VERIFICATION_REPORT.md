@@ -95,12 +95,9 @@ This later update supersedes the pending publication/CI statements above for the
 - An API-level regression reproduces the overflow before the fix and confirms an oversized page now resolves safely. The full local suite passes 81 tests; compilation, dependency consistency, and dependency audit pass.
 - Windows 11 standalone package rebuilt from the combined source: ZIP SHA-256 `0AA5E9500066ACCB7D5FF86C117DCD1C23A9A8D20EF78DB6C30335C73465EE4B`. `windows/Test-Package.ps1` passed: health true, development mode, branded login HTTP 200, and 67.3 MiB working set. Build output/work, test database, and logs were isolated under temporary directories; no provider credentials were used.
 - GitHub CI for that earlier source revision is historical and is not evidence for the current branch tip.
-## Personal WhatsApp assisted flow and Windows launcher recovery — 2026-10-13
+## Personal WhatsApp assisted flow — 2026-10-13
 
 - Confirmed the personal-account path is assisted-only: the operator pastes the relevant text, the app analyzes it locally and checks Google Calendar, and the operator manually sends the prepared private booking link from WhatsApp. The app does not read the personal inbox or send personal WhatsApp messages. Existing `tests/test_assisted_personal.py` and `tests/test_frontend.py` passed: 11 tests.
-- Reproduced a source-launcher defect where any live process at the saved web PID was reported as Agenda Relay, even if it was an unrelated/recycled PID and the worker PID was missing.
-- Added exact executable/command validation for the web and worker roles, health-gated already-running detection, missing-worker recovery, stale-worker cleanup only after exact identity validation, and fail-closed cleanup for newly started processes. The stop script no longer uses a broad command-line substring match to decide what to terminate.
-- Added a PowerShell self-check to the Windows package workflow. The current branch's self-check and source-launcher syntax checks are verified below; these do not replace a real operator acceptance run with configured credentials.
 - Real Google OAuth/Calendar, personal WhatsApp use, public ngrok reachability, HAI runtime, and target-PC acceptance remain unverified.
 
 ## HAI json-feed contract correction — 2026-10-14
@@ -109,11 +106,12 @@ This later update supersedes the pending publication/CI statements above for the
 - Agenda Relay previously returned only `cursor`. HAI therefore did not persist the continuation cursor and could keep retrieving only the initial bounded snapshot, missing later request updates. The older integration note incorrectly said HAI never returned a cursor.
 - The feed now emits `nextCursor` and preserves `cursor` as a compatibility alias. The local integration test starts with a snapshot, adds a new request, then verifies the subsequent cursor request returns it.
 - HAI integration tests: 5 passed. Full local suite: 112 passed. Live HAI source creation/sync and historical backfill remain unverified.
-- Live HAI source creation/sync and historical backfill remain unverified.
 
 ## Current Windows 11 package and launcher verification — 2026-10-14
 
 - Built the standalone x64 package locally on Windows 11 Pro (build 26300). ZIP SHA-256: `94AF076E7330E003E34544A2432C80DA29629AD02A368F163C1CDAEF930A9ACE`; archive size 32.23 MiB.
 - `windows/Test-Package.ps1` passed against the built executable with an isolated temporary database and provider credentials absent: health true, development mode, branded login HTTP 200, and 66.0 MiB working set.
 - The source launcher now validates exact executable/command identity before treating recorded PIDs as Agenda Relay, checks health, recovers a missing worker without launching a duplicate web server, and avoids stopping recycled/unrelated PIDs. Its shutdown path retains state if process exit cannot be confirmed.
-- Local PowerShell identity/recovery self-check, source script parsing, and full Python regression suite results are recorded after this section's source change; local checks do not verify real Google OAuth, ngrok exposure, or HAI runtime acceptance.
+- The process-identity/recovery self-check passed under PowerShell 7 and Windows PowerShell 5.1; all `windows/*.ps1` files parsed under PowerShell 7. The full Python suite passed (112 tests), `compileall` passed, and `pip check` reported no broken requirements. These checks do not replace real Google OAuth, ngrok exposure, or HAI runtime acceptance.
+- This checkout has no `.env`, so no Google OAuth or application provider credentials were used. The ngrok executable and agent configuration are present, but no tunnel was opened.
+- GitHub CI and the Windows workflow with the new launcher self-check must still be rerun against the published current branch tip.

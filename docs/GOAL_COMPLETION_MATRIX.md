@@ -1,6 +1,6 @@
 # Giant prompt completion matrix
 
-Status is evidence-based as of 2026-10-13. `Implemented` means locally wired and tested. `Partial` identifies a real remaining gap. `Blocked` is reserved for provider/account/deployment action unavailable in this workspace.
+Status is evidence-based as of 2026-10-14. `Implemented` means locally wired and tested. `Partial` identifies a real remaining gap. `Blocked` is reserved for provider/account/deployment action unavailable in this workspace.
 
 | Phase | Requirement | Status | Evidence / gap |
 |---:|---|---|---|
@@ -128,7 +128,7 @@ The operator can paste a relevant message into the authenticated **Personal What
 
 `WHATSAPP_CLOUD_API_ENABLED=false` supports a production personal-only setup without Meta credentials; Google OAuth, strong secrets, HTTPS `PUBLIC_BASE_URL`, and a reachable public booking link are still required. No live WhatsApp inbox, ngrok tunnel, Google account, or calendar was connected or exercised by this change. Full CI and hosted/provider acceptance are separate gates.
 
-## Targeted follow-up — 2026-10-13
+## Targeted follow-up — 2026-10-14
 
 - Closed a Windows/ngrok OAuth bootstrap deadlock: the tunnel launcher now uses the protected `public_ingress` readiness contract. Google OAuth may be disconnected only while automation is paused; full production configuration and signed WhatsApp webhook settings must already validate.
 - Closed an unsafe resume path: the operator action cannot resume automation while configuration errors or provider disconnections remain.
@@ -137,6 +137,7 @@ The operator can paste a relevant message into the authenticated **Personal What
 - The HAI feed was checked against the current `018-HAI` generic-feed parser. It uses the supported `message` item type, `generic_json_feed` provider, JSON-object metadata, and `nextCursor` response field (with a `cursor` compatibility alias); HAI sends its stored cursor on subsequent syncs. Local integration tests exercise initial snapshot plus incremental update. Live HAI ingestion and complete historical backfill remain unverified.
 - Added a narrow, authenticated reconciliation action for ambiguous Business API proposal delivery. It records an operator's provider-verified outcome atomically with an audit event; verified delivery advances to awaiting contact confirmation, and verified non-delivery only enables a separate explicit retry. It never calls WhatsApp and does not reconcile other ambiguous job types. Regression tests cover CSRF rejection, transitions, and no-send behavior.
 - Current local verification: 102 tests passed; Ruff, compilation, and `git diff --check` passed. A local synthetic browser session verified the reconcile-delivered UI transition and audit entry. For commit `ec83cd0`, the Windows package workflow passed, including hosted tests and package smoke test. General CI remains queued; live HAI and provider acceptance remain unverified.
+- Windows launcher follow-up: exact process identity, health-gated recovery, missing-worker recovery, and fail-closed stop behavior now have a PowerShell self-check; it passed under PowerShell 7 and Windows PowerShell 5.1. Current-source package smoke and Python regression results are recorded in `docs/FINAL_VERIFICATION_REPORT.md`; new-commit CI is pending.
 
 ## Overall verdict
 

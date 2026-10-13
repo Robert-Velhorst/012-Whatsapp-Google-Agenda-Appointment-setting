@@ -10,4 +10,4 @@
 | Worker/reminders | Complete locally | Keep approved-template/manual-required boundary |
 | Deployment | Local runtimes complete, live provider deployment blocked | Docker and Windows package passed; do not claim Meta/Google/ngrok acceptance without accounts |
 | Real provider proof | Blocked | Requires Meta/Google credentials, HTTPS, approvals, and consented accounts |
-| Final verification | Complete for local/package scope | Commit `21c6976` passed both Linux checks and Windows package run `31288093704`; only authorized provider acceptance remains |
+| Final verification | Pending current commit CI | Windows 11 standalone package and launcher self-check passed locally; Python suite passed 112 tests. Push the documented current branch tip, confirm exact-SHA CI/package workflows, and retain the separate Google/HAI/ngrok live-acceptance gate |

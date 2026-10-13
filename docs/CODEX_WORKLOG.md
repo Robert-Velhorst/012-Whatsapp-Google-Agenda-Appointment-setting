@@ -1,5 +1,14 @@
 # Codex worklog
 
+## 2026-10-14 - Validate Windows launcher recovery and package
+
+- Added exact executable/command identity validation for recorded web and worker PIDs, health-gated detection of an already-running app, safe missing-worker recovery, and fail-closed shutdown state handling.
+- Added a Windows package workflow self-check for launcher identity/recovery. It passed locally under PowerShell 7 and Windows PowerShell 5.1; all Windows PowerShell scripts parsed under PowerShell 7.
+- Built the standalone x64 package on Windows 11 Pro (build 26300). Package health/login smoke passed; ZIP SHA-256 `94AF076E7330E003E34544A2432C80DA29629AD02A368F1631CDAEF930A9ACE`, 32.23 MiB.
+- The full Python suite passed 112 tests, `compileall` passed, and `pip check` found no broken requirements. Real Google OAuth, personal WhatsApp, HAI runtime, ngrok exposure, and target-PC acceptance remain unverified; no provider credentials or tunnel were used.
+- Three serial local performance runs were added to `docs/PERFORMANCE.md`. Variability is too high to justify claiming a measured optimization, so no write-path optimization was promoted.
+- GitHub CI for the published branch tip remains the next verification gate.
+
 ## 2026-10-13 - Keep immutable static caching safe across upgrades
 
 - Reproduced that the app marked stable `/static/...` URLs immutable, allowing a browser to retain stale CSS after a release.
