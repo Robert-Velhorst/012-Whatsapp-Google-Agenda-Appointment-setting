@@ -110,9 +110,22 @@ function Test-AgendaRelayNgrokProcessIdentity {
         $commandLine = [string]$Process.CommandLine
         for ($index = 0; $index -lt $requiredArguments.Count; $index++) {
             $argument = $requiredArguments[$index]
-            $escaped = [regex]::Escape($argument)
-            $pattern = '(?i)(?:^|\s)(?:"' + $escaped + '"|' + $escaped + ')(?=\s|$)'
-            if (-not [regex]::IsMatch($commandLine, $pattern)) {
+            $quotedArgument = '"' + $argument + '"'
+            $searchFrom = 0
+            $argumentFound = $false
+            while ($searchFrom -lt $commandLine.Length) {
+                $position = $commandLine.IndexOf($quotedArgument, $searchFrom, [StringComparison]::OrdinalIgnoreCase)
+                if ($position -lt 0) { break }
+                $endPosition = $position + $quotedArgument.Length
+                $leadingBoundary = $position -eq 0 -or [char]::IsWhiteSpace($commandLine[$position - 1])
+                $trailingBoundary = $endPosition -eq $commandLine.Length -or [char]::IsWhiteSpace($commandLine[$endPosition])
+                if ($leadingBoundary -and $trailingBoundary) {
+                    $argumentFound = $true
+                    break
+                }
+                $searchFrom = $position + 1
+            }
+            if (-not $argumentFound) {
                 Write-Verbose "Ngrok process argument check $index failed."
                 return $false
             }

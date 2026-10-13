@@ -11,6 +11,7 @@
 - Replaced PID/name-only tunnel shutdown with exact executable and command checks for the saved ngrok configuration, assigned domain, isolated inspector configuration, and loopback target.
 - The start failure cleanup now uses the same ownership check; argument quoting preserves config paths containing spaces. Stop waits for confirmed exit and retains runtime state if the owned tunnel remains.
 - Added self-checks for the owned tunnel, a different ngrok domain, and an unrelated ngrok executable. They passed under PowerShell 7 and Windows PowerShell 5.1; all eight Windows PowerShell scripts parsed under PowerShell 7.
+- The first hosted Windows run exposed a path-with-spaces mismatch in the regex argument matcher. Replaced it with case-insensitive, boundary-aware matching of the exact quoted command-line arguments and retained safe verbose diagnostics.
 - No live tunnel was started: this checkout still has no `.env` or provider credentials.
 
 ## 2026-10-14 - Validate Windows launcher recovery and package
