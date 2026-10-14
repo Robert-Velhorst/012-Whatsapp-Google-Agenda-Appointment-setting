@@ -61,6 +61,36 @@ function Get-AgendaRelayRuntimeAction {
     return 'already-running'
 }
 
+function Import-AgendaRelayEnvironment {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$EnvironmentFile,
+        [Parameter(Mandatory)][string]$PythonExecutable
+    )
+
+    if (-not (Test-Path -LiteralPath $EnvironmentFile -PathType Leaf)) {
+        throw 'The Agenda Relay .env file could not be found.'
+    }
+    if (-not (Test-Path -LiteralPath $PythonExecutable -PathType Leaf)) {
+        throw 'The Agenda Relay Python environment is unavailable; run windows\Install-AgendaRelay.ps1 first.'
+    }
+
+    $loader = 'import json,sys; from dotenv import dotenv_values; print(json.dumps(dotenv_values(sys.argv[1], encoding=sys.argv[2])))'
+    try {
+        $output = & $PythonExecutable -c $loader $EnvironmentFile 'utf-8-sig' 2>$null
+        if ($LASTEXITCODE -ne 0) { throw 'dotenv parser returned a failure status' }
+        $values = ($output -join [Environment]::NewLine) | ConvertFrom-Json
+    } catch {
+        throw 'Agenda Relay could not parse its .env file with the configured Python dotenv parser.'
+    }
+
+    foreach ($entry in $values.PSObject.Properties) {
+        if ($null -ne $entry.Value) {
+            [Environment]::SetEnvironmentVariable($entry.Name, [string]$entry.Value, 'Process')
+        }
+    }
+}
+
 function Test-AgendaRelayNgrokProcessIdentity {
     [CmdletBinding()]
     param(
@@ -137,4 +167,4 @@ function Test-AgendaRelayNgrokProcessIdentity {
     }
 }
 
-Export-ModuleMember -Function Test-AgendaRelayProcessIdentity, Get-AgendaRelayProcess, Get-AgendaRelayRuntimeAction, Test-AgendaRelayNgrokProcessIdentity
+Export-ModuleMember -Function Test-AgendaRelayProcessIdentity, Get-AgendaRelayProcess, Get-AgendaRelayRuntimeAction, Import-AgendaRelayEnvironment, Test-AgendaRelayNgrokProcessIdentity

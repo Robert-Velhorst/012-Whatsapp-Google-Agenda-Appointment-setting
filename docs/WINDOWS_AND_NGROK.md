@@ -46,4 +46,4 @@ An ngrok account can impose endpoint/session limits. If another endpoint already
 
 ## HAI on the same Windows host
 
-Keep the HAI feed off the public tunnel. Enable it only on loopback and point HAI's `json-feed` connector at `http://127.0.0.1:<PORT>/api/integrations/hai/feed`. See `docs/HAI_INTEGRATION.md` for the Docker Desktop gateway variant and network allowlist.
+Keep the HAI feed off the public tunnel. For a same-host HAI process, enable it only on loopback and point HAI's `json-feed` connector at `http://127.0.0.1:<PORT>/api/integrations/hai/feed`. The current HAI fetcher rejects Docker Desktop's `host.docker.internal` private-network target; do not broaden either product's network allowlist to work around that restriction. See `docs/HAI_INTEGRATION.md` for the supported same-host setup and remaining integration limits.

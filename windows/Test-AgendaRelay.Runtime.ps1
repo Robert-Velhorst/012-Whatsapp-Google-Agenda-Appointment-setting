@@ -8,6 +8,26 @@ function Assert-Equal {
 }
 
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$dotenvRoot = Join-Path $env:TEMP ("AgendaRelay-dotenv-test-" + [guid]::NewGuid().ToString('N'))
+$dotenvFile = Join-Path $dotenvRoot '.env'
+$pythonExecutable = Join-Path $root '.venv\Scripts\python.exe'
+$dotenvNames = @('APP_ENV', 'PUBLIC_BASE_URL', 'GOOGLE_CLIENT_SECRETS_FILE', 'ADMIN_API_TOKEN')
+$previousDotenv = @{}
+foreach ($name in $dotenvNames) { $previousDotenv[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
+New-Item -ItemType Directory -Path $dotenvRoot | Out-Null
+try {
+    $dotenvContent = [string][char]0xFEFF + "APP_ENV=`"production`"`nPUBLIC_BASE_URL=`"https://agenda.example.ngrok.app`"`nGOOGLE_CLIENT_SECRETS_FILE=`"C:\Secure Folder\Client #1.json`"`nADMIN_API_TOKEN=`"synthetic=token`"`n"
+    [IO.File]::WriteAllText($dotenvFile, $dotenvContent, (New-Object System.Text.UTF8Encoding($false)))
+    Import-AgendaRelayEnvironment -EnvironmentFile $dotenvFile -PythonExecutable $pythonExecutable
+    Assert-Equal $env:APP_ENV 'production' 'UTF-8 BOM dotenv key'
+    Assert-Equal $env:PUBLIC_BASE_URL 'https://agenda.example.ngrok.app' 'Quoted dotenv URL'
+    Assert-Equal $env:GOOGLE_CLIENT_SECRETS_FILE 'C:\Secure Folder\Client #1.json' 'Quoted dotenv path with spaces and comment character'
+    Assert-Equal $env:ADMIN_API_TOKEN 'synthetic=token' 'Quoted dotenv value containing equals'
+} finally {
+    foreach ($name in $dotenvNames) { [Environment]::SetEnvironmentVariable($name, $previousDotenv[$name], 'Process') }
+    if (Test-Path -LiteralPath $dotenvRoot) { Remove-Item -LiteralPath $dotenvRoot -Recurse -Force }
+}
+
 $webExecutable = Join-Path $root '.venv\Scripts\waitress-serve.exe'
 $workerExecutable = Join-Path $root '.venv\Scripts\python.exe'
 $webProcess = [pscustomobject]@{

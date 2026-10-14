@@ -21,7 +21,7 @@ APP_ROOT = _runtime_root()
 
 
 def _load_runtime_environment(app_root: Path) -> None:
-    load_dotenv(app_root / ".env")
+    load_dotenv(app_root / ".env", encoding="utf-8-sig")
 
 
 def _resolve_app_path(value: str | Path) -> Path:

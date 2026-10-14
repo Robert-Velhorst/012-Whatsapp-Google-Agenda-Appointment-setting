@@ -1,6 +1,6 @@
 import json
 import sqlite3
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from scheduler.migrations import MIGRATIONS
 from scheduler.calendar import GoogleCalendar
@@ -18,6 +18,12 @@ def _stale_booking(app):
     appointment = store.claim_booking("default", appointment_id)
     assert appointment is not None
     with store.connect() as db:
+        start_at = datetime.fromisoformat(appointment["start_at"]) + timedelta(days=3)
+        end_at = datetime.fromisoformat(appointment["end_at"]) + timedelta(days=3)
+        db.execute(
+            "UPDATE appointments SET start_at=?,end_at=? WHERE workspace_id=? AND id=?",
+            (start_at.isoformat(), end_at.isoformat(), "default", appointment_id),
+        )
         db.execute("UPDATE appointments SET updated_at='2020-01-01T00:00:00+00:00' WHERE id=?", (appointment_id,))
     assert store.recover_stale_bookings("default", "2021-01-01T00:00:00+00:00") == 1
     return store, appointment_id, appointment

@@ -8,7 +8,7 @@ Import-Module (Join-Path $PSScriptRoot 'AgendaRelay.Runtime.psm1') -Force
 $ngrokCommand = Get-Command ngrok.exe -ErrorAction SilentlyContinue
 if (-not $ngrokCommand) { throw "ngrok is not installed. Install it with: winget install Ngrok.Ngrok" }
 $ngrokExecutable = [IO.Path]::GetFullPath($ngrokCommand.Source)
-Get-Content -LiteralPath ".env" | ForEach-Object { if ($_ -match '^\s*([^#][A-Za-z0-9_]*)=(.*)$') { [Environment]::SetEnvironmentVariable($matches[1], $matches[2], "Process") } }
+Import-AgendaRelayEnvironment -EnvironmentFile (Join-Path $Root '.env') -PythonExecutable (Join-Path $Root '.venv\Scripts\python.exe')
 if ($env:APP_ENV -ne "production") { throw "Public tunnelling requires APP_ENV=production." }
 if (-not $env:NGROK_DOMAIN) { throw "Set NGROK_DOMAIN to an assigned ngrok domain." }
 if (-not $env:PUBLIC_BASE_URL) { throw "Set PUBLIC_BASE_URL to the public HTTPS URL." }

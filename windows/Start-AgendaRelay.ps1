@@ -10,9 +10,7 @@ Set-Location $Root
 if (-not (Test-Path -LiteralPath ".env")) { throw "Run Install-AgendaRelay.ps1 first; .env is missing." }
 if (-not (Test-Path -LiteralPath ".venv\Scripts\waitress-serve.exe")) { throw "The local runtime is missing; run Install-AgendaRelay.ps1." }
 
-Get-Content -LiteralPath ".env" | ForEach-Object {
-    if ($_ -match '^\s*([^#][A-Za-z0-9_]*)=(.*)$') { [Environment]::SetEnvironmentVariable($matches[1], $matches[2], "Process") }
-}
+Import-AgendaRelayEnvironment -EnvironmentFile (Join-Path $Root '.env') -PythonExecutable (Join-Path $Root '.venv\Scripts\python.exe')
 $port = if ($env:PORT) { [int]$env:PORT } else { 5000 }
 $interval = if ($env:WORKER_INTERVAL_SECONDS) { [int]$env:WORKER_INTERVAL_SECONDS } else { 30 }
 $runtime = Join-Path $Root "data\runtime"

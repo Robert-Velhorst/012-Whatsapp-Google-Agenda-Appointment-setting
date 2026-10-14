@@ -62,6 +62,17 @@ def test_dotenv_loader_reads_explicit_application_root(monkeypatch, tmp_path):
     assert config.os.environ["APP_ENV"] == "production"
 
 
+def test_dotenv_loader_handles_windows_powershell_utf8_bom(monkeypatch, tmp_path):
+    package = tmp_path / "AgendaRelay"
+    package.mkdir()
+    (package / ".env").write_text("\ufeffAPP_ENV=production\n", encoding="utf-8")
+    monkeypatch.delenv("APP_ENV", raising=False)
+
+    config._load_runtime_environment(package)
+
+    assert config.os.environ["APP_ENV"] == "production"
+
+
 def test_frozen_setup_writes_configuration_beside_executable(monkeypatch, tmp_path):
     package = tmp_path / "AgendaRelay"
     package.mkdir()
