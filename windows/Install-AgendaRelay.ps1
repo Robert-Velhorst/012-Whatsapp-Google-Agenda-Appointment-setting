@@ -10,14 +10,16 @@ if (-not (Test-Path -LiteralPath ".venv\Scripts\python.exe")) {
     $PythonCommand = $null
     $PythonArguments = @()
     if (Get-Command py.exe -ErrorAction SilentlyContinue) {
-        & py.exe -3.13 -c "import sys; assert (3, 11) <= sys.version_info[:2] < (3, 14)" 2>$null
-        if ($LASTEXITCODE -eq 0) { $PythonCommand = "py.exe"; $PythonArguments = @("-3.13") }
+        foreach ($version in @("3.15", "3.14", "3.13", "3.12", "3.11")) {
+            & py.exe "-$version" -c "import sys; assert (3, 11) <= sys.version_info[:2] < (3, 16)" 2>$null
+            if ($LASTEXITCODE -eq 0) { $PythonCommand = "py.exe"; $PythonArguments = @("-$version"); break }
+        }
     }
     if (-not $PythonCommand -and (Get-Command python.exe -ErrorAction SilentlyContinue)) {
-        & python.exe -c "import sys; assert (3, 11) <= sys.version_info[:2] < (3, 14)" 2>$null
+        & python.exe -c "import sys; assert (3, 11) <= sys.version_info[:2] < (3, 16)" 2>$null
         if ($LASTEXITCODE -eq 0) { $PythonCommand = "python.exe" }
     }
-    if (-not $PythonCommand) { throw "Python 3.11, 3.12, or 3.13 is required for a source installation. The packaged AgendaRelay.exe does not require Python." }
+    if (-not $PythonCommand) { throw "Python 3.11, 3.12, 3.13, 3.14, or 3.15 is required for a source installation. The packaged AgendaRelay.exe does not require Python." }
     & $PythonCommand @PythonArguments -m venv .venv
     if ($LASTEXITCODE -ne 0) { throw "Creating the local Python environment failed." }
 }

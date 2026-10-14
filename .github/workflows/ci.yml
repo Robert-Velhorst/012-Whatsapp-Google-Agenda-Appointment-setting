@@ -8,13 +8,13 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
-          python-version: "3.13"
+          python-version: "3.15"
           cache: pip
-      - run: pip install -r requirements.txt pip-audit==2.9.0
-      - run: pip-audit -r requirements.lock
+      - run: pip install -r requirements.txt pip-audit==2.10.1
+      - run: pip-audit
       - run: python -m compileall -q scheduler run.py
       - run: pytest -q
       - run: docker build -t agenda-relay:test .
