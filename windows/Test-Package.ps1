@@ -50,10 +50,37 @@ try {
     # Exercise the packaged command router and the exact offline rotation path.
     & $Executable migrate
     if ($LASTEXITCODE -ne 0) { throw "Packaged migrate command failed before key-rotation smoke test." }
+    $seedSmokeData = @'
+from scheduler.config import Settings
+from scheduler.crypto import CryptoBox
+from scheduler.store import Store
+
+settings = Settings.from_env()
+store = Store(settings.database_path, CryptoBox(settings.data_encryption_key))
+try:
+    store.ensure_workspace(settings.workspace_id, "Package smoke test", settings.timezone)
+    contact_id = store.upsert_contact(settings.workspace_id, "31600000000", settings.timezone, display_name="Synthetic package contact")
+    store.record_inbound(settings.workspace_id, "wamid.package-smoke", "31600000000", "Synthetic encrypted message", "2030-01-07T09:00:00+00:00")
+    request_id = store.create_request(
+        settings.workspace_id, contact_id, "wamid.package-smoke", "Synthetic package smoke", 30,
+        settings.timezone, "2030-01-07T10:00:00+01:00", 0.95,
+    )
+    store.create_proposal(settings.workspace_id, request_id, "Synthetic encrypted reply", ["2030-01-07T10:00:00+01:00"])
+    with store.connect() as db:
+        encrypted_count = db.execute("SELECT (SELECT COUNT(*) FROM inbound_messages WHERE body_ciphertext IS NOT NULL) + (SELECT COUNT(*) FROM proposals WHERE reply_ciphertext IS NOT NULL) + (SELECT COUNT(*) FROM proposals WHERE booking_token_ciphertext IS NOT NULL)").fetchone()[0]
+    if encrypted_count != 3:
+        raise RuntimeError(f"Expected three encrypted smoke-test values, found {encrypted_count}.")
+    print(f"Seeded {encrypted_count} encrypted package-smoke values.")
+finally:
+    store.close()
+'@
+    $seedSmokeData | & .\.venv\Scripts\python.exe -
+    if ($LASTEXITCODE -ne 0) { throw "Could not seed encrypted package smoke-test data." }
     $RotatedDirectory = Join-Path $DataDirectory "rotated"
     $rotationOutput = & $Executable rotate-encryption-key --output-dir $RotatedDirectory
     if ($LASTEXITCODE -ne 0) { throw "Packaged encryption-key rotation failed: $($rotationOutput -join ' ')" }
     $rotation = ($rotationOutput -join [Environment]::NewLine) | ConvertFrom-Json
+    if ($rotation.encrypted_database_values_rotated -ne 3) { throw "Expected the package to rotate three encrypted smoke-test values; it rotated $($rotation.encrypted_database_values_rotated)." }
     if (-not (Test-Path -LiteralPath (Join-Path $RotatedDirectory "scheduler.sqlite3"))) { throw "Rotation did not publish its validated database." }
     $TestEnvironment["DATABASE_PATH"] = Join-Path $RotatedDirectory "scheduler.sqlite3"
     $TestEnvironment["GOOGLE_TOKEN_FILE"] = Join-Path $RotatedDirectory "google-token.json"
