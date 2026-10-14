@@ -389,3 +389,9 @@ Remaining external gate: authorized Meta/Google credentials and approvals, a sta
 - Date parsing now checks bounded Dutch day-after-tomorrow forms and the English phrase before matching tomorrow with word boundaries; Dutch compounds such as `morgenmiddag` and `overmorgenmiddag` remain supported.
 - Regression tests reproduced both defects before the fix. Focused intent/assisted-flow tests: `42 passed`; full local suite: `300 passed in 314.80s`; `compileall`, `pip check`, and `git diff --check` passed. Hosted checks are required on the new pushed SHA; the prior exact SHA's Windows package check passed but does not verify this change.
 - No provider account, personal conversation, live HAI service, or Hetzner host was used.
+
+## Local HAI cursor patch verification — 2026-10-15
+
+- Used a temporary official Go 1.27.2 Windows amd64 toolchain after verifying the downloaded archive's SHA-256 against Go release metadata; no system-wide installation or HAI source edit was performed for toolchain setup.
+- The existing local-only HAI cursor patch passed `go test -p 1 -count=1 -mod=readonly ./...`, `go vet -mod=readonly ./...`, and `gofmt -d` on all modified Go files. HAI checkout remains uncommitted and unpublished as requested.
+- The PostgreSQL-tagged integration path remains unverified because `HAI_ACCOUNT_FEED_TEST_DSN` is unset. Passing local package tests does not establish live HAI ingestion, production database migration, or Hetzner network acceptance.
