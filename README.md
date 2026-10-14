@@ -33,10 +33,10 @@ Choose and repeat an operator password of at least 12 characters. Setup generate
 
 For the assisted personal flow, configure Google Calendar and a reachable HTTPS `PUBLIC_BASE_URL` for booking links; Meta settings are not required. Configure Meta as well only if you want the separate WhatsApp Business webhook/API path. Then run `AgendaRelay.exe` from that same folder. Open [http://127.0.0.1:5000/login](http://127.0.0.1:5000/login) and sign in with your chosen password. The executable runs the web application and reminder worker together. Keep the computer awake and the process running while using the app.
 
-For source installation, Python 3.11–3.13 is supported; Python 3.13 is used by the package workflow:
+For source installation, Python 3.11–3.15 is supported; Python 3.15 is used by CI and packaging:
 
 ```powershell
-py -3.13 -m venv .venv
+py -3.15 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.lock
 python -m scheduler.cli setup

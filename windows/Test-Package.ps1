@@ -61,7 +61,17 @@ try {
         if ($process.HasExited) { break }
         Start-Sleep -Milliseconds 500
     }
-    if (-not $health -or -not $health.ok) { throw "Packaged executable did not become healthy. Review $LogDirectory\package-test.err.log." }
+    if (-not $health -or -not $health.ok) {
+        $stderrPath = Join-Path $LogDirectory "package-test.err.log"
+        if (Test-Path -LiteralPath $stderrPath) {
+            $stderr = (@(Get-Content -LiteralPath $stderrPath | Select-Object -Last 100) -join "`n")
+            foreach ($secret in @($TestEnvironment.FLASK_SECRET_KEY, $TestEnvironment.ADMIN_API_TOKEN)) {
+                if ($secret) { $stderr = $stderr.Replace($secret, "[REDACTED]") }
+            }
+            if ($stderr) { Write-Host "Packaged executable stderr (last 100 lines):`n$stderr" }
+        }
+        throw "Packaged executable did not become healthy. Review $stderrPath."
+    }
     $login = Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:$Port/login" -TimeoutSec 5
     $running = Get-Process -Id $process.Id
     [pscustomobject]@{
