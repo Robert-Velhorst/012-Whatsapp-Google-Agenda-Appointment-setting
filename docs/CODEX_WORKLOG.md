@@ -1,5 +1,10 @@
 # Codex worklog
 
+## 2026-10-14 - Add reviewed Calendar rescheduling
+
+- Added a persistent two-step reschedule proposal for already-booked appointments. Preparation checks FreeBusy and leaves the original booking authoritative; explicit confirmation patches only the event's time, reads it back, then updates local state and queued reminders. Provider ambiguity/stale claims move to an operator reconciliation state that accepts only the original or proposed interval. The browser actions are CSRF-protected; personal WhatsApp remains manual and receives no automatic message from rescheduling.
+- Regression coverage exercises conflict rejection, explicit browser review/confirmation, narrow provider patching, reminder replacement, timeouts before and after provider update, availability recheck at confirmation, stale-worker recovery, and HAI cursor visibility of the updated appointment. Focused combined tests: 15 passed; full suite: 275 passed in 42.17 seconds. `compileall`, `pip check`, and `git diff --check` passed; Ruff is not installed. Windows 11 x64 package smoke passed migration, encryption rotation, backup, health, and login (68.6 MiB working set); ZIP SHA-256 `7C2B43CA1742ABABF40F6A63F96142671F2BAFA510756DC596CE1B2A59A1CC2E`. These are synthetic/local checks only; hosted CI is pending, and Hetzner/Google/WhatsApp were not contacted.
+
 ## 2026-10-14 - Make Calendar cancellation recoverable
 
 - Booked appointment cancellation now claims the local state before the Google Calendar delete and commits appointment/request/reminder cancellation only after provider success. Ambiguous timeouts and stale process claims are surfaced for read-only operator reconciliation; a still-active event restores the booking and requires a separate explicit retry. Unbooked pending/failed appointments can still be cancelled locally, while calendar-backed or ambiguous records fail closed.

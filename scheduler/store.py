@@ -371,6 +371,28 @@ class Store:
             (workspace_id, actor, "request.transition", "request", str(request_id), json.dumps({"from": current, "to": target, **(detail or {})}, sort_keys=True), now),
         )
 
+    @staticmethod
+    def _touch_request_for_appointment_in_transaction(
+        db: sqlite3.Connection, workspace_id: str, appointment_id: int,
+    ) -> None:
+        row = db.execute(
+            "SELECT r.id,r.updated_at FROM scheduling_requests r JOIN appointments a ON a.request_id=r.id "
+            "WHERE r.workspace_id=? AND a.workspace_id=? AND a.id=?",
+            (workspace_id, workspace_id, appointment_id),
+        ).fetchone()
+        if not row:
+            raise KeyError("Scheduling request for appointment not found")
+        previous = datetime.fromisoformat(row["updated_at"])
+        if previous.tzinfo is None:
+            raise ValueError("Scheduling request timestamp is not timezone-aware")
+        updated = utc_now()
+        if updated <= previous:
+            updated = previous + timedelta(microseconds=1)
+        db.execute(
+            "UPDATE scheduling_requests SET updated_at=? WHERE workspace_id=? AND id=?",
+            (updated.isoformat(), workspace_id, int(row["id"])),
+        )
+
     def transition_request(self, workspace_id: str, request_id: int, target: str, actor: str, detail: dict | None = None) -> None:
         with self.connect() as db:
             self._transition_request_in_transaction(db, workspace_id, request_id, target, actor, detail)
@@ -906,6 +928,232 @@ class Store:
                 )
         return count
 
+    def prepare_reschedule(self, workspace_id: str, appointment_id: int, start_at: str, end_at: str, actor: str) -> bool:
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            if self._appointment_has_running_reminder(db, workspace_id, appointment_id):
+                raise ValueError("A Calendar reminder is currently being sent; wait before preparing a reschedule")
+            cursor = db.execute(
+                "UPDATE appointments SET status='reschedule_pending',pending_start_at=?,pending_end_at=?,reschedule_attempt=reschedule_attempt+1,error_text=NULL,updated_at=? "
+                "WHERE workspace_id=? AND id=? AND status='booked' AND google_event_id IS NOT NULL",
+                (start_at, end_at, now, workspace_id, appointment_id),
+            )
+            if cursor.rowcount != 1:
+                return False
+            self._touch_request_for_appointment_in_transaction(db, workspace_id, appointment_id)
+            self._audit_in_transaction(
+                db, workspace_id, actor, "appointment.reschedule_proposed", "appointment", appointment_id,
+                {"start_at": start_at, "end_at": end_at},
+            )
+        return True
+
+    def discard_reschedule(
+        self, workspace_id: str, appointment_id: int, actor: str, reminder_at: str | None = None,
+    ) -> bool:
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT reschedule_attempt FROM appointments WHERE workspace_id=? AND id=? AND status='reschedule_pending'",
+                (workspace_id, appointment_id),
+            ).fetchone()
+            if not row:
+                return False
+            cursor = db.execute(
+                "UPDATE appointments SET status='booked',pending_start_at=NULL,pending_end_at=NULL,updated_at=? "
+                "WHERE workspace_id=? AND id=? AND status='reschedule_pending'",
+                (now, workspace_id, appointment_id),
+            )
+            if cursor.rowcount:
+                self._touch_request_for_appointment_in_transaction(db, workspace_id, appointment_id)
+                old_jobs = self._background_job_ids_for_appointment(
+                    db, workspace_id, appointment_id, job_type="appointment_reminder", active_only=True,
+                )
+                db.executemany(
+                    "UPDATE background_jobs SET status='cancelled',updated_at=? WHERE workspace_id=? AND id=? AND status='queued'",
+                    [(now, workspace_id, job_id) for job_id in old_jobs],
+                )
+                if reminder_at and reminder_at > now:
+                    self._insert_reschedule_reminder(db, workspace_id, appointment_id, int(row["reschedule_attempt"]), reminder_at, now)
+                self._audit_in_transaction(
+                    db, workspace_id, actor, "appointment.reschedule_discarded", "appointment", appointment_id, {},
+                )
+        return cursor.rowcount == 1
+
+    def claim_reschedule(self, workspace_id: str, appointment_id: int, actor: str) -> dict[str, Any] | None:
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            if self._appointment_has_running_reminder(db, workspace_id, appointment_id):
+                return None
+            cursor = db.execute(
+                "UPDATE appointments SET status='rescheduling',updated_at=? "
+                "WHERE workspace_id=? AND id=? AND status='reschedule_pending' AND pending_start_at IS NOT NULL AND pending_end_at IS NOT NULL",
+                (now, workspace_id, appointment_id),
+            )
+            if cursor.rowcount != 1:
+                return None
+            self._touch_request_for_appointment_in_transaction(db, workspace_id, appointment_id)
+            self._audit_in_transaction(
+                db, workspace_id, actor, "appointment.reschedule_started", "appointment", appointment_id, {},
+            )
+        return self.get_appointment(workspace_id, appointment_id)
+
+    def mark_reschedule_manual_required(self, workspace_id: str, appointment_id: int, actor: str) -> None:
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            cursor = db.execute(
+                "UPDATE appointments SET status='reschedule_manual_required',error_text=?,updated_at=? "
+                "WHERE workspace_id=? AND id=? AND status='rescheduling'",
+                ("Google Calendar reschedule outcome is unknown; verify the event before retrying", now, workspace_id, appointment_id),
+            )
+            if cursor.rowcount:
+                self._touch_request_for_appointment_in_transaction(db, workspace_id, appointment_id)
+                self._audit_in_transaction(
+                    db, workspace_id, actor, "appointment.reschedule_manual_required", "appointment", appointment_id,
+                    {"provider": "google_calendar"},
+                )
+
+    def restore_reschedule_pending(self, workspace_id: str, appointment_id: int, actor: str, reason: str) -> None:
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            cursor = db.execute(
+                "UPDATE appointments SET status='reschedule_pending',error_text=NULL,updated_at=? "
+                "WHERE workspace_id=? AND id=? AND status='rescheduling'",
+                (now, workspace_id, appointment_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Appointment changed during reschedule preflight")
+            self._touch_request_for_appointment_in_transaction(db, workspace_id, appointment_id)
+            self._audit_in_transaction(
+                db, workspace_id, actor, "appointment.reschedule_preflight_failed", "appointment", appointment_id,
+                {"reason": reason},
+            )
+
+    def finish_reschedule(
+        self, workspace_id: str, appointment_id: int, actor: str, reminder_at: str | None = None,
+    ) -> dict[str, Any]:
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT request_id,pending_start_at,pending_end_at,reschedule_attempt FROM appointments "
+                "WHERE workspace_id=? AND id=? AND status IN ('rescheduling','reschedule_manual_required')",
+                (workspace_id, appointment_id),
+            ).fetchone()
+            if not row or not row["pending_start_at"] or not row["pending_end_at"]:
+                raise ValueError("Appointment has no pending reschedule to complete")
+            cursor = db.execute(
+                "UPDATE appointments SET start_at=pending_start_at,end_at=pending_end_at,pending_start_at=NULL,pending_end_at=NULL,"
+                "status='booked',error_text=NULL,updated_at=? WHERE workspace_id=? AND id=? AND status IN ('rescheduling','reschedule_manual_required')",
+                (now, workspace_id, appointment_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Appointment changed while completing its reschedule")
+            self._touch_request_for_appointment_in_transaction(db, workspace_id, appointment_id)
+            old_jobs = self._background_job_ids_for_appointment(
+                db, workspace_id, appointment_id, job_type="appointment_reminder", active_only=True
+            )
+            db.executemany(
+                "UPDATE background_jobs SET status='cancelled',updated_at=? WHERE workspace_id=? AND id=? AND status='queued'",
+                [(now, workspace_id, job_id) for job_id in old_jobs],
+            )
+            reminder_job_id = None
+            if reminder_at and reminder_at > now:
+                reminder_job_id = self._insert_reschedule_reminder(
+                    db, workspace_id, appointment_id, int(row["reschedule_attempt"]), reminder_at, now,
+                )
+            self._audit_in_transaction(
+                db, workspace_id, actor, "appointment.rescheduled", "appointment", appointment_id,
+                {"start_at": row["pending_start_at"], "end_at": row["pending_end_at"], "reminder_job_created": reminder_job_id is not None},
+            )
+        updated = self.get_appointment(workspace_id, appointment_id)
+        assert updated is not None
+        return updated
+
+    def restore_booked_after_reschedule_check(
+        self, workspace_id: str, appointment_id: int, actor: str, reminder_at: str | None = None,
+    ) -> None:
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT reschedule_attempt FROM appointments WHERE workspace_id=? AND id=? AND status='reschedule_manual_required'",
+                (workspace_id, appointment_id),
+            ).fetchone()
+            if not row:
+                raise ValueError("Appointment changed during reschedule reconciliation")
+            cursor = db.execute(
+                "UPDATE appointments SET status='booked',pending_start_at=NULL,pending_end_at=NULL,error_text=NULL,updated_at=? "
+                "WHERE workspace_id=? AND id=? AND status='reschedule_manual_required'",
+                (now, workspace_id, appointment_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Appointment changed during reschedule reconciliation")
+            self._touch_request_for_appointment_in_transaction(db, workspace_id, appointment_id)
+            old_jobs = self._background_job_ids_for_appointment(
+                db, workspace_id, appointment_id, job_type="appointment_reminder", active_only=True,
+            )
+            db.executemany(
+                "UPDATE background_jobs SET status='cancelled',updated_at=? WHERE workspace_id=? AND id=? AND status='queued'",
+                [(now, workspace_id, job_id) for job_id in old_jobs],
+            )
+            if reminder_at and reminder_at > now:
+                self._insert_reschedule_reminder(db, workspace_id, appointment_id, int(row["reschedule_attempt"]), reminder_at, now)
+            self._audit_in_transaction(
+                db, workspace_id, actor, "appointment.reschedule_reconciled", "appointment", appointment_id,
+                {"outcome": "event_still_at_original_time"},
+            )
+
+    def recover_stale_reschedules(self, workspace_id: str, cutoff_iso: str) -> int:
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            stale_ids = [
+                int(row["id"]) for row in db.execute(
+                    "SELECT id FROM appointments WHERE workspace_id=? AND status='rescheduling' AND updated_at<?",
+                    (workspace_id, cutoff_iso),
+                ).fetchall()
+            ]
+            cursor = db.execute(
+                "UPDATE appointments SET status='reschedule_manual_required',error_text=?,updated_at=? "
+                "WHERE workspace_id=? AND status='rescheduling' AND updated_at<?",
+                ("The process stopped during Calendar rescheduling; verify the event before retrying", now, workspace_id, cutoff_iso),
+            )
+            count = cursor.rowcount
+            if count:
+                for appointment_id in stale_ids:
+                    self._touch_request_for_appointment_in_transaction(db, workspace_id, appointment_id)
+                self._audit_in_transaction(
+                    db, workspace_id, "worker", "appointments.stale_reschedules_recovered", "workspace", workspace_id,
+                    {"count": count, "cutoff": cutoff_iso},
+                )
+        return count
+
+    @staticmethod
+    def _appointment_has_running_reminder(db: sqlite3.Connection, workspace_id: str, appointment_id: int) -> bool:
+        candidate_ids = Store._background_job_ids_for_appointment(
+            db, workspace_id, appointment_id, job_type="appointment_reminder",
+        )
+        for job_id in candidate_ids:
+            row = db.execute(
+                "SELECT 1 FROM background_jobs WHERE workspace_id=? AND id=? AND status='running'",
+                (workspace_id, job_id),
+            ).fetchone()
+            if row:
+                return True
+        return False
+
+    @staticmethod
+    def _insert_reschedule_reminder(
+        db: sqlite3.Connection, workspace_id: str, appointment_id: int, attempt: int, reminder_at: str, now: str,
+    ) -> int | None:
+        dedupe_key = f"reminder:{appointment_id}:reschedule:{attempt}"
+        try:
+            cursor = db.execute(
+                "INSERT INTO background_jobs(workspace_id,job_type,dedupe_key,run_at,payload_json,status,created_at,updated_at) "
+                "VALUES(?,'appointment_reminder',?,?,?,'queued',?,?)",
+                (workspace_id, dedupe_key, reminder_at, json.dumps({"appointment_id": appointment_id}), now, now),
+            )
+        except sqlite3.IntegrityError:
+            return None
+        return int(cursor.lastrowid)
+
     def schedule_job(self, workspace_id: str, job_type: str, dedupe_key: str, run_at: str, payload: dict) -> int | None:
         now = utc_now().isoformat()
         with self.connect() as db:
@@ -1108,7 +1356,7 @@ class Store:
             total = int(db.execute(f"SELECT COUNT(*) FROM scheduling_requests r JOIN contacts c ON c.id=r.contact_id WHERE {where_sql}", args).fetchone()[0])
             page = min(page, max(1, (total + per_page - 1) // per_page))
             rows = db.execute(
-                f"SELECT r.*,c.sender,c.display_name,c.email,c.consent_status,p.id proposal_id,p.status proposal_status,p.slots_json,p.selected_slot,a.id appointment_id,a.status appointment_status,a.start_at,a.google_event_link "
+                f"SELECT r.*,c.sender,c.display_name,c.email,c.consent_status,p.id proposal_id,p.status proposal_status,p.slots_json,p.selected_slot,a.id appointment_id,a.status appointment_status,a.start_at,a.end_at,a.pending_start_at,a.pending_end_at,a.google_event_link "
                 f"FROM scheduling_requests r JOIN contacts c ON c.id=r.contact_id LEFT JOIN proposals p ON p.request_id=r.id LEFT JOIN appointments a ON a.request_id=r.id "
                 f"WHERE {where_sql} ORDER BY r.updated_at DESC LIMIT ? OFFSET ?",
                 [*args, per_page, (page - 1) * per_page],
@@ -1188,7 +1436,7 @@ class Store:
     def request_detail(self, workspace_id: str, request_id: int) -> dict[str, Any] | None:
         with self.connect() as db:
             row = db.execute(
-                "SELECT r.*,c.sender,c.display_name,c.email,c.consent_status,p.id proposal_id,p.status proposal_status,p.slots_json,p.selected_slot,p.provider_message_id,a.id appointment_id,a.status appointment_status,a.start_at,a.google_event_link "
+                "SELECT r.*,c.sender,c.display_name,c.email,c.consent_status,p.id proposal_id,p.status proposal_status,p.slots_json,p.selected_slot,p.provider_message_id,a.id appointment_id,a.status appointment_status,a.start_at,a.end_at,a.pending_start_at,a.pending_end_at,a.google_event_link "
                 "FROM scheduling_requests r JOIN contacts c ON c.id=r.contact_id LEFT JOIN proposals p ON p.request_id=r.id LEFT JOIN appointments a ON a.request_id=r.id "
                 "WHERE r.workspace_id=? AND r.id=?",
                 (workspace_id, request_id),
@@ -1246,7 +1494,7 @@ class Store:
                 (workspace_id, workspace_id, contact_id),
             ).fetchall()
             appointment_rows = db.execute(
-                "SELECT a.id,a.request_id,a.proposal_id,a.start_at,a.end_at,a.timezone,a.status,a.google_event_id,a.google_event_link,a.error_text,a.created_at,a.updated_at "
+                "SELECT a.id,a.request_id,a.proposal_id,a.start_at,a.end_at,a.pending_start_at,a.pending_end_at,a.timezone,a.status,a.google_event_id,a.google_event_link,a.error_text,a.created_at,a.updated_at "
                 "FROM appointments a JOIN scheduling_requests r ON r.id=a.request_id "
                 "WHERE a.workspace_id=? AND r.workspace_id=? AND r.contact_id=? ORDER BY a.id",
                 (workspace_id, workspace_id, contact_id),

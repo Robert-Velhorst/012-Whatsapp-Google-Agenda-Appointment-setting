@@ -83,7 +83,7 @@
               {% for item in data['items'] %}
                 <tr class="{{ 'selected' if selected and selected.id == item.id }}">
                   <td><a class="contact-link" href="{{ url_for('dashboard', view='scheduling', request=item.id, q=query, status=status) }}"><strong>{{ item.display_name or 'WhatsApp contact' }}</strong><small>•••• {{ item.sender[-4:] }}</small></a></td>
-                  <td>{% if item.proposal_status == 'manual_required' %}Verify WhatsApp delivery{% elif item.appointment_status == 'manual_required' %}Verify Google Calendar booking{% elif item.appointment_status == 'cancel_manual_required' %}Verify Calendar cancellation{% elif item.appointment_status == 'cancelling' %}Calendar cancellation in progress{% elif item.status == 'proposal_pending' %}Review proposal{% elif item.status in ['slot_confirmed','booking_pending'] %}Book confirmed slot{% elif item.status == 'awaiting_confirmation' %}Awaiting contact reply{% elif item.status == 'failed' %}Provider attention{% else %}View details{% endif %}</td>
+                  <td>{% if item.proposal_status == 'manual_required' %}Verify WhatsApp delivery{% elif item.appointment_status == 'manual_required' %}Verify Google Calendar booking{% elif item.appointment_status == 'cancel_manual_required' %}Verify Calendar cancellation{% elif item.appointment_status == 'cancelling' %}Calendar cancellation in progress{% elif item.appointment_status == 'reschedule_manual_required' %}Verify Calendar reschedule{% elif item.appointment_status == 'rescheduling' %}Calendar reschedule in progress{% elif item.appointment_status == 'reschedule_pending' %}Review new appointment time{% elif item.status == 'proposal_pending' %}Review proposal{% elif item.status in ['slot_confirmed','booking_pending'] %}Book confirmed slot{% elif item.status == 'awaiting_confirmation' %}Awaiting contact reply{% elif item.status == 'failed' %}Provider attention{% else %}View details{% endif %}</td>
                   <td>{{ item.requested_start }}<small>{{ item.duration_minutes }} minutes · {{ item.timezone }}</small></td>
                   <td><span class="state {{ item.status }}">{{ item.status.replace('_',' ') }}</span></td>
                   <td>{{ (item.confidence * 100)|round|int }}%</td>
@@ -138,6 +138,22 @@
           </section>
           {% elif selected.appointment_id and selected.appointment_status == 'cancelling' %}
           <section class="detail-section assist-warning"><h3>Calendar cancellation is in progress</h3><p>Agenda Relay is recording an external Calendar change. Do not retry until it completes or the worker marks the result for review.</p></section>
+          {% endif %}
+          {% if selected.appointment_id and selected.appointment_status == 'booked' %}
+          <section class="detail-section"><h3>Reschedule appointment</h3><p>Choose a new time. Availability is checked first; the original booking stays active until you review and confirm the Calendar change.</p>
+            <form method="post" action="{{ url_for('action_prepare_reschedule', appointment_id=selected.appointment_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label for="reschedule-start">New date and time ({{ selected.timezone }})</label><input id="reschedule-start" name="start_at" type="datetime-local" required><button class="secondary-button" type="submit">Check and review new time</button></form>
+          </section>
+          {% elif selected.appointment_id and selected.appointment_status == 'reschedule_pending' %}
+          <section class="detail-section assist-warning"><h3>Review time change</h3><p>Original: {{ selected.start_at }}. Proposed: <strong>{{ selected.pending_start_at }} – {{ selected.pending_end_at }}</strong>. The original Calendar booking is still active.</p>
+            <form method="post" action="{{ url_for('action_confirm_reschedule', appointment_id=selected.appointment_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="secondary-button" type="submit">Confirm and update Google Calendar</button></form>
+            <form method="post" action="{{ url_for('action_discard_reschedule', appointment_id=selected.appointment_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="secondary-button" type="submit">Discard time change</button></form>
+          </section>
+          {% elif selected.appointment_id and selected.appointment_status == 'rescheduling' %}
+          <section class="detail-section assist-warning"><h3>Calendar reschedule is in progress</h3><p>The original booking remains the locally recorded time until Google Calendar confirms the update. Do not retry while the operation is in progress.</p></section>
+          {% elif selected.appointment_id and selected.appointment_status == 'reschedule_manual_required' %}
+          <section class="detail-section assist-warning"><h3>Calendar reschedule needs verification</h3><p>The Calendar update may or may not have completed. Read-only verification will accept only the original or proposed time; any other result remains in manual review.</p>
+            <form method="post" action="{{ url_for('action_reconcile_reschedule', appointment_id=selected.appointment_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="secondary-button" type="submit">Verify reschedule in Google Calendar</button></form>
+          </section>
           {% endif %}
           {% if selected.appointment_id and selected.appointment_status == 'booked' %}<form method="post" action="{{ url_for('action_cancel', appointment_id=selected.appointment_id) }}" class="danger-zone"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="danger-button" type="submit">Cancel appointment</button></form>{% endif %}
           {% else %}<div class="empty-detail"><strong>No request selected</strong><span>Select a scheduling request to review its conversation, time slots, consent, and audit trail.</span></div>{% endif %}

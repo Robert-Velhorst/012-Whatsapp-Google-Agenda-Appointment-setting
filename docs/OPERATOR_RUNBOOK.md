@@ -19,6 +19,10 @@ Confirm the selected time and consent state. Add a verified email under Contacts
 
 Choose **Cancel appointment** only for a confirmed booking that should be removed from Google Calendar. The application marks the operation in progress before contacting Calendar and cancels local reminders only after the provider delete succeeds. If the UI reports an unverified cancellation, do not press Cancel again: the provider may already have deleted the event. Choose **Verify Calendar cancellation** to perform a read-only lookup. If the event is absent, local cancellation is completed. If it is still present, the appointment is restored to booked and a new explicit Cancel action is available. If verification itself fails, leave the appointment unresolved and inspect Google Calendar manually before taking further action. The worker moves an interrupted/stale cancellation to the verification state without repeating the provider delete.
 
+## Reschedule a confirmed appointment
+
+On the selected booked request, enter the replacement date and time in the appointment's displayed timezone and choose **Check and review new time**. Agenda Relay rechecks Google Calendar availability but leaves the existing event and local booking untouched. Review both the current and proposed times, then explicitly choose **Confirm and update Google Calendar** or **Discard time change**. Confirmation patches only the event's start/end, reads the event back, and updates local state and any queued reminder only after Calendar confirms the target. If the result is ambiguous, do not retry immediately: use **Verify reschedule in Google Calendar**. It accepts only the saved original or proposed times. A missing event or any third-party time change remains unresolved for manual inspection.
+
 ## Reminders
 
 Run the worker continuously or on a schedule. A queued reminder without `WHATSAPP_REMINDER_TEMPLATE` becomes `manual_required`. Do not reinterpret that as delivery. Configure only a Meta-approved utility template whose parameter order matches title and local date/time.

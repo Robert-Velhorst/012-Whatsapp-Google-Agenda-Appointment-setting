@@ -16,9 +16,11 @@ class FakeCalendar:
     def __init__(self):
         self.created = []
         self.cancelled = []
+        self.updated = []
         self.events = {}
         self.lookup_error = None
         self.preferred_times = []
+        self.slot_available = True
 
     def connected(self):
         return True
@@ -34,11 +36,16 @@ class FakeCalendar:
         return [base + timedelta(hours=index) for index in range(min(count, 3))]
 
     def is_slot_available(self, start_at, end_at):
-        return True
+        return self.slot_available
 
     def create_event(self, appointment):
         self.created.append(dict(appointment))
-        event = {"id": f"event-{appointment['id']}", "htmlLink": f"https://calendar.google.com/event/{appointment['id']}"}
+        event = {
+            "id": f"event-{appointment['id']}",
+            "htmlLink": f"https://calendar.google.com/event/{appointment['id']}",
+            "start": {"dateTime": appointment["start_at"]},
+            "end": {"dateTime": appointment["end_at"]},
+        }
         self.events[int(appointment["id"])] = event
         return event
 
@@ -46,6 +53,27 @@ class FakeCalendar:
         if self.lookup_error:
             raise self.lookup_error
         return self.events.get(int(appointment["id"]))
+
+    def get_appointment_event(self, appointment):
+        if self.lookup_error:
+            raise self.lookup_error
+        event = self.events.get(int(appointment["id"]))
+        if event is None:
+            return None
+        return {
+            "id": event["id"],
+            "htmlLink": event.get("htmlLink"),
+            "start_at": event["start"]["dateTime"],
+            "end_at": event["end"]["dateTime"],
+        }
+
+    def update_event(self, event_id, start_at, end_at, timezone_name):
+        self.updated.append(event_id)
+        appointment_id = int(event_id.rsplit("-", 1)[1])
+        event = self.events[appointment_id]
+        event["start"] = {"dateTime": start_at, "timeZone": timezone_name}
+        event["end"] = {"dateTime": end_at, "timeZone": timezone_name}
+        return event
 
     def cancel_event(self, event_id):
         self.cancelled.append(event_id)

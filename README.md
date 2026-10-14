@@ -17,6 +17,8 @@ For WhatsApp Business Cloud API:
 7. Agenda Relay sends the confirmation and queues a reminder. Outside WhatsApp's permitted conversation window, reminders require an approved template; otherwise they remain visibly `manual_required`.
 8. Every state change and external action is recorded in the audit trail.
 
+For an already-booked appointment, the operator can also prepare and review a replacement time. Availability is rechecked before the proposal is saved; the current event remains active until the operator explicitly confirms the reschedule. Ambiguous Calendar responses require read-only reconciliation before another change. This is an operator action, not an automatic message or self-service rescheduling link.
+
 For personal WhatsApp, open **Personal WhatsApp**, paste only the relevant message, review the locally detected request and suggested times, then open WhatsApp with a prepared draft. You choose the recipient and send it yourself. After confirming that you shared it, activate its private booking link. The recipient selects a time and consents on that link; Google Calendar booking then follows the configured approval or auto-book setting. Personal-account confirmations and reminders remain manual. The app does not read your personal inbox or send personal WhatsApp messages.
 
 ## Local installation (Windows PowerShell)
@@ -148,9 +150,9 @@ The frontend is server-rendered Flask/Jinja with local CSS and JavaScript assets
 | Source | Responsibility |
 |---|---|
 | `scheduler/app.py` | Browser pages, authentication, CSRF, webhook and operator APIs |
-| `scheduler/service.py` | Message analysis, assisted personal proposals, confirmation, calendar booking, reminders and recovery |
+| `scheduler/service.py` | Message analysis, assisted personal proposals, confirmation, calendar booking/rescheduling, reminders and recovery |
 | `scheduler/intent.py` | Local English/Dutch rules and the replaceable `IntentProvider` interface |
-| `scheduler/calendar.py` | Google OAuth, FreeBusy, event creation and cancellation |
+| `scheduler/calendar.py` | Google OAuth, FreeBusy, event creation, time-only reschedule updates and cancellation |
 | `scheduler/whatsapp.py` | Meta signatures, replies, templates and ambiguous-delivery errors |
 | `scheduler/store.py` | SQLite queries, ownership filters, atomic claims and audit history |
 | `scheduler/migrations.py` | Forward schema migration ledger |
@@ -164,7 +166,7 @@ The frontend is server-rendered Flask/Jinja with local CSS and JavaScript assets
 
 The database holds workspaces, contacts, inbound messages, scheduling requests, proposals, appointments, background jobs, audit events, rate events, system state and schema versions. Migrations run during application initialization; `python -m scheduler.cli migrate` explicitly initializes/applies them. Back up before upgrading. There are no automatic downgrade migrations.
 
-The main request lifecycle is `detected → proposal_pending → awaiting_confirmation → slot_confirmed → booking_pending → booked`. Failure, clarification and cancellation states describe exceptions. Proposal sends and appointment writes have separate atomic claims. A persisted booking-attempt counter gives each deliberate retry a deterministic Google event ID while preserving the first-attempt ID for crash recovery. A same-attempt duplicate insert can safely recover the existing event; a new attempt is used only after an operator-triggered, read-only reconciliation finds no matching event. Event IDs do not reserve a proposed time against unrelated calendar edits.
+The main request lifecycle is `detected → proposal_pending → awaiting_confirmation → slot_confirmed → booking_pending → booked`. Failure, clarification and cancellation states describe exceptions. Calendar-backed appointments also support a two-step, operator-reviewed reschedule: a new timezone-aware time is availability-checked and held separately, then an explicit confirmation updates Google Calendar before the local booking and queued reminder are changed. Ambiguous event updates remain in manual review until a read-only check confirms the old or new time. Proposal sends and appointment writes have separate atomic claims. A persisted booking-attempt counter gives each deliberate retry a deterministic Google event ID while preserving the first-attempt ID for crash recovery. A same-attempt duplicate insert can safely recover the existing event; a new attempt is used only after an operator-triggered, read-only reconciliation finds no matching event. Event IDs do not reserve a proposed time against unrelated calendar edits.
 
 ## Configuration reference
 

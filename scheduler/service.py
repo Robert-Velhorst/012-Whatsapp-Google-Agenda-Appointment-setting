@@ -477,6 +477,142 @@ class SchedulingService:
             "warning": "Google Calendar still has the appointment. It remains booked; choose Cancel appointment to explicitly retry.",
         }
 
+    def prepare_reschedule(self, appointment_id: int, requested_start: str, actor: str = "operator") -> dict[str, Any]:
+        if self.is_paused():
+            raise RuntimeError("Automation is paused; calendar changes are disabled")
+        appointment = self.store.get_appointment(self.settings.workspace_id, appointment_id)
+        if not appointment:
+            raise KeyError("Appointment not found")
+        if appointment["status"] != "booked" or not appointment.get("google_event_id"):
+            raise ValueError("Only a verified booked appointment can be rescheduled")
+        try:
+            target = datetime.fromisoformat(requested_start)
+            timezone = ZoneInfo(appointment["timezone"])
+        except (TypeError, ValueError, KeyError) as exc:
+            raise ValueError("Enter a valid new date and time") from exc
+        if target.tzinfo is None:
+            target = target.replace(tzinfo=timezone)
+        else:
+            target = target.astimezone(timezone)
+        if target.astimezone(UTC) <= utc_now():
+            raise ValueError("The new appointment time must be in the future")
+        if target == datetime.fromisoformat(appointment["start_at"]):
+            raise ValueError("The new time is the same as the existing booking")
+        end = target + timedelta(minutes=int(appointment["duration_minutes"]))
+        try:
+            available = self.calendar.is_slot_available(target, end)
+        except CalendarUnavailable:
+            raise
+        except Exception as exc:  # Google SDK transport errors vary by provider library version.
+            raise CalendarUnavailable("Google Calendar could not verify availability; no reschedule was saved") from exc
+        if not available:
+            raise CalendarUnavailable("That time is no longer available. Choose another time after checking the calendar.")
+        if not self.store.prepare_reschedule(
+            self.settings.workspace_id, appointment_id, target.isoformat(), end.isoformat(), actor,
+        ):
+            raise ValueError("Appointment changed; refresh it before preparing a reschedule")
+        return {"status": "reschedule_pending", "start_at": target.isoformat(), "end_at": end.isoformat()}
+
+    def discard_reschedule(self, appointment_id: int, actor: str = "operator") -> None:
+        appointment = self.store.get_appointment(self.settings.workspace_id, appointment_id)
+        if not appointment:
+            raise KeyError("Appointment not found")
+        reminder_at = self._reschedule_reminder_at(appointment, appointment["start_at"])
+        if not self.store.discard_reschedule(self.settings.workspace_id, appointment_id, actor, reminder_at):
+            raise ValueError("No unconfirmed reschedule is available to discard")
+
+    def confirm_reschedule(self, appointment_id: int, actor: str = "operator") -> dict[str, Any]:
+        if self.is_paused():
+            raise RuntimeError("Automation is paused; calendar changes are disabled")
+        appointment = self.store.claim_reschedule(self.settings.workspace_id, appointment_id, actor)
+        if not appointment:
+            raise ValueError("No unconfirmed reschedule is available to confirm")
+        try:
+            available = self.calendar.is_slot_available(
+                datetime.fromisoformat(appointment["pending_start_at"]),
+                datetime.fromisoformat(appointment["pending_end_at"]),
+            )
+        except Exception as exc:  # Availability must be rechecked immediately before writing Calendar.
+            self.store.restore_reschedule_pending(
+                self.settings.workspace_id, appointment_id, actor, "availability_verification_failed",
+            )
+            raise CalendarUnavailable("Google Calendar could not recheck the proposed time; no event was changed") from exc
+        if not available:
+            self.store.restore_reschedule_pending(
+                self.settings.workspace_id, appointment_id, actor, "availability_changed",
+            )
+            raise CalendarUnavailable("That time is no longer available. Discard it and prepare another time.")
+        try:
+            current_event = self.calendar.find_appointment_event(appointment)
+            if current_event is None or current_event.get("id") != appointment["google_event_id"]:
+                raise CalendarUnavailable("Google Calendar no longer matches the stored booking")
+            self.calendar.update_event(
+                appointment["google_event_id"], appointment["pending_start_at"],
+                appointment["pending_end_at"], appointment["timezone"],
+            )
+            event = self.calendar.get_appointment_event(appointment)
+            if event is None or (
+                datetime.fromisoformat(event["start_at"]) != datetime.fromisoformat(appointment["pending_start_at"])
+                or datetime.fromisoformat(event["end_at"]) != datetime.fromisoformat(appointment["pending_end_at"])
+            ):
+                raise CalendarUnavailable("Google Calendar did not confirm the new appointment time")
+        except Exception as exc:  # Provider timeouts can happen after the Calendar event was moved.
+            self.store.mark_reschedule_manual_required(self.settings.workspace_id, appointment_id, actor)
+            raise CalendarUnavailable("Google Calendar may have moved this event. Verify its state before retrying the reschedule.") from exc
+
+        reminder_at = self._reschedule_reminder_at(appointment, appointment["pending_start_at"])
+        try:
+            updated = self.store.finish_reschedule(
+                self.settings.workspace_id, appointment_id, actor,
+                reminder_at,
+            )
+        except Exception as exc:
+            # The durable in-progress state is recovered for read-only reconciliation by the worker.
+            raise CalendarUnavailable("Google Calendar accepted the new time, but local state needs reconciliation before retrying.") from exc
+        return {"status": "booked", "start_at": updated["start_at"], "event_link": updated.get("google_event_link")}
+
+    def reconcile_reschedule(self, appointment_id: int, actor: str = "operator") -> dict[str, Any]:
+        appointment = self.store.get_appointment(self.settings.workspace_id, appointment_id)
+        if not appointment:
+            raise KeyError("Appointment not found")
+        if appointment["status"] != "reschedule_manual_required":
+            raise ValueError("Appointment is not awaiting reschedule reconciliation")
+        event = self.calendar.get_appointment_event(appointment)
+        if event is None:
+            raise CalendarUnavailable("Google Calendar no longer has this event; inspect it manually before changing local state")
+        if event.get("id") != appointment["google_event_id"]:
+            raise CalendarUnavailable("Google Calendar event identity does not match the stored appointment")
+        event_start = datetime.fromisoformat(event["start_at"])
+        event_end = datetime.fromisoformat(event["end_at"])
+        if (
+            event_start == datetime.fromisoformat(appointment["pending_start_at"])
+            and event_end == datetime.fromisoformat(appointment["pending_end_at"])
+        ):
+            reminder_at = self._reschedule_reminder_at(appointment, event["start_at"])
+            updated = self.store.finish_reschedule(
+                self.settings.workspace_id, appointment_id, actor,
+                reminder_at,
+            )
+            return {"status": "booked", "start_at": updated["start_at"], "warning": "Google Calendar confirms the new time; local state is reconciled."}
+        if (
+            event_start == datetime.fromisoformat(appointment["start_at"])
+            and event_end == datetime.fromisoformat(appointment["end_at"])
+        ):
+            self.store.restore_booked_after_reschedule_check(
+                self.settings.workspace_id, appointment_id, actor,
+                self._reschedule_reminder_at(appointment, appointment["start_at"]),
+            )
+            return {"status": "unchanged", "warning": "Google Calendar still has the original time. The existing booking remains active; review and explicitly prepare a new change if needed."}
+        raise CalendarUnavailable("Google Calendar has a different time than either saved option; the appointment remains in manual review")
+
+    def _reschedule_reminder_at(self, appointment: dict, start_at: str) -> str | None:
+        if appointment["sender"].startswith("assisted:"):
+            return None
+        return (
+            datetime.fromisoformat(start_at).astimezone(UTC)
+            - timedelta(minutes=self.settings.reminder_minutes_before)
+        ).isoformat()
+
     def reconcile_stale_booking(self, appointment_id: int, actor: str = "operator") -> dict[str, Any]:
         appointment = self.store.get_appointment(self.settings.workspace_id, appointment_id)
         if not appointment:
@@ -506,7 +642,7 @@ class SchedulingService:
         }
 
     def run_due_jobs(self, limit: int = 20) -> dict[str, int]:
-        totals = {"claimed": 0, "sent": 0, "manual_required": 0, "failed": 0, "recovered": 0, "recovered_sends": 0, "recovered_bookings": 0, "recovered_cancellations": 0, "expired": 0}
+        totals = {"claimed": 0, "sent": 0, "manual_required": 0, "failed": 0, "recovered": 0, "recovered_sends": 0, "recovered_bookings": 0, "recovered_cancellations": 0, "recovered_reschedules": 0, "expired": 0}
         totals["recovered"] = self.store.recover_stale_jobs(
             self.settings.workspace_id, (utc_now() - timedelta(minutes=15)).isoformat()
         )
@@ -517,6 +653,9 @@ class SchedulingService:
             self.settings.workspace_id, (utc_now() - timedelta(minutes=15)).isoformat()
         )
         totals["recovered_cancellations"] = self.store.recover_stale_cancellations(
+            self.settings.workspace_id, (utc_now() - timedelta(minutes=15)).isoformat()
+        )
+        totals["recovered_reschedules"] = self.store.recover_stale_reschedules(
             self.settings.workspace_id, (utc_now() - timedelta(minutes=15)).isoformat()
         )
         totals["expired"] = self.store.expire_stale_proposals(

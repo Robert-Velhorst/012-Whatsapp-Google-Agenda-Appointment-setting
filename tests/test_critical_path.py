@@ -1,5 +1,7 @@
 import sqlite3
 from dataclasses import replace
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -536,6 +538,186 @@ def test_ambiguous_booking_cannot_be_cancelled_without_reconciliation(app_bundle
     assert response.get_json()["error"]["code"] == "appointment_not_cancellable"
     assert store.get_appointment("default", appointment_id)["status"] == "manual_required"
     assert calendar.cancelled == []
+
+
+def test_reschedule_requires_review_then_updates_calendar_and_local_state(app_bundle):
+    app, calendar, _ = app_bundle
+    appointment_id = _book_calendar_appointment(app)
+    store = app.extensions["store"]
+    appointment = store.get_appointment("default", appointment_id)
+    _, feed_cursor = store.hai_feed("default")
+    store.schedule_job(
+        "default", "appointment_reminder", f"reminder:{appointment_id}:{app.extensions['scheduling'].settings.reminder_minutes_before}",
+        "2099-01-01T00:00:00+00:00", {"appointment_id": appointment_id},
+    )
+    target_start = datetime.now(ZoneInfo("Europe/Amsterdam")).replace(hour=15, minute=0, second=0, microsecond=0) + timedelta(days=2)
+    if target_start.weekday() >= 5:
+        target_start += timedelta(days=7 - target_start.weekday())
+    service = app.extensions["scheduling"]
+
+    draft = service.prepare_reschedule(appointment_id, target_start.isoformat())
+
+    assert draft["status"] == "reschedule_pending"
+    assert store.get_appointment("default", appointment_id)["start_at"] == appointment["start_at"]
+    assert store.get_appointment("default", appointment_id)["pending_start_at"] == target_start.isoformat()
+    assert store.request_detail("default", 1)["status"] == "booked"
+
+    result = service.confirm_reschedule(appointment_id)
+
+    updated = store.get_appointment("default", appointment_id)
+    assert result["status"] == "booked"
+    assert updated["status"] == "booked"
+    assert updated["start_at"] == target_start.isoformat()
+    assert updated["pending_start_at"] is None
+    assert calendar.events[appointment_id]["start"]["dateTime"] == target_start.isoformat()
+    with store.connect() as db:
+        reminders = db.execute(
+            "SELECT status,run_at,dedupe_key FROM background_jobs WHERE workspace_id='default' AND job_type='appointment_reminder' ORDER BY id"
+        ).fetchall()
+    assert [row["status"] for row in reminders] == ["cancelled", "queued"]
+    expected_reminder = target_start.astimezone(ZoneInfo("UTC")) - timedelta(minutes=service.settings.reminder_minutes_before)
+    assert reminders[-1]["run_at"] == expected_reminder.isoformat()
+    feed_updates, _ = store.hai_feed("default", feed_cursor)
+    assert len(feed_updates) == 1
+    assert feed_updates[0]["appointment_status"] == "booked"
+    assert feed_updates[0]["start_at"] == target_start.isoformat()
+
+
+def test_reschedule_browser_review_requires_csrf_and_explicit_confirmation(app_bundle):
+    app, calendar, _ = app_bundle
+    appointment_id = _book_calendar_appointment(app)
+    store = app.extensions["store"]
+    target_start = datetime.now(ZoneInfo("Europe/Amsterdam")).replace(hour=15, minute=0, second=0, microsecond=0) + timedelta(days=6)
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session["operator_authenticated"] = True
+        session["csrf_token"] = "reschedule-csrf"
+
+    rejected = client.post(
+        f"/actions/appointments/{appointment_id}/reschedule",
+        data={"start_at": target_start.replace(tzinfo=None).isoformat()},
+    )
+    assert rejected.status_code == 403
+    assert store.get_appointment("default", appointment_id)["status"] == "booked"
+
+    prepared = client.post(
+        f"/actions/appointments/{appointment_id}/reschedule",
+        data={"csrf_token": "reschedule-csrf", "start_at": target_start.replace(tzinfo=None).isoformat()},
+    )
+    assert prepared.status_code == 302
+    assert store.get_appointment("default", appointment_id)["status"] == "reschedule_pending"
+    review = client.get("/?request=1")
+    assert b"Review time change" in review.data
+    assert b"Confirm and update Google Calendar" in review.data
+    assert calendar.updated == []
+
+    confirmed = client.post(
+        f"/actions/appointments/{appointment_id}/reschedule/confirm",
+        data={"csrf_token": "reschedule-csrf"},
+    )
+    assert confirmed.status_code == 302
+    assert store.get_appointment("default", appointment_id)["status"] == "booked"
+    assert calendar.updated == [f"event-{appointment_id}"]
+
+
+def test_reschedule_rejects_busy_slot_without_changing_booking(app_bundle):
+    app, calendar, _ = app_bundle
+    appointment_id = _book_calendar_appointment(app)
+    store = app.extensions["store"]
+    original_start = store.get_appointment("default", appointment_id)["start_at"]
+    calendar.slot_available = False
+    target_start = datetime.now(ZoneInfo("Europe/Amsterdam")).replace(hour=15, minute=0, second=0, microsecond=0) + timedelta(days=3)
+
+    with pytest.raises(CalendarUnavailable, match="no longer available"):
+        app.extensions["scheduling"].prepare_reschedule(appointment_id, target_start.isoformat())
+
+    appointment = store.get_appointment("default", appointment_id)
+    assert appointment["status"] == "booked"
+    assert appointment["start_at"] == original_start
+    assert appointment["pending_start_at"] is None
+
+
+def test_reschedule_rechecks_availability_at_confirmation(app_bundle):
+    app, calendar, _ = app_bundle
+    appointment_id = _book_calendar_appointment(app)
+    store = app.extensions["store"]
+    target_start = datetime.now(ZoneInfo("Europe/Amsterdam")).replace(hour=15, minute=0, second=0, microsecond=0) + timedelta(days=3)
+    service = app.extensions["scheduling"]
+    service.prepare_reschedule(appointment_id, target_start.isoformat())
+    calendar.slot_available = False
+
+    with pytest.raises(CalendarUnavailable, match="no longer available"):
+        service.confirm_reschedule(appointment_id)
+
+    appointment = store.get_appointment("default", appointment_id)
+    assert appointment["status"] == "reschedule_pending"
+    assert appointment["start_at"] != target_start.isoformat()
+    assert calendar.updated == []
+
+
+def test_reschedule_timeout_is_read_only_reconciled_when_calendar_already_moved(app_bundle):
+    app, calendar, _ = app_bundle
+    appointment_id = _book_calendar_appointment(app)
+    store = app.extensions["store"]
+    target_start = datetime.now(ZoneInfo("Europe/Amsterdam")).replace(hour=15, minute=0, second=0, microsecond=0) + timedelta(days=4)
+    service = app.extensions["scheduling"]
+    service.prepare_reschedule(appointment_id, target_start.isoformat())
+    update = calendar.update_event
+
+    def update_then_timeout(*args):
+        update(*args)
+        raise TimeoutError("synthetic lost update response")
+
+    calendar.update_event = update_then_timeout
+    with pytest.raises(CalendarUnavailable, match="(?i)verify its state"):
+        service.confirm_reschedule(appointment_id)
+    assert store.get_appointment("default", appointment_id)["status"] == "reschedule_manual_required"
+    assert store.get_appointment("default", appointment_id)["start_at"] != target_start.isoformat()
+
+    reconciled = service.reconcile_reschedule(appointment_id)
+
+    assert reconciled["status"] == "booked"
+    assert store.get_appointment("default", appointment_id)["start_at"] == target_start.isoformat()
+
+
+def test_reschedule_timeout_before_provider_update_restores_existing_booking(app_bundle):
+    app, calendar, _ = app_bundle
+    appointment_id = _book_calendar_appointment(app)
+    store = app.extensions["store"]
+    original_start = store.get_appointment("default", appointment_id)["start_at"]
+    target_start = datetime.now(ZoneInfo("Europe/Amsterdam")).replace(hour=15, minute=0, second=0, microsecond=0) + timedelta(days=5)
+    service = app.extensions["scheduling"]
+    service.prepare_reschedule(appointment_id, target_start.isoformat())
+    calendar.update_event = lambda *_args: (_ for _ in ()).throw(TimeoutError("synthetic timeout before update"))
+
+    with pytest.raises(CalendarUnavailable):
+        service.confirm_reschedule(appointment_id)
+    assert store.get_appointment("default", appointment_id)["status"] == "reschedule_manual_required"
+
+    reconciled = service.reconcile_reschedule(appointment_id)
+
+    assert reconciled["status"] == "unchanged"
+    assert store.get_appointment("default", appointment_id)["start_at"] == original_start
+    assert store.get_appointment("default", appointment_id)["pending_start_at"] is None
+
+
+def test_worker_recovers_stale_reschedule_for_manual_verification(app_bundle):
+    app, calendar, _ = app_bundle
+    appointment_id = _book_calendar_appointment(app)
+    store = app.extensions["store"]
+    target_start = datetime.now(ZoneInfo("Europe/Amsterdam")).replace(hour=15, minute=0, second=0, microsecond=0) + timedelta(days=8)
+    service = app.extensions["scheduling"]
+    service.prepare_reschedule(appointment_id, target_start.isoformat())
+    assert store.claim_reschedule("default", appointment_id, "operator") is not None
+    with store.connect() as db:
+        db.execute("UPDATE appointments SET updated_at='2000-01-01T00:00:00+00:00' WHERE id=?", (appointment_id,))
+
+    result = service.run_due_jobs()
+
+    assert result["recovered_reschedules"] == 1
+    assert store.get_appointment("default", appointment_id)["status"] == "reschedule_manual_required"
+    assert calendar.updated == []
+    assert service.reconcile_reschedule(appointment_id)["status"] == "unchanged"
 
 
 def test_booking_cannot_be_cancelled_midflight_and_completion_is_atomic(app_bundle, auth_headers):

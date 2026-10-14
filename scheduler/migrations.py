@@ -107,6 +107,11 @@ MIGRATIONS: list[tuple[int, str]] = [
           CHECK(processing_status IN ('processing','pending','processed'));
         ALTER TABLE inbound_messages ADD COLUMN processing_started_at TEXT;
     """),
+    (10, """
+        ALTER TABLE appointments ADD COLUMN pending_start_at TEXT;
+        ALTER TABLE appointments ADD COLUMN pending_end_at TEXT;
+        ALTER TABLE appointments ADD COLUMN reschedule_attempt INTEGER NOT NULL DEFAULT 0;
+    """),
 ]
 
 

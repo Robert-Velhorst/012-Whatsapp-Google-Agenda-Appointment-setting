@@ -364,6 +364,70 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             flash(f"Cancellation failed safely: {exc}", "error")
         return redirect(url_for("dashboard"))
 
+    @app.post("/actions/appointments/<int:appointment_id>/reschedule")
+    @operator_required
+    def action_prepare_reschedule(appointment_id: int):
+        if not valid_csrf():
+            abort(403)
+        try:
+            result = scheduling.prepare_reschedule(appointment_id, request.form.get("start_at", ""), settings.operator_name)
+            local_time = datetime.fromisoformat(result["start_at"]).strftime("%A, %d %B %Y at %H:%M")
+            flash(f"New time checked and saved for review: {local_time}. Confirm the change below to update Google Calendar.", "success")
+        except (KeyError, ValueError) as exc:
+            flash(f"Reschedule not prepared: {exc}", "error")
+        except CalendarUnavailable:
+            flash("Google Calendar could not confirm availability. No reschedule was saved; try again or check Calendar manually.", "error")
+        except RuntimeError:
+            flash("Calendar changes are disabled while automation is paused.", "error")
+        appointment = store.get_appointment(settings.workspace_id, appointment_id)
+        return redirect(url_for("dashboard", request=appointment["request_id"] if appointment else None))
+
+    @app.post("/actions/appointments/<int:appointment_id>/reschedule/confirm")
+    @operator_required
+    def action_confirm_reschedule(appointment_id: int):
+        if not valid_csrf():
+            abort(403)
+        try:
+            scheduling.confirm_reschedule(appointment_id, settings.operator_name)
+            flash("Google Calendar and the local booking now show the rescheduled time.", "success")
+        except ValueError as exc:
+            flash(f"Reschedule not confirmed: {exc}", "error")
+        except CalendarUnavailable:
+            flash("Google Calendar may have changed. The old local time has been preserved until you verify the event.", "error")
+        except RuntimeError:
+            flash("Calendar changes are disabled while automation is paused.", "error")
+        appointment = store.get_appointment(settings.workspace_id, appointment_id)
+        return redirect(url_for("dashboard", request=appointment["request_id"] if appointment else None))
+
+    @app.post("/actions/appointments/<int:appointment_id>/reschedule/discard")
+    @operator_required
+    def action_discard_reschedule(appointment_id: int):
+        if not valid_csrf():
+            abort(403)
+        appointment = store.get_appointment(settings.workspace_id, appointment_id)
+        try:
+            scheduling.discard_reschedule(appointment_id, settings.operator_name)
+            flash("The unconfirmed time change was discarded; the original booking remains active.", "success")
+        except ValueError as exc:
+            flash(f"Reschedule review could not be discarded: {exc}", "error")
+        return redirect(url_for("dashboard", request=appointment["request_id"] if appointment else None))
+
+    @app.post("/actions/appointments/<int:appointment_id>/reschedule/reconcile")
+    @operator_required
+    def action_reconcile_reschedule(appointment_id: int):
+        if not valid_csrf():
+            abort(403)
+        appointment = store.get_appointment(settings.workspace_id, appointment_id)
+        try:
+            result = scheduling.reconcile_reschedule(appointment_id, settings.operator_name)
+            flash(result["warning"], "success" if result["status"] in {"booked", "unchanged"} else "error")
+        except (KeyError, ValueError):
+            flash("This appointment is not awaiting reschedule reconciliation.", "error")
+        except Exception as exc:  # noqa: BLE001 - Calendar lookup errors may carry private provider details.
+            app.logger.warning("Calendar reschedule reconciliation failed (%s)", type(exc).__name__)
+            flash("Google Calendar could not safely verify either saved time. The appointment remains in manual review.", "error")
+        return redirect(url_for("dashboard", request=appointment["request_id"] if appointment else None))
+
     @app.post("/actions/contacts/<int:contact_id>/update")
     @operator_required
     def action_contact_update(contact_id: int):

@@ -518,6 +518,34 @@ def test_confirmed_slot_availability_recheck(app_bundle, busy, expected):
     assert calendar.is_slot_available(start, start + timedelta(minutes=30)) is expected
 
 
+def test_calendar_reschedule_patches_only_event_time_fields(app_bundle):
+    app, _, _ = app_bundle
+    calendar = GoogleCalendar(app.extensions["settings"])
+    calls = []
+
+    class Events:
+        def patch(self, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(execute=lambda: {"id": "event-1"})
+
+    calendar._service = lambda: SimpleNamespace(events=lambda: Events())
+
+    result = calendar.update_event(
+        "event-1", "2030-01-07T10:00:00+01:00", "2030-01-07T10:30:00+01:00", "Europe/Amsterdam",
+    )
+
+    assert result == {"id": "event-1"}
+    assert calls == [{
+        "calendarId": "primary",
+        "eventId": "event-1",
+        "body": {
+            "start": {"dateTime": "2030-01-07T10:00:00+01:00", "timeZone": "Europe/Amsterdam"},
+            "end": {"dateTime": "2030-01-07T10:30:00+01:00", "timeZone": "Europe/Amsterdam"},
+        },
+        "sendUpdates": "all",
+    }]
+
+
 @pytest.mark.parametrize("busy", INVALID_BUSY_INTERVALS)
 def test_confirmed_slot_recheck_fails_closed_on_invalid_provider_busy_intervals(app_bundle, busy):
     app, _, _ = app_bundle
