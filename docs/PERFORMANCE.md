@@ -1,6 +1,6 @@
 # Performance and resource profile
 
-Agenda Relay is optimized for a single Windows operator and a moderate WhatsApp scheduling workload. SQLite uses one persistent connection per application thread, WAL journaling, a five-second busy timeout, bounded statement caching, a 4 MiB page cache, and indexed dashboard/feed queries. Static assets receive immutable caching while authenticated and dynamic responses remain `no-store`.
+Agenda Relay is optimized for a single Windows operator and a moderate WhatsApp scheduling workload. SQLite uses one persistent connection per application thread, WAL journaling, a five-second busy timeout, bounded statement caching, a 4 MiB page cache, and indexed dashboard/feed queries. Connection shutdown closes the thread-local handle without running `PRAGMA optimize`, avoiding write-lock contention when workers stop concurrently; query correctness does not depend on optimizer statistics. Static assets receive immutable caching while authenticated and dynamic responses remain `no-store`.
 
 Measured on the development Windows 11 host on 2026-08-09:
 
