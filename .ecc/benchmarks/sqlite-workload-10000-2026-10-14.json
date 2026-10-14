@@ -1,0 +1,56 @@
+{
+  "benchmark": "sqlite-dashboard-and-hai-feed",
+  "measurement_date": "2026-10-14",
+  "baseline_commit": "949af34f3c80efbce0bb3e5027092abcfef209dc",
+  "source_code_commit": "b685f14bc3180450da891eee7f7a9a1206dba0c6",
+  "command": ".venv/Scripts/python.exe -m scripts.benchmark --records 10000 --reads 1000",
+  "environment": {
+    "python": "3.13.14",
+    "sqlite": "3.53.1",
+    "platform": "Windows 11 10.0.26300"
+  },
+  "dataset": "Three serial runs with 10000 synthetic contacts/requests in separate temporary SQLite databases, 1000 dashboard reads per run, and a 500-item HAI feed; no production database or provider calls",
+  "runs": [
+    {
+      "verified_total": 10000,
+      "write_records_per_second": 456.1,
+      "dashboard_read_median_ms": 6.436,
+      "dashboard_read_p95_ms": 8.503,
+      "dashboard_read_max_ms": 118.181,
+      "hai_feed_500_ms": 5.024,
+      "python_peak_memory_mib": 0.49
+    },
+    {
+      "verified_total": 10000,
+      "write_records_per_second": 867.4,
+      "dashboard_read_median_ms": 6.695,
+      "dashboard_read_p95_ms": 9.884,
+      "dashboard_read_max_ms": 39.844,
+      "hai_feed_500_ms": 4.739,
+      "python_peak_memory_mib": 0.49
+    },
+    {
+      "verified_total": 10000,
+      "write_records_per_second": 700.1,
+      "dashboard_read_median_ms": 6.49,
+      "dashboard_read_p95_ms": 8.315,
+      "dashboard_read_max_ms": 110.796,
+      "hai_feed_500_ms": 5.317,
+      "python_peak_memory_mib": 0.49
+    }
+  ],
+  "observed_range": {
+    "write_records_per_second": [456.1, 867.4],
+    "dashboard_read_median_ms": [6.436, 6.695],
+    "dashboard_read_p95_ms": [8.315, 9.884],
+    "dashboard_read_max_ms": [39.844, 118.181],
+    "hai_feed_500_ms": [4.739, 5.317],
+    "python_peak_memory_mib": [0.49, 0.49]
+  },
+  "limitations": [
+    "Synthetic serial workload on one Windows 11 development host; not a production capacity guarantee.",
+    "Maximum dashboard latency had large outliers despite stable median and p95; repeat under controlled host load before attributing the tail to application code.",
+    "No concurrent load, cold-cache qualification, Hetzner deployment, Google API latency, or HAI runtime was measured.",
+    "Python tracemalloc excludes native SQLite allocation and process working set."
+  ]
+}
