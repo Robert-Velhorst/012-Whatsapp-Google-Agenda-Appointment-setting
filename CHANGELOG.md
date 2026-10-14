@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Resolve relative `.env`, SQLite, and Google credential/token paths from the executable folder in standalone builds, independent of shortcut working directory.
 - Store signed WhatsApp Cloud API delivery-status callbacks idempotently and show the latest provider-reported status; receipts are included in contact export/deletion and retention.
 
 ## 1.0.0 - 2026-08-09

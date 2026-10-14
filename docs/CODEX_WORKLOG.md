@@ -1,5 +1,11 @@
 # Codex worklog
 
+## 2026-10-14 - Stabilize standalone paths for personal WhatsApp setup
+
+- The personal WhatsApp workflow already provides local paste-and-review, Google availability, a manually shared booking link, consented slot choice, and a manual confirmation draft. It does not read a personal inbox or send personal messages.
+- Found that the source launcher sets the working directory, but a packaged executable launched from a shortcut could otherwise search for `.env` and relative database/Google paths under the shortcut's unrelated working folder. Runtime configuration now anchors these paths to the source/package root and preserves explicit absolute paths.
+- Added frozen-root, relative/absolute-path, and explicit `.env`-location regression tests. Full local suite: 160 passed with warnings treated as errors; compileall and `pip check` passed. Pushed as `20f29cf`; GitHub CI and Windows packaging are queued. No Google OAuth, personal WhatsApp, or public ngrok action was performed.
+
 ## 2026-10-14 - Close same-origin protocol-relative redirect bypass
 
 - Confirmed a same-host absolute `next` URL could carry a `//attacker.example` path and become an external protocol-relative redirect. The same shared helper protected login and action `Referer` redirects.
