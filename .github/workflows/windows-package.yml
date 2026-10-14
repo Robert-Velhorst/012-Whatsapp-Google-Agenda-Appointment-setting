@@ -27,6 +27,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.15"
+          freethreaded: true
           cache: pip
       - run: python -m venv .venv
       - run: .\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-build.txt pip-audit==2.10.1
