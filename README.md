@@ -1,10 +1,12 @@
 # Agenda Relay
 
-Agenda Relay turns consented WhatsApp Cloud API conversations into reviewed time proposals, confirmed slots, Google Calendar events, reminders, and an auditable operator workflow.
+Agenda Relay turns scheduling requests into reviewed time proposals, confirmed slots, Google Calendar events, reminders, and an auditable operator workflow. It supports consented WhatsApp Cloud API messages and an assisted workflow for personal WhatsApp.
 
-It uses official provider APIs only. There is no WhatsApp Web scraping, browser automation, fake provider success, or automatic calendar write before a contact confirms a specific slot. The default mode requires operator approval before both sending a proposal and creating a calendar event.
+The Business integration uses official provider APIs only. Personal mode opens WhatsApp with a prefilled draft for you to review and send. There is no WhatsApp Web scraping, inbox access, fake provider success, or automatic calendar write before a contact confirms a specific slot. The default mode requires operator approval before both Business API proposal sending and calendar event creation.
 
 ## Working critical path
+
+For WhatsApp Business Cloud API:
 
 1. Meta delivers a signed WhatsApp text webhook.
 2. Agenda Relay verifies the HMAC signature, deduplicates the message, encrypts its body at rest, and derives scheduling intent from the sender's recent context.
@@ -14,6 +16,8 @@ It uses official provider APIs only. There is no WhatsApp Web scraping, browser 
 6. The operator reviews the confirmed slot and creates an idempotent Google Calendar event, or explicitly enables `AUTO_BOOK_CONFIRMED`.
 7. Agenda Relay sends the confirmation and queues a reminder. Outside WhatsApp's permitted conversation window, reminders require an approved template; otherwise they remain visibly `manual_required`.
 8. Every state change and external action is recorded in the audit trail.
+
+For personal WhatsApp, open **Personal WhatsApp**, paste only the relevant message, review the locally detected request and suggested times, then open WhatsApp with a prepared draft. You choose the recipient and send it yourself. After confirming that you shared it, activate its private booking link. The recipient selects a time and consents on that link; Google Calendar booking then follows the configured approval or auto-book setting. Personal-account confirmations and reminders remain manual. The app does not read your personal inbox or send personal WhatsApp messages.
 
 ## Local installation (Windows PowerShell)
 
@@ -27,12 +31,12 @@ Open PowerShell in the extracted folder and initialize a new installation:
 
 Choose and repeat an operator password of at least 12 characters. Setup generates independent application secrets, stores a password hash, and writes `.env`. It refuses to overwrite an existing `.env`, because replacing its encryption key would make stored data unreadable. If `.env` already exists, keep its keys and finish configuration in that file.
 
-Add the Meta and Google settings described below, then run `AgendaRelay.exe` from that same folder. Open [http://127.0.0.1:5000/login](http://127.0.0.1:5000/login) and sign in with your chosen password. The executable runs the web application and reminder worker together. Keep the computer awake and the process running to receive messages.
+For the assisted personal flow, configure Google Calendar and a reachable HTTPS `PUBLIC_BASE_URL` for booking links; Meta settings are not required. Configure Meta as well only if you want the separate WhatsApp Business webhook/API path. Then run `AgendaRelay.exe` from that same folder. Open [http://127.0.0.1:5000/login](http://127.0.0.1:5000/login) and sign in with your chosen password. The executable runs the web application and reminder worker together. Keep the computer awake and the process running while using the app.
 
-For source installation, Python 3.11–3.13 is supported; Python 3.13 is used by the package workflow:
+For source installation, Python 3.11–3.15 is supported; Python 3.15 is used by CI and packaging:
 
 ```powershell
-py -3.13 -m venv .venv
+py -3.15 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.lock
 python -m scheduler.cli setup
@@ -44,7 +48,7 @@ The source setup command performs the same password and key initialization as th
 
 The included Windows launchers install, start, stop, package, and smoke-test the application. See [Windows 11 and ngrok](docs/WINDOWS_AND_NGROK.md).
 
-Development mode is visibly labelled and may start with incomplete provider settings. `APP_ENV=production` fails closed unless HTTPS, strong secrets, encryption, WhatsApp credentials, and Google client credentials are configured.
+Development mode is visibly labelled and may start with incomplete provider settings. `APP_ENV=production` fails closed unless HTTPS, strong secrets, encryption, and Google client credentials are configured. Meta credentials are required only when `WHATSAPP_CLOUD_API_ENABLED=true`; the assisted personal workflow does not require them.
 
 ## Provider onboarding
 
@@ -58,13 +62,15 @@ Development mode is visibly labelled and may start with incomplete provider sett
 
 The OAuth token is encrypted with `DATA_ENCRYPTION_KEY`. The app requests only FreeBusy and Calendar Events scopes.
 
-### WhatsApp Cloud API
+### WhatsApp Cloud API (optional)
 
 1. Create or use an approved Meta WhatsApp Business app and phone-number ID.
 2. Set the HTTPS callback to `${PUBLIC_BASE_URL}/webhook/whatsapp`.
 3. Use `WHATSAPP_VERIFY_TOKEN` for the verification handshake and subscribe to the `messages` field.
 4. Set `WHATSAPP_APP_SECRET`, `WHATSAPP_ACCESS_TOKEN`, and `WHATSAPP_PHONE_NUMBER_ID`.
 5. If reminders may occur outside the customer-service window, obtain an approved utility template and set `WHATSAPP_REMINDER_TEMPLATE`.
+
+Set `WHATSAPP_CLOUD_API_ENABLED=true` to enable the signed webhook and Business API path. Leave it `false` for personal WhatsApp assisted mode. With the Business API disabled, webhook endpoints reject requests and the app cannot send Business API messages. Existing installations that do not yet define the flag infer the setting from their existing Meta credentials; set it explicitly when changing modes.
 
 ## Commands
 
@@ -102,7 +108,7 @@ The optional HAI integration is a local-network-only, read-only JSON feed contai
 
 ## Performance
 
-The persistent SQLite/WAL path is measured at 601.5 request records per second with 4.792 ms median dashboard reads over 1,000 records on the development host. Results and the repeatable benchmark are documented in [performance and resource profile](docs/PERFORMANCE.md).
+The current 1,000-record Windows benchmark reports 874–1,171 writes/second, 0.554–1.113 ms median dashboard reads, and 4.551–7.680 ms for a 500-item HAI page across three repeated runs. These are local observations, not production guarantees; the benchmark separates performance timing from Python allocation tracing. See [performance and resource profile](docs/PERFORMANCE.md).
 
 ## Administrative API
 
@@ -122,13 +128,13 @@ Start with [critical path](docs/CRITICAL_PATH.md), [security](docs/SECURITY.md),
 
 ## Current external gates
 
-Real-provider verification cannot be completed without the operator's Meta business/phone approval, WhatsApp access token, public HTTPS callback, Google OAuth client, consented Google account, and approved reminder template where required. Local tests use provider fakes that are confined to `tests/`; they are never selected by production configuration.
+For the optional Business API path, real-provider verification requires Meta business/phone approval, WhatsApp credentials, public HTTPS webhook reachability, Google OAuth, a consented Google account, and an approved reminder template where required. Personal assisted mode does not require Meta; it still requires real Google Calendar OAuth and a publicly reachable HTTPS booking URL (ngrok in the documented Windows setup). Local tests use provider fakes confined to `tests/`; they are never selected by production configuration.
 
 ## Who this tool is for
 
-Agenda Relay is a scheduling desk for one operator using one configured Google Calendar and a WhatsApp Business integration. A contact can ask for an appointment in WhatsApp, receive suggested times, and choose a time in the conversation. They do not need to enter a name or email into a separate booking form. The optional private link provides another way to choose a proposed time.
+Agenda Relay is a scheduling desk for one operator using one configured Google Calendar. It can process verified incoming WhatsApp Business webhooks, or assist an operator using personal WhatsApp by analyzing a message they paste, checking availability, and preparing a response with a booking link. A contact can choose a proposed time on that private link without entering a name or email.
 
-The operator connects the accounts once, sets business hours and meeting duration, and reviews proposals and bookings by default. Automatic sending and booking are separate opt-in settings. The application does not read an arbitrary personal WhatsApp inbox: it processes incoming text webhooks delivered to the configured Meta integration. It does not import old chat exports, voice notes, images, or group history.
+The operator sets business hours and meeting duration and can review proposals and bookings by default. Automatic Business API sending and calendar booking are separate opt-in settings. The personal workflow is assisted, not inbox automation: the operator supplies the relevant text, the app processes it locally using deterministic English/Dutch rules, and the operator manually sends the prepared draft. Pasted text is not retained or sent to an AI or WhatsApp API; the structured request and proposal are stored in the local workflow database so the booking link can work. Do not paste unrelated or sensitive conversation content. Personal messages, confirmations, and reminders are never sent by the Business API. The app does not import chat exports, voice notes, images, or group history. WhatsApp's newer opt-in Agent Platform is separate; WhatsApp says an agent cannot access the user's other chats, and this repository does not implement that API ([WhatsApp Help Center](https://faq.whatsapp.com/1050934623978152)).
 
 ## Architecture and developer guide
 
@@ -137,7 +143,7 @@ The frontend is server-rendered Flask/Jinja with local CSS and JavaScript assets
 | Source | Responsibility |
 |---|---|
 | `scheduler/app.py` | Browser pages, authentication, CSRF, webhook and operator APIs |
-| `scheduler/service.py` | Message analysis, proposals, confirmation, calendar booking, reminders and recovery |
+| `scheduler/service.py` | Message analysis, assisted personal proposals, confirmation, calendar booking, reminders and recovery |
 | `scheduler/intent.py` | Local English/Dutch rules and the replaceable `IntentProvider` interface |
 | `scheduler/calendar.py` | Google OAuth, FreeBusy, event creation and cancellation |
 | `scheduler/whatsapp.py` | Meta signatures, replies, templates and ambiguous-delivery errors |
@@ -147,7 +153,7 @@ The frontend is server-rendered Flask/Jinja with local CSS and JavaScript assets
 | `scheduler/setup.py` | First-run password and security-key initialization |
 | `scheduler/cli.py` | Operator commands |
 | `scheduler/standalone.py` | Packaged server with embedded worker |
-| `scheduler/templates/`, `scheduler/static/` | Operator and booking interface |
+| `scheduler/templates/`, `scheduler/static/` | Operator, assisted personal WhatsApp, and public booking interfaces |
 | `tests/` | Isolated regression and workflow tests with test-only provider adapters |
 | `windows/` | Source installation, start/stop, ngrok and package scripts |
 
@@ -190,7 +196,7 @@ Start from [.env.example](.env.example). Set values locally; do not commit `.env
 | `MAX_OUTBOUND_PER_CONTACT_PER_HOUR` | Atomic per-contact send-attempt allowance; default 10 |
 | `HAI_CONNECTOR_ENABLED` | Enables the metadata feed; default false |
 | `HAI_ALLOWED_NETWORKS` | Allowed client CIDRs; defaults to IPv4/IPv6 loopback |
-| `HAI_FEED_PAGE_SIZE` | Feed page size, 1–500; default 100 |
+| `HAI_FEED_PAGE_SIZE` | Recent HAI snapshot size, 1–500; default 100 |
 | `HAI_PROJECT_KEY` | HAI project mapping label |
 | `NGROK_DOMAIN` | Assigned hostname for the guarded public tunnel |
 | `NGROK_CONFIG_FILE` | Optional ngrok authentication-config path |
@@ -209,19 +215,19 @@ Sign in, inspect Settings/readiness, then review the scheduling queue. Open a co
 
 `GET /api/readiness` returns 503 while providers are incomplete or automation is paused. `GET /api/operator/readiness` provides details under operator authentication. `GET /api/requests/<id>`, `/api/audit` and `/api/export/requests.csv` support inspection/export. Contact privacy export/deletion use `/api/contacts/<id>/export` and `DELETE /api/contacts/<id>`. Browser mutations require a CSRF token; authenticated API clients may use the bearer credential.
 
-Pause from the dashboard before investigating an incident. Signed incoming messages continue to be stored while paused, but are not automatically replayed on resume. The worker still performs stale-claim recovery and proposal expiry while paused; reminder sending and retention purging wait until resumed.
+Pause from the dashboard before investigating an incident. Signed incoming messages continue to be stored while paused, but are not automatically replayed on resume. The worker still performs stale-claim recovery, proposal expiry, and configured data-retention purging while paused; only outbound reminder sending waits until automation resumes.
 
-If delivery times out, inspect Meta before resending. Stale claims older than 15 minutes move into manual review. The software has no general manual-resolution UI for these ambiguous states. Do not change database status to force a retry without reconciling provider state.
+If delivery times out, inspect Meta before resending. Stale claims older than 15 minutes move into manual review. The scheduling desk has a delivery-reconciliation action for ambiguous Business API proposals: after checking provider state, the operator can record verified delivery or non-delivery. The action never contacts WhatsApp; a verified non-delivery only enables a separate explicit retry. Other ambiguous jobs still require manual reconciliation outside the UI. Do not change database status directly to force a retry.
 
-For backups use `python -m scheduler.cli backup --output C:\safe\agenda.sqlite3`. Store the encryption key and OAuth configuration securely alongside the backup policy: a database copy alone cannot recover encrypted content. Stop all web/worker processes before restoring, use the explicit `restore ... --confirm RESTORE` command, then restart. Database restoration does not undo provider events or sent messages. Support bundles omit conversation bodies and credentials; inspect diagnostic output before sharing.
+For backups use `python -m scheduler.cli backup --output C:\safe\agenda.sqlite3`. Backups are made with SQLite's online backup API, validated, and atomically published; the output must not be the live database file. Store the encryption key and OAuth configuration securely alongside the backup policy: a database copy alone cannot recover encrypted content. Stop all web/worker processes before restoring, use the explicit `restore ... --confirm RESTORE` command, then restart. Restore validates both SQLite integrity and the app migration schema, stages the replacement, and writes a timestamped `.pre-restore-*` safety backup of the current database. It fails closed if a non-empty WAL remains active. Database restoration does not undo provider events or sent messages. Support bundles omit conversation bodies and credentials; inspect diagnostic output before sharing.
 
 ## Public access and HAI operation
 
-ngrok forwards public HTTPS requests to the application on your Windows computer. It does not move the application or database into hosted cloud infrastructure. The computer, network connection, web process, worker and tunnel must remain available. Match `PUBLIC_BASE_URL` to `https://<NGROK_DOMAIN>` and use the dedicated `windows/Start-Ngrok.ps1` script after production configuration and local readiness pass. The script refuses development exposure and verifies the assigned URL. Resolve any existing endpoint conflict without pooling traffic with another application.
+ngrok forwards public HTTPS requests to the application on your Windows computer. It does not move the application or database into hosted cloud infrastructure. The computer, network connection, web process, worker and tunnel must remain available. Match `PUBLIC_BASE_URL` to `https://<NGROK_DOMAIN>` and use the dedicated `windows/Start-Ngrok.ps1` script after production configuration is valid. The script refuses development exposure, checks protected public-ingress readiness locally, and verifies the assigned URL. Resolve any existing endpoint conflict without pooling traffic with another application.
 
-Google OAuth bootstrap and production HTTPS/session configuration need an operator-controlled deployment sequence: the launcher requires Google readiness before exposing the app, while Google connection needs the registered callback to be reachable. The current scripts do not automate that initial consent/ingress setup. See [Windows/ngrok](docs/WINDOWS_AND_NGROK.md) and [operator runbook](docs/OPERATOR_RUNBOOK.md).
+Google OAuth bootstrap requires the public callback to be reachable before Calendar can report connected. The ngrok launcher checks protected production-ingress readiness: valid production configuration and signed WhatsApp webhook credentials, with automation paused if Google is not connected. Keep automation paused during bootstrap, complete Google consent, run the real-provider acceptance checks, and only then resume automation. See [Windows/ngrok](docs/WINDOWS_AND_NGROK.md) and [operator runbook](docs/OPERATOR_RUNBOOK.md).
 
-For HAI, enable the feed and configure an owner-scoped `json-feed` source using `http://127.0.0.1:5000/api/integrations/hai/feed`. The envelope is `{ "items": [], "nextCursor": "..." }`; send the returned cursor with the next request. The feed contains request state, duration, timezone and timestamps, not contact names, messages, tokens or calendar URLs. Network allowlisting protects this endpoint; it has no separate bearer authentication. HAI must enforce source ownership and access control. Docker-to-host networking requires specific observed gateway allowlisting, described in [HAI integration](docs/HAI_INTEGRATION.md).
+For HAI, enable the feed and configure an owner-scoped `json-feed` source using `http://127.0.0.1:5000/api/integrations/hai/feed`. The envelope and required item fields match HAI's generic-feed parser. HAI currently performs a plain GET, so the endpoint returns the most recently updated bounded snapshot (100 items by default, up to 500), not a paged historical export; see [HAI integration](docs/HAI_INTEGRATION.md). The feed contains request state, duration, timezone and timestamps, not contact names, messages, tokens or calendar URLs. Network allowlisting protects this endpoint; it has no separate bearer authentication. HAI must enforce source ownership and access control. Docker-to-host networking requires specific observed gateway allowlisting.
 
 ## Limits and release evidence
 

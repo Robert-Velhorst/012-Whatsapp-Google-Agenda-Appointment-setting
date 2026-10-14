@@ -87,6 +87,7 @@ def app_bundle(tmp_path):
         # default scrypt hash for real credentials.
         "admin_password_hash": generate_password_hash("correct horse battery staple", method="pbkdf2:sha256:1000"),
         "data_encryption_key": "test-encryption-key",
+        "whatsapp_cloud_api_enabled": True,
         "whatsapp_verify_token": "verify-me",
         "whatsapp_app_secret": "test-app-secret",
         "whatsapp_access_token": "test-token",

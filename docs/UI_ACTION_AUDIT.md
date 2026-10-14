@@ -6,7 +6,11 @@
 | Sign out | `POST /logout` | Session + CSRF | Clears session | Rejects invalid CSRF |
 | Pause/resume | `POST /actions/automation/toggle` | Session + CSRF | Writes persistent emergency state | Banner/status changes; inbound remains record-only |
 | Search/filter | `GET /?view=scheduling` | Session | Workspace-scoped SQL search/status/pagination | Empty result explains next action |
-| Review proposal | `POST /actions/proposals/<id>/send` | Session + CSRF | Official WhatsApp Cloud API text send | Failure stored as `send_failed`; no fake sent state |
+| Review proposal | `POST /actions/proposals/<id>/send` | Session + CSRF | Official WhatsApp Cloud API text send | Definite non-delivery is `send_failed`; ambiguous delivery is `manual_required`, never blindly retried |
+| Reconcile ambiguous delivery | `POST /actions/proposals/<id>/reconcile` | Session + CSRF; workspace-scoped proposal; outcome allowlisted | Atomically records operator-verified delivery/non-delivery and audit event; never calls WhatsApp | Delivered moves proposal to awaiting contact confirmation; verified non-delivery only enables a separate explicit retry; stale or personal proposals are rejected |
+| Analyze pasted personal message | `POST /actions/assisted/analyze` | Session + CSRF | Transient local intent analysis and Calendar FreeBusy query; persists structured proposal only | Ambiguous/non-scheduling text and disconnected Calendar produce a truthful error |
+| Open WhatsApp with draft | `https://wa.me/?text=...` | Authenticated operator page | Opens WhatsApp with prefilled text; operator still chooses recipient and sends | Not a delivery signal; no send API is called |
+| I sent this manually | `POST /actions/assisted/<id>/shared` | Session + CSRF | Activates the private booking link after operator confirmation | Records manual confirmation; provider delivery remains unverified |
 | Book confirmed slot | `POST /actions/appointments/<id>/book` | Session + CSRF | Idempotent Google Calendar event and confirmation | Event success/confirmation failure split truthfully |
 | Open calendar | External event link | Session page | Opens provider-returned `htmlLink` | Shown only after real event response |
 | Cancel appointment | `POST /actions/appointments/<id>/cancel` | Session + CSRF | Deletes Google event and cancels jobs | Error retained; repeated cancellation does not duplicate |
@@ -15,6 +19,6 @@
 | Export CSV | `GET /api/export/requests.csv` | Session/API | Exports current workspace rows | No cross-workspace rows |
 | Public slot choice | `POST /book/<token>` | Private token + consent | Creates one pending appointment | Closed token state shown; no event write yet |
 
-Navigation links render real server views: Overview/Scheduling, Contacts, Audit, Settings/readiness, and Help. No visible button is a placeholder or no-op.
+Navigation links render real server views: Overview/Scheduling, Personal WhatsApp, Contacts, Audit, Settings/readiness, and Help. No visible button is a placeholder or no-op.
 
-Remaining UI limitations: destructive contact deletion is API-only; team/role management and provider credential entry are deliberately not exposed in the browser because they require a stronger identity/secret-management design.
+Remaining UI limitations: ambiguous reminder jobs and other provider states do not yet have a general reconciliation screen; destructive contact deletion is API-only; team/role management and provider credential entry are deliberately not exposed in the browser because they require a stronger identity/secret-management design.

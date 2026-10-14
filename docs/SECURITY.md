@@ -46,6 +46,7 @@ Every domain table carries `workspace_id`; store queries require it. The shipped
 
 - Contact JSON export: `GET /api/contacts/<id>/export`.
 - Contact deletion: `DELETE /api/contacts/<id>` removes messages, requests, proposals, appointments, and queued jobs, then retains a minimal deletion audit event.
+- Personal WhatsApp assisted mode analyzes operator-pasted text in-process and does not store it in the message table or transmit it to Meta/AI. The structured request and booking proposal are retained to provide the booking-link workflow; avoid pasting unrelated or sensitive chat content.
 - Scheduled retention purge removes expired message bodies and rate events.
 - Booking page requires explicit scheduling consent; contact consent can be revoked in the dashboard.
 
@@ -56,3 +57,4 @@ Every domain table carries `workspace_id`; store queries require it. The shipped
 - SQLite-backed browser login throttling is atomic on one host but not globally distributed; place a rate-limiting reverse proxy in front of horizontally scaled public deployments.
 - No organization SSO, hardware-backed keys, DLP, SIEM export, or independently audited cryptography deployment exists.
 - Provider delivery acceptance does not prove WhatsApp delivery/read status; current UI reports only API acceptance.
+- The personal flow is manual-only: the operator opens WhatsApp, chooses the recipient, sends the draft, then separately confirms sharing to activate the link. The app cannot verify that action. Personal-flow proposals, confirmations, and reminders are blocked from Business API delivery.

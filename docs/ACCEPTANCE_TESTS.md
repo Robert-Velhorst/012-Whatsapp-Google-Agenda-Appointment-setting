@@ -21,6 +21,8 @@
 | Concurrency/recovery | `tests/test_provider_safety.py` | Atomic rate/send/confirmation claims; ambiguous delivery and stale work require manual review |
 | Calendar/token safety | `tests/test_calendar_safety.py` | Missing event cancellation is idempotent; OAuth token replacement is atomic and encrypted |
 | HAI | `tests/test_hai_integration.py` | Disabled by default; local/cursor-bounded/PII-minimized; external and invalid cursor rejected |
+| Personal WhatsApp assisted flow | `tests/test_assisted_personal.py`, `test_personal_whatsapp_assisted_screen_is_in_operator_navigation` | Pasted text is transient; explicit manual-share activation; no Business API send, personal confirmation, or reminder |
+| Personal-only production configuration | `test_production_personal_assisted_mode_does_not_require_business_api` | Strong production configuration and Google client work without Meta credentials; WhatsApp webhook remains disabled |
 
 ## Runtime/package evidence
 
@@ -35,6 +37,8 @@
 
 These steps must be completed by an authorized operator and cannot be simulated as production proof:
 
+For Personal WhatsApp assisted mode, configure Google OAuth and a reachable HTTPS booking URL but leave `WHATSAPP_CLOUD_API_ENABLED=false`. Paste a consented test message, inspect the generated times and draft, open WhatsApp yourself, manually send it to the test recipient, then mark it manually shared. Have the recipient select a time and consent on the booking page. Verify the selected slot is rechecked, the Calendar event follows the configured approval setting, the operator sees a manual confirmation draft, and no personal message/reminder is sent through the Business API. Confirm the link works from outside the operator's computer. This requires an authorized test account; no such live check has been performed here.
+
 1. Deploy behind public HTTPS and run `doctor`; expected: ready, no production errors.
 2. Complete Google OAuth with the intended calendar; expected: provider strip says Connected.
 3. Register the Meta callback and send a consented scheduling message; expected: exactly one request appears.
@@ -46,4 +50,4 @@ These steps must be completed by an authorized operator and cannot be simulated 
 9. Pause automation and repeat inbound; expected: message recorded, no outbound/calendar action.
 10. Export and delete the test contact; expected: personal records removed and minimal deletion audit remains.
 
-Actual result in this workspace: 37 automated tests and the local runtime/package matrix passed; the real-provider matrix remains blocked by credentials, approvals, an available assigned ngrok endpoint, and authorized account actions.
+For the personal assisted flow, local provider-fake tests verify request analysis, privacy boundaries, the booking-link lifecycle, and manual-only WhatsApp safeguards. Real Google OAuth, public ngrok reachability, and an actual appointment remain operator acceptance steps; automated tests do not prove provider access or delivery.

@@ -1,7 +1,9 @@
+# Production deployment target
 
+Hetzner is the target for production deployment. New production deployments must be prepared for Hetzner. Do not use Vercel or ngrok for production.
 
-# Deployment target
+Before deploying or retiring any existing service, verify the running application, database and persistent data, secrets, security controls, backups and restore procedure, rollback path, DNS, TLS, scheduled work, and external integrations. Do not claim migration or cutover until those checks pass.
 
-Hetzner is the target for production deployment. New production deployments must be prepared for Hetzner. Existing Vercel or ngrok production use must be inventoried and migrated to Hetzner before being retired; do not claim a migration or cutover until the running service, data, secrets, security controls, backups, and rollback path have been verified.
+Document the Hetzner architecture, required infrastructure, deployment steps, data and database migration, DNS/TLS, secrets, monitoring, backups, and rollback in the project deployment guide before cutover. Keep credentials and private operational data out of this file and source control.
 
-Preserve local development and test tooling when it is still needed, but do not use Vercel or ngrok for new production deployments. Document the Hetzner architecture, required infrastructure, deployment steps, data and database migration, DNS/TLS, secrets, monitoring, backups, and rollback in the project deployment guide before cutover. Keep credentials and private data out of this file.
+Local development and test tooling may remain when needed, but it must not be presented as production hosting.

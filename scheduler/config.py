@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import os
 import ipaddress
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -27,6 +27,7 @@ class Settings:
     admin_api_token: str
     admin_password_hash: str
     data_encryption_key: str
+    whatsapp_cloud_api_enabled: bool
     whatsapp_verify_token: str
     whatsapp_app_secret: str
     whatsapp_access_token: str
@@ -54,7 +55,15 @@ class Settings:
     hai_project_key: str
 
     @classmethod
-    def from_env(cls, overrides: dict | None = None) -> "Settings":
+    def from_env(cls, overrides: dict | None = None) -> Settings:
+        whatsapp_flag = os.getenv("WHATSAPP_CLOUD_API_ENABLED")
+        inferred_whatsapp_enabled = any(os.getenv(key) for key in (
+            "WHATSAPP_VERIFY_TOKEN", "WHATSAPP_APP_SECRET", "WHATSAPP_ACCESS_TOKEN", "WHATSAPP_PHONE_NUMBER_ID",
+        ))
+        if overrides:
+            inferred_whatsapp_enabled = inferred_whatsapp_enabled or any(overrides.get(key) for key in (
+                "whatsapp_verify_token", "whatsapp_app_secret", "whatsapp_access_token", "whatsapp_phone_number_id",
+            ))
         values = {
             "app_env": os.getenv("APP_ENV", "development").lower(),
             "public_base_url": os.getenv("PUBLIC_BASE_URL", "http://127.0.0.1:5000").rstrip("/"),
@@ -66,6 +75,7 @@ class Settings:
             "admin_api_token": os.getenv("ADMIN_API_TOKEN", "development-admin-token"),
             "admin_password_hash": os.getenv("ADMIN_PASSWORD_HASH", ""),
             "data_encryption_key": os.getenv("DATA_ENCRYPTION_KEY", ""),
+            "whatsapp_cloud_api_enabled": _bool("WHATSAPP_CLOUD_API_ENABLED") if whatsapp_flag is not None else inferred_whatsapp_enabled,
             "whatsapp_verify_token": os.getenv("WHATSAPP_VERIFY_TOKEN", ""),
             "whatsapp_app_secret": os.getenv("WHATSAPP_APP_SECRET", ""),
             "whatsapp_access_token": os.getenv("WHATSAPP_ACCESS_TOKEN", ""),
@@ -130,18 +140,24 @@ class Settings:
         parsed = urlparse(self.public_base_url)
         if not parsed.scheme or not parsed.netloc:
             errors.append("PUBLIC_BASE_URL must be an absolute URL")
-        provider_missing = []
+        whatsapp_missing = []
         for name, value in (
             ("WHATSAPP_VERIFY_TOKEN", self.whatsapp_verify_token),
             ("WHATSAPP_APP_SECRET", self.whatsapp_app_secret),
             ("WHATSAPP_ACCESS_TOKEN", self.whatsapp_access_token),
             ("WHATSAPP_PHONE_NUMBER_ID", self.whatsapp_phone_number_id),
-            ("GOOGLE_CLIENT_SECRETS_FILE", self.google_client_secrets_file),
         ):
             if not value:
-                provider_missing.append(name)
+                whatsapp_missing.append(name)
+        provider_missing = [] if self.google_client_secrets_file else ["GOOGLE_CLIENT_SECRETS_FILE"]
+        if self.whatsapp_cloud_api_enabled:
+            provider_missing.extend(whatsapp_missing)
         if provider_missing:
             warnings.append("Provider configuration incomplete: " + ", ".join(provider_missing))
+        elif whatsapp_missing and not self.whatsapp_cloud_api_enabled:
+            warnings.append("WhatsApp Cloud API is disabled; personal WhatsApp assisted mode remains available")
+        if self.auto_send_suggestions and not self.whatsapp_cloud_api_enabled:
+            errors.append("AUTO_SEND_SUGGESTIONS requires WHATSAPP_CLOUD_API_ENABLED=true")
         if not self.admin_password_hash:
             warnings.append("Browser login is disabled until ADMIN_PASSWORD_HASH is configured")
         if not self.data_encryption_key:
@@ -165,8 +181,10 @@ class Settings:
                 errors.append("DATA_ENCRYPTION_KEY is required in production")
             elif len(self.data_encryption_key) < 64:
                 errors.append("DATA_ENCRYPTION_KEY must be at least 64 characters; generate it with the setup command")
-            if provider_missing:
-                errors.append("All WhatsApp and Google provider settings are required in production")
+            if not self.google_client_secrets_file:
+                errors.append("GOOGLE_CLIENT_SECRETS_FILE is required in production")
+            if self.whatsapp_cloud_api_enabled and whatsapp_missing:
+                errors.append("All WhatsApp Cloud API credentials are required when WHATSAPP_CLOUD_API_ENABLED=true")
             if self.google_client_secrets_file and not Path(self.google_client_secrets_file).is_file():
                 errors.append("GOOGLE_CLIENT_SECRETS_FILE does not exist")
         return errors, warnings

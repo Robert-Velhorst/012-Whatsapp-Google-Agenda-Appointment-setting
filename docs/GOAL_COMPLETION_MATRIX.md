@@ -1,6 +1,6 @@
 # Giant prompt completion matrix
 
-Status is evidence-based as of 2026-08-09. `Implemented` means locally wired and tested. `Partial` identifies a real remaining gap. `Blocked` is reserved for provider/account/deployment action unavailable in this workspace.
+Status is evidence-based as of 2026-10-13. `Implemented` means locally wired and tested. `Partial` identifies a real remaining gap. `Blocked` is reserved for provider/account/deployment action unavailable in this workspace.
 
 | Phase | Requirement | Status | Evidence / gap |
 |---:|---|---|---|
@@ -36,10 +36,10 @@ Status is evidence-based as of 2026-08-09. `Implemented` means locally wired and
 | 029 | Web security | Implemented | CSP, HSTS production, no-store, anti-frame/sniff/referrer |
 | 030 | Secret management/rotation | Partial | Env/secret mounts and docs; no external vault integration |
 | 031 | One-command local development | Implemented | README/Makefile/locked environment commands |
-| 032 | Docker/deployment | Partial | Hardened non-root image and Windows executable verified; no authorized live provider deployment |
+| 032 | Docker/deployment | Partial | Hardened non-root image and Windows executable verified; protected ngrok ingress now supports paused Google OAuth bootstrap; no authorized live provider deployment |
 | 033 | Migrations/rollback safety | Implemented | Forward ledger, backup/restore, pre-restore copy |
 | 034 | CLI/doctor | Implemented | Migrate, doctor, worker, backup, restore, bundle, hash commands |
-| 035 | Health/readiness | Implemented | Public minimal and protected detailed readiness |
+| 035 | Health/readiness | Implemented | Public minimal and protected detailed scheduling/ingress readiness |
 | 036 | Operator diagnostics | Implemented | Settings readiness, audit, doctor, redacted support bundle |
 | 037 | Demo mode labelling | Implemented | Development/test mode visibly labelled and guarded |
 | 038 | Fake provider lab | Implemented | Test-only fake Calendar/WhatsApp fixtures |
@@ -108,7 +108,8 @@ Status is evidence-based as of 2026-08-09. `Implemented` means locally wired and
 | 101 | Support bundle | Implemented | Redacted CLI bundle excludes PII/secrets |
 | 102 | Retention/archive policy | Implemented | Configured purge, backup policy, privacy docs |
 | 103 | Prototype-to-production | Partial | Guards/Docker/ops complete; real deployment/security validation blocked |
-| 104 | Emergency controls | Implemented | Persistent pause and inbound record-only behavior |
+
+| 104 | Emergency controls | Implemented | Persistent pause and inbound record-only behavior; resume is blocked until required integrations are ready |
 | 105 | First-run onboarding | Partial | Login/readiness/help guide; no multi-step credential wizard |
 | 106 | Roles/team permissions | Partial | Single operator only; no teams/RBAC |
 | 107 | Quality/confidence | Implemented | Deterministic confidence stored and displayed |
@@ -121,6 +122,22 @@ Status is evidence-based as of 2026-08-09. `Implemented` means locally wired and
 | 114 | Maintenance/refactoring | Implemented | Layered modules and debt register replace flat prototype |
 | 115 | Human-operator readiness | Partial | Usable dashboard/runbook; authorized real-provider rehearsal blocked |
 
+## Personal WhatsApp assisted-flow update (2026-10-13)
+
+The operator can paste a relevant message into the authenticated **Personal WhatsApp** screen. Local English/Dutch rules detect a scheduling request, Google FreeBusy returns candidate times, and the app prepares a private booking link and a WhatsApp draft. The pasted text is not persisted or sent to an AI or WhatsApp API. The operator manually opens WhatsApp, chooses the recipient, sends the message, and confirms sharing before the booking link becomes active. The recipient selects a time and grants consent; Calendar booking follows the configured approval setting. Personal confirmations and reminders remain manual, and Personal-flow records are blocked from Business API sending. Regression coverage is in `tests/test_assisted_personal.py` and `tests/test_security_privacy.py`.
+
+`WHATSAPP_CLOUD_API_ENABLED=false` supports a production personal-only setup without Meta credentials; Google OAuth, strong secrets, HTTPS `PUBLIC_BASE_URL`, and a reachable public booking link are still required. No live WhatsApp inbox, ngrok tunnel, Google account, or calendar was connected or exercised by this change. Full CI and hosted/provider acceptance are separate gates.
+
+## Targeted follow-up — 2026-10-13
+
+- Closed a Windows/ngrok OAuth bootstrap deadlock: the tunnel launcher now uses the protected `public_ingress` readiness contract. Google OAuth may be disconnected only while automation is paused; full production configuration and signed WhatsApp webhook settings must already validate.
+- Closed an unsafe resume path: the operator action cannot resume automation while configuration errors or provider disconnections remain.
+- Regression evidence: `tests/test_hai_integration.py` covers paused/unpaused OAuth bootstrap and authenticated readiness; `tests/test_security_privacy.py` covers the refused resume and visible error message. Full suite: 66 passed; dependency audit and consistency checks passed; PowerShell parser accepted `windows/Start-Ngrok.ps1`.
+- No ngrok tunnel or live provider action was run. Live exposure, Google consent, Meta callback, and the end-to-end provider acceptance matrix remain external gates.
+- The HAI feed was checked against the current `018-HAI` generic-feed parser. It now uses the supported `message` item type and `generic_json_feed` provider, a JSON object for metadata, and the `cursor` envelope field. HAI's HTTP reader is a plain GET today, so the feed supplies a bounded latest-updated snapshot by default; live HAI ingestion and complete historical backfill remain unverified.
+- Added a narrow, authenticated reconciliation action for ambiguous Business API proposal delivery. It records an operator's provider-verified outcome atomically with an audit event; verified delivery advances to awaiting contact confirmation, and verified non-delivery only enables a separate explicit retry. It never calls WhatsApp and does not reconcile other ambiguous job types. Regression tests cover CSRF rejection, transitions, and no-send behavior.
+- Current local verification: 102 tests passed; Ruff, compilation, and `git diff --check` passed. A local synthetic browser session verified the reconcile-delivered UI transition and audit entry. For commit `ec83cd0`, the Windows package workflow passed, including hosted tests and package smoke test. General CI remains queued; live HAI and provider acceptance remain unverified.
+
 ## Overall verdict
 
-The repository is a substantial, working single-operator implementation, not a disconnected mockup. The local critical path, desktop/mobile interface, Windows package, Docker runtime, HAI feed, security audit, and performance baseline are implemented and testable. It remains **Partial for live production operation** until authorized Meta/Google credentials and approvals, an assigned ngrok domain/account slot, and the real-provider acceptance matrix are completed.
+The repository is a substantial, working single-operator implementation, not a disconnected mockup. The local critical path, desktop/mobile interface, Windows package, Docker runtime, schema-compatible HAI feed, security audit, and performance baseline are implemented and testable. It remains **Partial for live production operation** until authorized Meta/Google credentials and approvals, an assigned ngrok domain/account slot, HAI runtime acceptance, and the real-provider acceptance matrix are completed.

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import hashlib
 import base64
+import hashlib
 import json
 import secrets
 import sqlite3
 import threading
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -18,7 +18,7 @@ from .migrations import migrate
 
 
 def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class Store:
@@ -190,7 +190,7 @@ class Store:
     def get_proposal(self, workspace_id: str, proposal_id: int) -> dict[str, Any] | None:
         with self.connect() as db:
             row = db.execute(
-                "SELECT p.*,r.title,r.duration_minutes,r.contact_id,r.timezone request_timezone,c.sender,c.display_name,c.email,c.language,c.consent_status,c.timezone contact_timezone "
+                "SELECT p.*,r.title,r.duration_minutes,r.contact_id,r.timezone request_timezone,r.requested_start,c.sender,c.display_name,c.email,c.language,c.consent_status,c.timezone contact_timezone "
                 "FROM proposals p JOIN scheduling_requests r ON r.id=p.request_id JOIN contacts c ON c.id=r.contact_id "
                 "WHERE p.workspace_id=? AND p.id=?",
                 (workspace_id, proposal_id),
@@ -201,7 +201,7 @@ class Store:
         token_hash = hashlib.sha256(token.encode()).hexdigest()
         with self.connect() as db:
             row = db.execute(
-                "SELECT p.*,r.title,r.duration_minutes,r.contact_id,r.timezone request_timezone,c.sender,c.display_name,c.email,c.language,c.consent_status,c.timezone contact_timezone "
+                "SELECT p.*,r.title,r.duration_minutes,r.contact_id,r.timezone request_timezone,r.requested_start,c.sender,c.display_name,c.email,c.language,c.consent_status,c.timezone contact_timezone "
                 "FROM proposals p JOIN scheduling_requests r ON r.id=p.request_id JOIN contacts c ON c.id=r.contact_id "
                 "WHERE p.booking_token_hash=?",
                 (token_hash,),
@@ -211,7 +211,7 @@ class Store:
     def latest_sent_proposal(self, workspace_id: str, sender: str, minimum_sent_at: str | None = None) -> dict[str, Any] | None:
         with self.connect() as db:
             row = db.execute(
-                "SELECT p.*,r.title,r.duration_minutes,r.contact_id,r.timezone request_timezone,c.sender,c.display_name,c.email,c.language,c.consent_status,c.timezone contact_timezone "
+                "SELECT p.*,r.title,r.duration_minutes,r.contact_id,r.timezone request_timezone,r.requested_start,c.sender,c.display_name,c.email,c.language,c.consent_status,c.timezone contact_timezone "
                 "FROM proposals p JOIN scheduling_requests r ON r.id=p.request_id JOIN contacts c ON c.id=r.contact_id "
                 "WHERE p.workspace_id=? AND c.sender=? AND p.status='sent' AND (? IS NULL OR COALESCE(p.sent_at,p.created_at)>=?) ORDER BY p.id DESC LIMIT 1",
                 (workspace_id, sender, minimum_sent_at, minimum_sent_at),
@@ -262,6 +262,34 @@ class Store:
             db.execute("UPDATE proposals SET status='sent',provider_message_id=?,sent_at=?,error_text=NULL WHERE id=?", (provider_message_id, utc_now().isoformat(), proposal_id))
         self.transition_request(workspace_id, int(row["request_id"]), "awaiting_confirmation", "operator", {"proposal_id": proposal_id})
 
+    def mark_assisted_proposal_shared(self, workspace_id: str, proposal_id: int, actor: str) -> None:
+        """Activate a booking link only after the operator confirms manual sharing."""
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT p.request_id,p.status,r.source_message_id FROM proposals p "
+                "JOIN scheduling_requests r ON r.id=p.request_id WHERE p.workspace_id=? AND p.id=?",
+                (workspace_id, proposal_id),
+            ).fetchone()
+            if not row or not str(row["source_message_id"]).startswith("assisted:"):
+                raise KeyError("Assisted personal proposal not found")
+            if row["status"] != "pending_approval":
+                raise ValueError("This assisted proposal is no longer awaiting manual sharing.")
+            cursor = db.execute(
+                "UPDATE proposals SET status='sent',provider_message_id=NULL,sent_at=?,error_text=NULL WHERE workspace_id=? AND id=? AND status='pending_approval'",
+                (now, workspace_id, proposal_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("This assisted proposal is no longer awaiting manual sharing.")
+        self.transition_request(
+            workspace_id, int(row["request_id"]), "awaiting_confirmation", actor,
+            {"proposal_id": proposal_id, "delivery": "operator_confirmed_manual_share"},
+        )
+        self.audit(
+            workspace_id, actor, "proposal.shared_manually", "proposal", proposal_id,
+            {"provider_delivery_verified": False, "channel": "personal_whatsapp"},
+        )
+
     def mark_proposal_failed(self, workspace_id: str, proposal_id: int, error: str) -> None:
         with self.connect() as db:
             db.execute("UPDATE proposals SET status='send_failed',error_text=? WHERE workspace_id=? AND id=? AND status='sending'", (error[:500], workspace_id, proposal_id))
@@ -274,6 +302,65 @@ class Store:
                 (error[:500], workspace_id, proposal_id),
             )
         self.audit(workspace_id, "scheduler", "proposal.manual_required", "proposal", proposal_id, {"error": error[:200]})
+
+    def reconcile_proposal_delivery(self, workspace_id: str, proposal_id: int, outcome: str, actor: str) -> None:
+        """Record an operator-verified outcome for an ambiguous Business API send."""
+        if outcome not in {"delivered", "not_delivered"}:
+            raise ValueError("Delivery outcome must be delivered or not_delivered")
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT p.status,p.request_id,r.status request_status,r.source_message_id "
+                "FROM proposals p JOIN scheduling_requests r ON r.id=p.request_id "
+                "WHERE p.workspace_id=? AND p.id=?",
+                (workspace_id, proposal_id),
+            ).fetchone()
+            if not row:
+                raise KeyError("Proposal not found")
+            if str(row["source_message_id"]).startswith("assisted:"):
+                raise ValueError("Personal WhatsApp delivery cannot be reconciled through the Business API")
+            if row["status"] != "manual_required":
+                raise ValueError("Proposal is not awaiting delivery reconciliation")
+            if row["request_status"] != "proposal_pending":
+                raise ValueError("Scheduling request is no longer pending proposal delivery")
+
+            if outcome == "delivered":
+                if not transition_allowed(row["request_status"], "awaiting_confirmation"):
+                    raise ValueError("Scheduling request cannot move to awaiting confirmation")
+                proposal_update = db.execute(
+                    "UPDATE proposals SET status='sent',provider_message_id=NULL,sent_at=?,error_text=NULL "
+                    "WHERE workspace_id=? AND id=? AND status='manual_required'",
+                    (now, workspace_id, proposal_id),
+                )
+                request_update = db.execute(
+                    "UPDATE scheduling_requests SET status='awaiting_confirmation',updated_at=? "
+                    "WHERE workspace_id=? AND id=? AND status='proposal_pending'",
+                    (now, workspace_id, row["request_id"]),
+                )
+                if proposal_update.rowcount != 1 or request_update.rowcount != 1:
+                    raise ValueError("Proposal or request changed during delivery reconciliation")
+            else:
+                proposal_update = db.execute(
+                    "UPDATE proposals SET status='send_failed',error_text=? "
+                    "WHERE workspace_id=? AND id=? AND status='manual_required'",
+                    ("Operator verified no delivery; an explicit retry is available.", workspace_id, proposal_id),
+                )
+                if proposal_update.rowcount != 1:
+                    raise ValueError("Proposal changed during delivery reconciliation")
+
+            db.execute(
+                "INSERT INTO audit_events(workspace_id,actor,action,entity_type,entity_id,detail_json,created_at) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (
+                    workspace_id,
+                    actor,
+                    "proposal.delivery_reconciled",
+                    "proposal",
+                    str(proposal_id),
+                    json.dumps({"outcome": outcome, "provider_queried_by_app": False}, sort_keys=True),
+                    now,
+                ),
+            )
 
     def confirm_proposal(self, workspace_id: str, proposal_id: int, slot_index: int, actor: str) -> int:
         now = utc_now().isoformat()
@@ -468,7 +555,8 @@ class Store:
             args.append(status)
         where_sql = " AND ".join(where)
         with self.connect() as db:
-            total = db.execute(f"SELECT COUNT(*) FROM scheduling_requests r JOIN contacts c ON c.id=r.contact_id WHERE {where_sql}", args).fetchone()[0]
+            total = int(db.execute(f"SELECT COUNT(*) FROM scheduling_requests r JOIN contacts c ON c.id=r.contact_id WHERE {where_sql}", args).fetchone()[0])
+            page = min(page, max(1, (total + per_page - 1) // per_page))
             rows = db.execute(
                 f"SELECT r.*,c.sender,c.display_name,c.email,c.consent_status,p.id proposal_id,p.status proposal_status,p.slots_json,p.selected_slot,a.id appointment_id,a.status appointment_status,a.start_at,a.google_event_link "
                 f"FROM scheduling_requests r JOIN contacts c ON c.id=r.contact_id LEFT JOIN proposals p ON p.request_id=r.id LEFT JOIN appointments a ON a.request_id=r.id "
@@ -490,23 +578,39 @@ class Store:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def hai_feed(self, workspace_id: str, cursor: str = "", limit: int = 100) -> tuple[list[dict[str, Any]], str]:
-        """Return a PII-minimized, cursor-based request feed for HAI's json-feed connector."""
-        timestamp, cursor_id = self._decode_feed_cursor(cursor)
+    def hai_feed(self, workspace_id: str, cursor: str | None = None, limit: int = 100) -> tuple[list[dict[str, Any]], str]:
+        """Return a recent snapshot or a cursor-based continuation for HAI's JSON feed."""
         page_size = min(max(limit, 1), 500)
         with self.connect() as db:
-            rows = db.execute(
-                "SELECT r.id,r.title,r.duration_minutes,r.timezone,r.requested_start,r.status,r.confidence,r.created_at,r.updated_at,"
-                "p.status proposal_status,a.status appointment_status,a.start_at,a.end_at "
-                "FROM scheduling_requests r "
-                "LEFT JOIN proposals p ON p.request_id=r.id "
-                "LEFT JOIN appointments a ON a.request_id=r.id "
-                "WHERE r.workspace_id=? AND (r.updated_at>? OR (r.updated_at=? AND r.id>?)) "
-                "ORDER BY r.updated_at,r.id LIMIT ?",
-                (workspace_id, timestamp, timestamp, cursor_id, page_size),
-            ).fetchall()
+            if cursor:
+                timestamp, cursor_id = self._decode_feed_cursor(cursor)
+                rows = db.execute(
+                    "SELECT r.id,r.title,r.duration_minutes,r.timezone,r.requested_start,r.status,r.confidence,r.created_at,r.updated_at,"
+                    "p.status proposal_status,a.status appointment_status,a.start_at,a.end_at "
+                    "FROM scheduling_requests r "
+                    "LEFT JOIN proposals p ON p.request_id=r.id "
+                    "LEFT JOIN appointments a ON a.request_id=r.id "
+                    "WHERE r.workspace_id=? AND (r.updated_at>? OR (r.updated_at=? AND r.id>?)) "
+                    "ORDER BY r.updated_at,r.id LIMIT ?",
+                    (workspace_id, timestamp, timestamp, cursor_id, page_size),
+                ).fetchall()
+            else:
+                # HAI's current HTTP feed reader performs a plain GET and does not
+                # send the previously returned cursor. Give it a useful bounded
+                # snapshot instead of repeatedly exposing the oldest first page.
+                rows = db.execute(
+                    "SELECT r.id,r.title,r.duration_minutes,r.timezone,r.requested_start,r.status,r.confidence,r.created_at,r.updated_at,"
+                    "p.status proposal_status,a.status appointment_status,a.start_at,a.end_at "
+                    "FROM scheduling_requests r "
+                    "LEFT JOIN proposals p ON p.request_id=r.id "
+                    "LEFT JOIN appointments a ON a.request_id=r.id "
+                    "WHERE r.workspace_id=? ORDER BY r.updated_at DESC,r.id DESC LIMIT ?",
+                    (workspace_id, page_size),
+                ).fetchall()
         items = [dict(row) for row in rows]
-        next_cursor = cursor
+        if not cursor:
+            items.reverse()
+        next_cursor = cursor or ""
         if items:
             last = items[-1]
             next_cursor = self._encode_feed_cursor(last["updated_at"], int(last["id"]))
@@ -550,8 +654,9 @@ class Store:
         return request_data
 
     def recent_audit(self, workspace_id: str, limit: int = 100) -> list[dict[str, Any]]:
+        bounded_limit = min(max(limit, 1), 500)
         with self.connect() as db:
-            rows = db.execute("SELECT * FROM audit_events WHERE workspace_id=? ORDER BY id DESC LIMIT ?", (workspace_id, min(limit, 500))).fetchall()
+            rows = db.execute("SELECT * FROM audit_events WHERE workspace_id=? ORDER BY id DESC LIMIT ?", (workspace_id, bounded_limit)).fetchall()
         return [self._audit_row(row) for row in rows]
 
     def contacts(self, workspace_id: str, query: str = "") -> list[dict[str, Any]]:
@@ -597,9 +702,18 @@ class Store:
         cutoff = (utc_now() - timedelta(days=retention_days)).isoformat()
         with self.connect() as db:
             cursor = db.execute("DELETE FROM inbound_messages WHERE workspace_id=? AND received_at<?", (workspace_id, cutoff))
-            db.execute("DELETE FROM rate_events WHERE workspace_id=? AND created_at<?", (workspace_id, cutoff))
+            rate_cursor = db.execute("DELETE FROM rate_events WHERE workspace_id=? AND created_at<?", (workspace_id, cutoff))
         count = cursor.rowcount
-        self.audit(workspace_id, "worker", "privacy.retention_purge", "workspace", workspace_id, {"messages_deleted": count, "cutoff": cutoff})
+        rate_count = rate_cursor.rowcount
+        if count or rate_count:
+            self.audit(
+                workspace_id,
+                "worker",
+                "privacy.retention_purge",
+                "workspace",
+                workspace_id,
+                {"messages_deleted": count, "rate_events_deleted": rate_count, "cutoff": cutoff},
+            )
         return count
 
     @staticmethod
