@@ -83,3 +83,9 @@ One run of `python -m scripts.benchmark --records 10000 --reads 1000` on the sam
 Calendar availability uses one Google FreeBusy query for the full 21-day search window and filters returned busy ranges against local business hours. In the regression scenario with two weeks of full weekdays, this reduced the provider-call count from 11 per-day queries to one batched query. Booking still performs a separate final availability check before event insertion. The call-count result is a deterministic test, not a live Google latency benchmark.
 
 The executable's larger idle footprint comes from bundled Python and provider libraries. For horizontal scaling, multiple operators, or sustained write concurrency, move persistence and rate/job coordination to PostgreSQL rather than sharing the SQLite file across machines.
+
+## Atomic request/audit write follow-up — 2026-10-14
+
+Profiling found that request creation committed its scheduling row and its `request.detected` audit row separately. Request creation now inserts both in one transaction; an injected audit failure proves both rows roll back together. This also removes one SQLite commit per request.
+
+Three serial 1,000-record runs before the change measured 143.9–198.3 records/second (median 164.4); three after measured 452.5–849.8 records/second (median 684.0). A 500-record/two-pass cProfile run counted 3,222 commit calls before and 2,222 after, a 31% reduction. The observed throughput median increased about 4.2×, but the sample is small and host throughput remains variable; treat the commit-count reduction as the direct structural result and do not use the throughput figure as a capacity guarantee. Dashboard median reads stayed within 0.657–1.176 ms across samples, the 500-item HAI feed within 5.061–7.777 ms, and traced Python peak stayed at 0.49 MiB. Full run values and limitations are in `.ecc/benchmarks/sqlite-request-audit-atomicity-2026-10-14.json`.

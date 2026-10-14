@@ -38,6 +38,32 @@ def test_message_to_proposal_to_confirmation_to_calendar_event(app_bundle, auth_
     assert len(calendar.created) == 1
 
 
+def test_request_creation_rolls_back_when_audit_insert_fails(app_bundle):
+    app, _, _ = app_bundle
+    store = app.extensions["store"]
+    contact_id = store.upsert_contact("default", "31612345678", "Europe/Amsterdam")
+    with store.connect() as db:
+        db.execute(
+            "CREATE TRIGGER reject_request_audit BEFORE INSERT ON audit_events "
+            "WHEN NEW.action='request.detected' BEGIN "
+            "SELECT RAISE(ABORT, 'request audit unavailable'); END"
+        )
+
+    with pytest.raises(sqlite3.IntegrityError, match="request audit unavailable"):
+        store.create_request(
+            "default", contact_id, "atomic-request-1", "Consultation", 30,
+            "Europe/Amsterdam", "2030-01-07T10:00:00+01:00", 0.9,
+        )
+
+    with store.connect() as db:
+        assert db.execute(
+            "SELECT COUNT(*) FROM scheduling_requests WHERE source_message_id='atomic-request-1'"
+        ).fetchone()[0] == 0
+        assert db.execute(
+            "SELECT COUNT(*) FROM audit_events WHERE action='request.detected'"
+        ).fetchone()[0] == 0
+
+
 def test_booking_does_not_create_event_if_selected_slot_is_now_busy(app_bundle):
     app, calendar, _ = app_bundle
     client = app.test_client()

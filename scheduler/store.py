@@ -68,10 +68,22 @@ class Store:
 
     def audit(self, workspace_id: str, actor: str, action: str, entity_type: str, entity_id: Any = None, detail: dict | None = None) -> None:
         with self.connect() as db:
-            db.execute(
-                "INSERT INTO audit_events(workspace_id,actor,action,entity_type,entity_id,detail_json,created_at) VALUES(?,?,?,?,?,?,?)",
-                (workspace_id, actor, action, entity_type, None if entity_id is None else str(entity_id), json.dumps(detail or {}, sort_keys=True), utc_now().isoformat()),
-            )
+            self._audit_in_transaction(db, workspace_id, actor, action, entity_type, entity_id, detail)
+
+    @staticmethod
+    def _audit_in_transaction(
+        db: sqlite3.Connection,
+        workspace_id: str,
+        actor: str,
+        action: str,
+        entity_type: str,
+        entity_id: Any = None,
+        detail: dict | None = None,
+    ) -> None:
+        db.execute(
+            "INSERT INTO audit_events(workspace_id,actor,action,entity_type,entity_id,detail_json,created_at) VALUES(?,?,?,?,?,?,?)",
+            (workspace_id, actor, action, entity_type, None if entity_id is None else str(entity_id), json.dumps(detail or {}, sort_keys=True), utc_now().isoformat()),
+        )
 
     def set_state(self, workspace_id: str, key: str, value: str, actor: str = "operator") -> None:
         now = utc_now().isoformat()
@@ -153,7 +165,15 @@ class Store:
                 (workspace_id, contact_id, source_message_id, title, duration, timezone_name, requested_start, "detected", confidence, now, now),
             )
             request_id = int(cursor.lastrowid)
-        self.audit(workspace_id, "scheduler", "request.detected", "request", request_id, {"confidence": confidence, "duration_minutes": duration})
+            self._audit_in_transaction(
+                db,
+                workspace_id,
+                "scheduler",
+                "request.detected",
+                "request",
+                request_id,
+                {"confidence": confidence, "duration_minutes": duration},
+            )
         return request_id
 
     def _transition_request_in_transaction(

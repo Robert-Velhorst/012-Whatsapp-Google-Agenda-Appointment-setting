@@ -121,6 +121,9 @@ def test_booked_assisted_request_has_reviewable_personal_confirmation_draft(app_
     assert page.status_code == 200
     assert b"Personal WhatsApp confirmation draft" in page.data
     assert b"Open WhatsApp with confirmation" in page.data
+    assert b'id="personal-confirmation-draft"' in page.data
+    assert b'name="personal_confirmation_draft"' in page.data
+    assert b'aria-labelledby="personal-confirmation-heading"' in page.data
     assert b"Not sent or delivery-verified" in page.data
     assert whatsapp.sent == []
 
