@@ -2,7 +2,7 @@ import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -252,6 +252,23 @@ def test_free_slots_uses_one_batched_freebusy_query_for_search_window(app_bundle
         "2030-01-21T09:30:00+01:00",
         "2030-01-21T10:00:00+01:00",
     ]
+
+
+def test_free_slots_prioritizes_requested_time_then_closest_alternatives(app_bundle):
+    app, _, _ = app_bundle
+    calendar = GoogleCalendar(app.extensions["settings"])
+    calendar.settings = replace(
+        calendar.settings, business_hours_start=9, business_hours_end=17, slot_interval_minutes=30,
+    )
+    calendar._service = lambda: SimpleNamespace(
+        freebusy=lambda: SimpleNamespace(
+            query=lambda **kw: SimpleNamespace(execute=lambda: {"calendars": {"primary": {"busy": []}}})
+        )
+    )
+
+    slots = calendar.free_slots(date(2030, 1, 7), 30, preferred_time=time(15))
+
+    assert [slot.strftime("%H:%M") for slot in slots] == ["15:00", "14:30", "15:30"]
 
 
 @pytest.mark.parametrize("response", [{}, {"calendars": {}}, {"calendars": {"primary": {}}}])

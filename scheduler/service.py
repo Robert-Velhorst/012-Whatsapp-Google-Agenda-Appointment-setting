@@ -142,7 +142,9 @@ class SchedulingService:
                         self.settings.timezone, intent.requested_start.isoformat(), intent.confidence,
                     )
                     try:
-                        slots = self.calendar.free_slots(intent.requested_start, intent.duration_minutes)
+                        slots = self.calendar.free_slots(
+                            intent.requested_start, intent.duration_minutes, preferred_time=intent.preferred_time,
+                        )
                     except Exception as exc:  # noqa: BLE001 - Google provider SDK errors are not a stable shared exception type.
                         self.store.transition_request(self.settings.workspace_id, request_id, "failed", "scheduler", {"provider": "google_calendar", "error": str(exc)[:200]})
                         continue
@@ -181,7 +183,9 @@ class SchedulingService:
             intent.duration_minutes, self.settings.timezone, intent.requested_start.isoformat(), intent.confidence,
         )
         try:
-            slots = self.calendar.free_slots(intent.requested_start, intent.duration_minutes)
+            slots = self.calendar.free_slots(
+                intent.requested_start, intent.duration_minutes, preferred_time=intent.preferred_time,
+            )
         except Exception as exc:  # Calendar transport/auth failures vary by provider library; persist the request failure.
             self.store.transition_request(
                 self.settings.workspace_id, request_id, "failed", "assisted_personal",

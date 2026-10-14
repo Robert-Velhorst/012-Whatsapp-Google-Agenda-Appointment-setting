@@ -18,11 +18,13 @@ class FakeCalendar:
         self.cancelled = []
         self.events = {}
         self.lookup_error = None
+        self.preferred_times = []
 
     def connected(self):
         return True
 
-    def free_slots(self, start_day, duration, count=3):
+    def free_slots(self, start_day, duration, count=3, preferred_time=None):
+        self.preferred_times.append(preferred_time)
         tz = ZoneInfo("Europe/Amsterdam")
         now = datetime.now(tz)
         start_day = max(start_day, now.date())

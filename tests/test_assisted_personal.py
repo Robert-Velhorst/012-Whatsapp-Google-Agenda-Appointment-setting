@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, time
 
 
 def signed_in_client(app):
@@ -12,12 +12,12 @@ def signed_in_client(app):
 
 
 def test_assisted_analysis_stores_structured_request_but_not_pasted_text(app_bundle):
-    app, _, whatsapp = app_bundle
+    app, calendar, whatsapp = app_bundle
     client = signed_in_client(app)
 
     response = client.post("/actions/assisted/analyze", data={
         "csrf_token": "assisted-test-csrf",
-        "message": "Could we schedule a 45 minute call next Tuesday?",
+        "message": "Could we schedule a 45 minute call next Tuesday at 3?",
     })
 
     assert response.status_code == 302
@@ -26,6 +26,7 @@ def test_assisted_analysis_stores_structured_request_but_not_pasted_text(app_bun
     assert b"45 minutes" in page.data
     assert b"Open WhatsApp with this draft" in page.data
     assert b"not retained" in page.data
+    assert calendar.preferred_times[-1] == time(15)
     store = app.extensions["store"]
     with store.connect() as db:
         assert db.execute("SELECT COUNT(*) FROM inbound_messages").fetchone()[0] == 0

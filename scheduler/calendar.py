@@ -51,7 +51,7 @@ class GoogleCalendar:
         except Exception:  # noqa: BLE001 - Google auth/transport libraries expose several unrelated credential failure types.
             return False
 
-    def free_slots(self, start_day, duration_minutes: int, count: int = 3) -> list[datetime]:
+    def free_slots(self, start_day, duration_minutes: int, count: int = 3, preferred_time: time | None = None) -> list[datetime]:
         if count <= 0:
             return []
         service = self._service()
@@ -91,10 +91,17 @@ class GoogleCalendar:
                 end = candidate + timedelta(minutes=duration_minutes)
                 if candidate >= now and not any(candidate < busy_end and end > busy_start for busy_start, busy_end in ranges):
                     slots.append(candidate)
-                    if len(slots) == count:
+                    if preferred_time is None and len(slots) == count:
                         return slots
                 candidate += timedelta(minutes=self.settings.slot_interval_minutes)
-        return slots
+        if preferred_time is not None:
+            preferred_minutes = preferred_time.hour * 60 + preferred_time.minute
+            slots.sort(key=lambda slot: (
+                (slot.date() - start_day).days,
+                abs(slot.hour * 60 + slot.minute - preferred_minutes),
+                slot,
+            ))
+        return slots[:count]
 
     def is_slot_available(self, start_at: datetime, end_at: datetime) -> bool:
         """Recheck one confirmed slot immediately before creating its event."""
