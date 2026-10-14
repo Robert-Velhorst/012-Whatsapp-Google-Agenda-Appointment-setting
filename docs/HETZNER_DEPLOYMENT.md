@@ -117,7 +117,7 @@ After explicit cutover authorization, set the intended DNS TTL/change, register 
 - `SCHEDULING_RETENTION_DAYS` defaults to 90; `DATA_RETENTION_DAYS` governs inbound bodies, rate events, and delivery receipts. Confirm these match the data policy before production and ensure the worker is running.
 - Review logs without exporting message bodies or secrets. Support bundles are redacted but still contain operational metadata; inspect and approve them before sharing.
 - Check alerting for failed health checks, repeated restarts, worker inactivity, disk pressure, stale backups, TLS problems, failed OAuth/API calls, and unresolved ambiguous bookings. Never automatically replay ambiguous sends or bookings.
-- Restore only while web and worker are stopped, using the CLI's explicit confirmation, and only after preserving the current database. Test the restored copy before routing traffic to it.
+- Restore only while web and worker are stopped, using the CLI's explicit confirmation, and only after preserving the current database. The restore command can run without initializing the app, so it can recover a corrupt live database; it preserves unreadable current bytes in a timestamped sidecar safety file. It refuses to replace the database if either SQLite WAL/SHM sidecar remains, even for an empty WAL, so confirm all processes are stopped before investigating or removing stale sidecars. Test the restored copy before routing traffic to it.
 
 ## Upgrade and rollback
 

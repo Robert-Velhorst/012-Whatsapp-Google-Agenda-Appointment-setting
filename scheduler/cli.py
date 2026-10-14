@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sqlite3
 import sys
 import tempfile
@@ -105,7 +106,7 @@ def _write_support_bundle(output_path: Path, readiness: dict, audit: list[dict],
         temporary.unlink(missing_ok=True)
 
 
-def _restore_database(backup_path: Path, database_path: Path, store) -> Path | None:
+def _restore_database(backup_path: Path, database_path: Path, store=None) -> Path | None:
     """Stage a validated restore, snapshot the current DB, then atomically replace it."""
     backup = backup_path.resolve()
     database = database_path.resolve()
@@ -126,17 +127,26 @@ def _restore_database(backup_path: Path, database_path: Path, store) -> Path | N
             if not _validate_app_database(staged_db):
                 raise ValueError("Staged backup failed SQLite integrity or application schema validation")
         if database.exists():
-            with closing(sqlite3.connect(database)) as current_db, closing(sqlite3.connect(safety)) as safety_db:
-                current_db.backup(safety_db)
-            with closing(sqlite3.connect(safety)) as safety_db:
-                if not _validate_app_database(safety_db):
-                    raise ValueError("Could not verify the pre-restore safety backup")
-        store.close()
-        # A non-empty WAL means another process may still have the database open. Replacing
-        # the main file in that state could lose committed data, so fail closed.
+            try:
+                with closing(sqlite3.connect(database)) as current_db, closing(sqlite3.connect(safety)) as safety_db:
+                    current_db.backup(safety_db)
+                with closing(sqlite3.connect(safety)) as safety_db:
+                    if not _validate_app_database(safety_db):
+                        raise ValueError("Current database is not a valid Agenda Relay database")
+            except (sqlite3.DatabaseError, ValueError):
+                # Preserve an unreadable or incompatible live file byte-for-byte
+                # so a validated backup can still recover the configured path.
+                safety.unlink(missing_ok=True)
+                shutil.copy2(database, safety)
+        if store is not None:
+            store.close()
+        # SQLite keeps a WAL/SHM pair while another connection is using the database,
+        # even when the WAL is currently empty. Replacing the main file in that state
+        # can fail on Windows or split readers from the database they opened, so fail closed.
         wal_path = Path(f"{database}-wal")
-        if wal_path.exists() and wal_path.stat().st_size:
-            raise RuntimeError("Database WAL is still active; stop all web and worker processes before restoring")
+        shm_path = Path(f"{database}-shm")
+        if wal_path.exists() or shm_path.exists():
+            raise RuntimeError("Database WAL sidecars are still present; stop all web and worker processes before restoring")
         os.replace(temporary, database)
         return safety if safety.exists() else None
     finally:
@@ -173,6 +183,19 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, indent=2))
         return 0
 
+    if args.command == "restore":
+        settings = Settings.from_env()
+        if args.confirm != "RESTORE":
+            print("Refusing restore: --confirm must equal RESTORE", file=sys.stderr)
+            return 2
+        try:
+            safety = _restore_database(args.backup, settings.database_path)
+        except (OSError, sqlite3.Error, RuntimeError, ValueError) as exc:
+            print(f"Restore failed: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps({"restored": str(args.backup.resolve()), "previous_database": str(safety) if safety else None}))
+        return 0
+
     app = create_app()
     settings = app.extensions["settings"]
     store = app.extensions["store"]
@@ -203,17 +226,6 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Backup failed: {exc}", file=sys.stderr)
             return 2
         print(output.resolve())
-        return 0
-    if args.command == "restore":
-        if args.confirm != "RESTORE":
-            print("Refusing restore: --confirm must equal RESTORE", file=sys.stderr)
-            return 2
-        try:
-            safety = _restore_database(args.backup, settings.database_path, store)
-        except (OSError, sqlite3.Error, RuntimeError, ValueError) as exc:
-            print(f"Restore failed: {exc}", file=sys.stderr)
-            return 2
-        print(json.dumps({"restored": str(args.backup.resolve()), "previous_database": str(safety) if safety else None}))
         return 0
     if args.command == "support-bundle":
         output = args.output or Path("support-bundles") / f"agenda-relay-support-{datetime.now(UTC):%Y%m%d-%H%M%S}.zip"

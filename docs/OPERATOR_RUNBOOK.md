@@ -25,7 +25,7 @@ Choose **Pause automation** when credentials may be compromised, provider respon
 
 ## Backup and restore
 
-Create a consistent backup with `python -m scheduler.cli backup`. By default it is written to a `backups` folder beside the configured database (for the default local setup, `data/backups`). Store or transfer it encrypted and keep an off-host copy. To choose another destination, pass `--output <path>`. To restore, stop web and worker processes, validate the exact file, then run `python -m scheduler.cli restore <path> --confirm RESTORE`. The command preserves the previous database beside the active file with `.pre-restore` suffix. Run `doctor` and a read-only dashboard check before restart.
+Create a consistent backup with `python -m scheduler.cli backup`. By default it is written to a `backups` folder beside the configured database (for the default local setup, `data/backups`). Store or transfer it encrypted and keep an off-host copy. To choose another destination, pass `--output <path>`. To restore, stop web and worker processes, validate the exact file, then run `python -m scheduler.cli restore <path> --confirm RESTORE`. Restore does not boot the application first, so it can recover a corrupt live database. It preserves a healthy prior database as a validated `.pre-restore-*` backup, or an unreadable/incompatible database byte-for-byte. It refuses to replace the database while either SQLite WAL or SHM sidecar remains; resolve stale sidecars only after confirming every process using that database is stopped. Run `doctor` and a read-only dashboard check before restart.
 
 ## Data-encryption-key rotation
 

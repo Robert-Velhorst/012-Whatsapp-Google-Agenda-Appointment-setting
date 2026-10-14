@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import closing
+from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -139,6 +141,52 @@ def test_restore_stages_backup_and_keeps_verified_safety_copy(app_bundle, tmp_pa
         assert connection.execute("SELECT name FROM workspaces WHERE id='restore-test'").fetchone() == ("after",)
     with closing(sqlite3.connect(safety)) as connection:
         assert connection.execute("SELECT name FROM workspaces WHERE id='restore-test'").fetchone() == ("before",)
+
+
+def test_restore_cli_recovers_corrupt_live_database_and_preserves_original_bytes(
+    app_bundle, tmp_path, monkeypatch, capsys,
+):
+    app, _, _ = app_bundle
+    settings = app.extensions["settings"]
+    backup = tmp_path / "known-good.sqlite3"
+    _online_backup(settings.database_path, backup)
+
+    damaged_database = tmp_path / "damaged-live.sqlite3"
+    damaged_bytes = b"SQLite header and pages are damaged; preserve these bytes"
+    damaged_database.write_bytes(damaged_bytes)
+    monkeypatch.setattr(
+        "scheduler.cli.Settings.from_env",
+        lambda *_args, **_kwargs: replace(settings, database_path=damaged_database),
+    )
+
+    exit_code = main(["restore", str(backup), "--confirm", "RESTORE"])
+
+    result = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert result["previous_database"]
+    assert Path(result["previous_database"]).read_bytes() == damaged_bytes
+    with closing(sqlite3.connect(damaged_database)) as connection:
+        assert _validate_app_database(connection)
+
+
+def test_restore_refuses_idle_open_wal_database(app_bundle, tmp_path):
+    app, _, _ = app_bundle
+    database = app.extensions["settings"].database_path
+    backup = tmp_path / "idle-wal-backup.sqlite3"
+    _online_backup(database, backup)
+    with closing(sqlite3.connect(database)) as checkpoint:
+        assert checkpoint.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0] == 0
+    external_connection = sqlite3.connect(database)
+    assert external_connection.execute("PRAGMA journal_mode=WAL").fetchone() == ("wal",)
+    external_connection.execute("SELECT id FROM workspaces").fetchall()
+    wal_path = Path(f"{database}-wal")
+    assert wal_path.exists() and wal_path.stat().st_size == 0
+
+    try:
+        with pytest.raises(RuntimeError, match="stop all web and worker processes"):
+            _restore_database(backup, database, app.extensions["store"])
+    finally:
+        external_connection.close()
 
 
 def test_restore_rejects_non_app_sqlite_database(app_bundle, tmp_path):

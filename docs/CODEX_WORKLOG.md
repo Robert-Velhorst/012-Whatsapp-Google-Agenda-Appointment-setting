@@ -1,5 +1,11 @@
 # Codex worklog
 
+## 2026-10-14 - Make SQLite restore recover corrupt databases safely
+
+- Reproduced two restore failure modes: the CLI booted the app before dispatching restore, so an unreadable live database failed during app startup; and a zero-byte WAL held by an idle SQLite connection bypassed the old non-empty-WAL check, reaching Windows `os.replace` and failing with `PermissionError`.
+- Restore now runs before app initialization, preserves unreadable/incompatible live database bytes in a timestamped safety file, and fails closed if either WAL or SHM sidecar exists. Updated operator, README, and Hetzner recovery instructions.
+- Focused database CLI suite: 14 passed, including corrupt-live recovery and idle-open WAL refusal. Full suite: 248 passed with warnings treated as errors; `compileall`, `pip check`, and `git diff --check` passed. Fresh Windows 11 x64 package smoke passed migration, encryption rotation, default backup, health, and branded login (66.8 MiB working set); ZIP SHA-256 `FE396F50CAC38D8B4B3C7F507DB1430BAECBCF5A2E2D511BD52A96A4D3377031`. These are local synthetic-data checks; exact-head CI and CodeQL are pending, and no Hetzner host or real provider was accessed.
+
 ## 2026-10-14 - Keep default backups on the persistent data volume
 
 - The CLI previously wrote its default backup relative to the process working directory. In Docker that is `/app`, while Compose persists only `/app/data`, so a successful backup could disappear when the container is replaced. The default now writes to `backups/` beside the configured database; explicit `--output` destinations remain unchanged.
