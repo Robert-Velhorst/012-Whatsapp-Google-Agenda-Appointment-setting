@@ -1,5 +1,11 @@
 # Codex worklog
 
+## 2026-10-14 - Validate the local-only HAI cursor continuation patch
+
+- The first executable HAI check found a compile error in a new HTTP-query regression: the test's captured query is `map[string][]string`, not `url.Values`. Corrected the assertion to require exactly one preserved `limit` and one replacement `cursor` value.
+- Using the official Go 1.27.2 Windows archive in an isolated temporary directory, verified its SHA-256 against official Go download metadata. Focused `go test ./internal/accountfeed ./migrations` passes; `go vet ./internal/accountfeed` and `git diff --check` pass. No Go toolchain was installed system-wide.
+- PostgreSQL-tagged integration/migration execution remains unverified: `HAI_ACCOUNT_FEED_TEST_DSN` is unset, `psql` is unavailable, and the local Docker server did not respond. The HAI patch remains local and uncommitted/unpushed, per instruction; no HAI remote was modified. Live HAI ingestion is still a separate acceptance gate.
+
 ## 2026-10-14 - Reject OAuth callbacks without a session state
 
 - App-wide OAuth review found that the callback compared the query state directly to `session.pop(..., None)`. With both values absent, `None == None` passed and a supplied authorization code reached the token-exchange adapter. The callback now requires non-empty query and session states and uses `secrets.compare_digest`; state remains single-use.
