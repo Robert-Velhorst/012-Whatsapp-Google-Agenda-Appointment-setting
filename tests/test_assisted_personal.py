@@ -35,6 +35,22 @@ def test_assisted_analysis_stores_structured_request_but_not_pasted_text(app_bun
     assert whatsapp.sent == []
 
 
+def test_assisted_analysis_passes_dutch_clock_time_and_default_duration_to_calendar(app_bundle):
+    app, calendar, _ = app_bundle
+    client = signed_in_client(app)
+
+    response = client.post("/actions/assisted/analyze", data={
+        "csrf_token": "assisted-test-csrf",
+        "message": "Kunnen we dinsdagmiddag om 2 uur afspreken?",
+    })
+
+    assert response.status_code == 302
+    assert calendar.preferred_times[-1] == time(14)
+    with app.extensions["store"].connect() as db:
+        request_row = db.execute("SELECT duration_minutes FROM scheduling_requests").fetchone()
+    assert request_row["duration_minutes"] == app.extensions["settings"].default_duration_minutes
+
+
 def test_assisted_proposal_requires_operator_confirmation_before_booking_link_works(app_bundle):
     app, calendar, whatsapp = app_bundle
     client = signed_in_client(app)

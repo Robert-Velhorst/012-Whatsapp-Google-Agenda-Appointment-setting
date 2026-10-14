@@ -26,10 +26,22 @@ def test_intent_handles_hours_and_invalid_duration():
     ("Can we meet next Friday at 3pm?", time(15)),
     ("Could we schedule a call for 15:30 tomorrow?", time(15, 30)),
     ("Kunnen we om 10 uur bellen?", time(10)),
+    ("Kunnen we om 2 uur bellen?", time(14)),
+    ("Kunnen we dinsdagavond om 9 uur bellen?", time(21)),
     ("Can we schedule a 30 minute call tomorrow?", None),
 ])
 def test_intent_extracts_preferred_clock_time_or_day_part(message, expected):
     assert analyse(message, date(2026, 8, 8), 60).preferred_time == expected
+
+
+def test_intent_distinguishes_dutch_clock_time_from_duration():
+    clock_time = analyse("Kunnen we om 2 uur bellen?", date(2026, 8, 8), 60)
+    duration = analyse("Kunnen we een afspraak van 2 uur plannen?", date(2026, 8, 8), 60)
+
+    assert clock_time.preferred_time == time(14)
+    assert clock_time.duration_minutes == 60
+    assert duration.preferred_time is None
+    assert duration.duration_minutes == 120
 
 
 def test_intent_reads_compact_dutch_weekday_and_day_part():

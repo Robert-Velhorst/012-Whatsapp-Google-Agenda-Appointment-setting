@@ -49,7 +49,10 @@ class DeterministicIntentProvider:
         language = "nl" if any(term in lower for term in dutch_markers) else "en"
 
         duration = default_duration
-        duration_match = re.search(r"\b(\d{1,3})\s*(min(?:uten|utes?)?|mins?|uur|u|hours?|hrs?)\b", lower)
+        duration_pattern = r"\b(\d{1,3})\s*(min(?:uten|utes?)?|mins?|uur|u|hours?|hrs?)\b"
+        duration_match = next((match for match in re.finditer(duration_pattern, lower) if not re.search(
+            r"\b(?:at|om|around|about|rond)\s*$", lower[:match.start(1)],
+        )), None)
         if duration_match:
             number = int(duration_match.group(1))
             unit = duration_match.group(2)
@@ -106,9 +109,15 @@ class DeterministicIntentProvider:
             text,
         )
         match = next((candidate for candidate in matches if (
-            re.search(r"\b(?:at|around|about|om|rond)\s*$", text[:candidate.start(1)])
-            or ":" in candidate.group(0)
-            or candidate.group(3)
+            not (
+                candidate.group(3) in {"uur", "u", "h"}
+                and re.search(r"\b(?:for|van|lasting|duration of|duur van)\s*$", text[:candidate.start(1)])
+            )
+            and (
+                re.search(r"\b(?:at|around|about|om|rond)\s*$", text[:candidate.start(1)])
+                or ":" in candidate.group(0)
+                or candidate.group(3)
+            )
         )), None)
         if match:
             hour = int(match.group(1))
@@ -118,7 +127,10 @@ class DeterministicIntentProvider:
                 if not 1 <= hour <= 12:
                     return None
                 hour = (hour % 12) + (12 if suffix == "pm" else 0)
-            elif not suffix and ":" not in match.group(0) and 1 <= hour <= 7:
+            elif 1 <= hour <= 11 and not re.search(r"(?:morning|ochtend|morgens)\b", text) and (
+                re.search(r"(?:afternoon|middag|namiddag|evening|avond|vanavond)", text)
+                or (hour <= 7 and re.search(r"\b(?:at|around|about|om|rond)\s*$", text[:match.start(1)]))
+            ):
                 # Bare office-hour requests like "Friday at 3" conventionally mean 3 pm.
                 hour += 12
             if 0 <= hour <= 23:
