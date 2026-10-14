@@ -38,7 +38,7 @@ SQLite is suitable for one small operator deployment. A horizontally scaled SaaS
 
 ## Dependency and file audit
 
-- Runtime: Python 3.11-3.13, Flask, Waitress, Google API clients, Requests, Cryptography.
+- Runtime: Python 3.11-3.15, Flask, Waitress, Google API clients, Requests, Cryptography.
 - Test: pytest with provider fakes kept under `tests/` only.
 - Direct dependencies are declared in `requirements.txt`; the verified environment is pinned in `requirements.lock`.
 - Runtime paths (`.env`, `data/`, SQLite files, logs, backups, support bundles, caches, credentials) are git-ignored and Docker-ignored.
