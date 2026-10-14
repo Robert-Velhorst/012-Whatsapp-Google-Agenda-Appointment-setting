@@ -802,8 +802,9 @@ class Store:
                     (workspace_id, timestamp, timestamp, cursor_id, page_size),
                 ).fetchall()
             else:
-                # Start with a useful bounded latest snapshot. HAI persists the
-                # returned nextCursor and supplies it on subsequent requests.
+                # Start with a useful bounded latest snapshot. Clients that
+                # persist the returned nextCursor can continue incrementally;
+                # clients that do not will repeat this bounded snapshot.
                 rows = db.execute(
                     "SELECT r.id,r.title,r.duration_minutes,r.timezone,r.requested_start,r.status,r.confidence,r.created_at,r.updated_at,"
                     "p.status proposal_status,a.status appointment_status,a.start_at,a.end_at "
