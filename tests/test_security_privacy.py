@@ -300,6 +300,12 @@ def test_contact_export_delete_and_workspace_isolation(app_bundle, auth_headers)
     assert any(event["action"] == "privacy.contact_exported" for event in store.recent_audit("default", 10))
     assert store.dashboard("other-workspace")["total"] == 0
     assert client.post(f"/api/appointments/{export_data['appointments'][0]['id']}/cancel", headers=auth_headers).status_code == 200
+    appointment_id = export_data["appointments"][0]["id"]
+    prefix_matching_id = int(f"{appointment_id}0")
+    store.schedule_job("default", "appointment_reminder", "privacy-delete-target", "2099-01-01T00:00:00+00:00", {"appointment_id": appointment_id})
+    store.schedule_job("default", "appointment_reminder", "privacy-delete-prefix", "2099-01-01T00:00:00+00:00", {"appointment_id": prefix_matching_id})
+    store.ensure_workspace("other-workspace", "Other", "Europe/Amsterdam")
+    store.schedule_job("other-workspace", "appointment_reminder", "privacy-delete-other-workspace", "2099-01-01T00:00:00+00:00", {"appointment_id": appointment_id})
     deleted = client.delete(f"/api/contacts/{contact['id']}", headers=auth_headers)
     assert deleted.get_json()["deleted"] is True
     assert store.contacts("default") == []
@@ -308,6 +314,13 @@ def test_contact_export_delete_and_workspace_isolation(app_bundle, auth_headers)
         assert db.execute(
             "SELECT COUNT(*) FROM audit_events WHERE action='whatsapp.delivery_status'",
         ).fetchone()[0] == 0
+        remaining_jobs = {
+            row[0]
+            for row in db.execute(
+                "SELECT dedupe_key FROM background_jobs WHERE dedupe_key LIKE 'privacy-delete-%'"
+            )
+        }
+    assert remaining_jobs == {"privacy-delete-prefix", "privacy-delete-other-workspace"}
 
 
 def test_contact_delete_refuses_unresolved_calendar_appointments(app_bundle, auth_headers):

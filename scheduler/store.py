@@ -468,6 +468,36 @@ class Store:
             db.execute("UPDATE appointments SET status='failed',error_text=?,updated_at=? WHERE workspace_id=? AND id=?", (error[:500], utc_now().isoformat(), workspace_id, appointment_id))
         self.audit(workspace_id, "scheduler", "appointment.booking_failed", "appointment", appointment_id, {"error": error[:200]})
 
+    @staticmethod
+    def _background_job_ids_for_appointment(
+        db: sqlite3.Connection,
+        workspace_id: str,
+        appointment_id: int,
+        *,
+        job_type: str | None = None,
+        active_only: bool = False,
+    ) -> list[int]:
+        conditions = ["workspace_id=?", "payload_json LIKE ?"]
+        parameters: list[Any] = [workspace_id, '%"appointment_id"%']
+        if job_type is not None:
+            conditions.append("job_type=?")
+            parameters.append(job_type)
+        if active_only:
+            conditions.append("status IN ('queued','manual_required','failed')")
+        candidates = db.execute(
+            "SELECT id,payload_json FROM background_jobs WHERE " + " AND ".join(conditions),
+            parameters,
+        ).fetchall()
+        matching_ids = []
+        for candidate in candidates:
+            try:
+                payload = json.loads(candidate["payload_json"])
+            except (TypeError, ValueError):
+                continue
+            if isinstance(payload, dict) and type(payload.get("appointment_id")) is int and payload["appointment_id"] == appointment_id:
+                matching_ids.append(int(candidate["id"]))
+        return matching_ids
+
     def cancel_appointment(self, workspace_id: str, appointment_id: int, actor: str) -> bool:
         now = utc_now().isoformat()
         with self.connect() as db:
@@ -475,19 +505,9 @@ class Store:
             if not row or row["status"] == "cancelled":
                 return False
             db.execute("UPDATE appointments SET status='cancelled',updated_at=? WHERE id=?", (now, appointment_id))
-            candidates = db.execute(
-                "SELECT id,payload_json FROM background_jobs WHERE workspace_id=? AND job_type='appointment_reminder' "
-                "AND status IN ('queued','manual_required','failed') AND payload_json LIKE ?",
-                (workspace_id, f'%"appointment_id": {appointment_id}%'),
-            ).fetchall()
-            reminder_job_ids = []
-            for candidate in candidates:
-                try:
-                    payload = json.loads(candidate["payload_json"])
-                except (TypeError, ValueError):
-                    continue
-                if isinstance(payload, dict) and type(payload.get("appointment_id")) is int and payload["appointment_id"] == appointment_id:
-                    reminder_job_ids.append(int(candidate["id"]))
+            reminder_job_ids = self._background_job_ids_for_appointment(
+                db, workspace_id, appointment_id, job_type="appointment_reminder", active_only=True
+            )
             db.executemany(
                 "UPDATE background_jobs SET status='cancelled',updated_at=? WHERE workspace_id=? AND id=? AND status IN ('queued','manual_required','failed')",
                 [(now, workspace_id, job_id) for job_id in reminder_job_ids],
@@ -805,7 +825,8 @@ class Store:
                 )
                 appointment_ids = [row[0] for row in db.execute(f"SELECT id FROM appointments WHERE request_id IN ({placeholders})", request_ids)]
                 for appointment_id in appointment_ids:
-                    db.execute("DELETE FROM background_jobs WHERE workspace_id=? AND payload_json LIKE ?", (workspace_id, f'%"appointment_id": {appointment_id}%'))
+                    job_ids = self._background_job_ids_for_appointment(db, workspace_id, appointment_id)
+                    db.executemany("DELETE FROM background_jobs WHERE workspace_id=? AND id=?", [(workspace_id, job_id) for job_id in job_ids])
                 db.execute(f"DELETE FROM appointments WHERE request_id IN ({placeholders})", request_ids)
                 db.execute(f"DELETE FROM proposals WHERE request_id IN ({placeholders})", request_ids)
                 db.execute(f"DELETE FROM scheduling_requests WHERE id IN ({placeholders})", request_ids)

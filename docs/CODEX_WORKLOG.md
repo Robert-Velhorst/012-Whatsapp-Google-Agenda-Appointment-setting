@@ -130,3 +130,10 @@ Remaining external gate: authorized Meta/Google credentials and approvals, a sta
 - Rebuilt and smoke-tested the standalone executable on Windows 11 Pro build 26300: health true, development mode, login HTTP 200, 66.1 MiB working set. ZIP SHA-256: `365E3258E1E258550012B297936B7420810B2CF81CFC1AFA67350A34CBFEDF92`.
 - Real Meta callback delivery/subscription remains an external provider acceptance step; no live webhook or customer data was used.
 - Exact source SHA `5374b1b786575173998a8dacf131f5ccd17fbe46` passed PR verification `38483821835`, push verification `38483815562`, Windows package `38483821965`, Actions/Python analysis `38483817822`, and CodeQL run `115592808146`.
+
+## Exact appointment-job association follow-up — 2026-10-14
+
+- App-wide review found that appointment cancellation and contact deletion used a JSON substring match on numeric IDs. For example, appointment `1` could match jobs for appointment `10`; cancellation could stop the wrong reminder and privacy deletion could erase unrelated background jobs.
+- Centralized candidate lookup: narrow by workspace and optional type/status, then parse each payload and compare an exact integer ID. Cancellation keeps its reminder-only/state guard. Contact deletion removes all job types tied to the exact deleted appointment and preserves same-prefix and other-workspace jobs.
+- Regression evidence: targeted cancellation and contact-export/deletion tests pass (2 passed); full local suite passes (130 passed); `compileall`, `pip check`, and `git diff --check` pass. GitHub package workflow for the previous pushed commit has not yet completed; this follow-up is not yet pushed at this checkpoint.
+- Provider, HAI, tunnel, and hosted acceptance remain outside this local regression.
