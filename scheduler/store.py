@@ -93,7 +93,7 @@ class Store:
                 "ON CONFLICT(workspace_id,key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
                 (workspace_id, key, value, now),
             )
-        self.audit(workspace_id, actor, "system_state.changed", "system", key, {"value": value})
+            self._audit_in_transaction(db, workspace_id, actor, "system_state.changed", "system", key, {"value": value})
 
     def get_state(self, workspace_id: str, key: str, default: str = "") -> str:
         with self.connect() as db:
@@ -128,8 +128,8 @@ class Store:
                 "UPDATE contacts SET display_name=?,email=?,timezone=?,language=?,consent_status=?,updated_at=? WHERE workspace_id=? AND id=?",
                 (display_name or None, email or None, timezone_name, language, consent_status, utc_now().isoformat(), workspace_id, contact_id),
             )
-        if cursor.rowcount:
-            self.audit(workspace_id, "operator", "contact.updated", "contact", contact_id, {"consent_status": consent_status})
+            if cursor.rowcount:
+                self._audit_in_transaction(db, workspace_id, "operator", "contact.updated", "contact", contact_id, {"consent_status": consent_status})
         return cursor.rowcount == 1
 
     def get_contact(self, workspace_id: str, contact_id: int) -> dict[str, Any] | None:
@@ -306,7 +306,7 @@ class Store:
                         db, workspace_id, int(row["request_id"]), "needs_clarification", "scheduler",
                         {"proposal_id": int(row["id"]), "reason": "proposal_expired"},
                     )
-        self.audit(workspace_id, "scheduler", "proposals.expired", "proposal", None, {"count": len(rows), "cutoff": cutoff_iso})
+            self._audit_in_transaction(db, workspace_id, "scheduler", "proposals.expired", "proposal", None, {"count": len(rows), "cutoff": cutoff_iso})
         return len(rows)
 
     def claim_proposal_send(self, workspace_id: str, proposal_id: int) -> bool:
@@ -324,8 +324,8 @@ class Store:
                 "UPDATE proposals SET status='manual_required',error_text=? WHERE workspace_id=? AND status='sending' AND sent_at<?",
                 (message, workspace_id, cutoff_iso),
             )
-        if cursor.rowcount:
-            self.audit(workspace_id, "worker", "proposals.stale_send_recovered", "proposal", None, {"count": cursor.rowcount, "cutoff": cutoff_iso})
+            if cursor.rowcount:
+                self._audit_in_transaction(db, workspace_id, "worker", "proposals.stale_send_recovered", "proposal", None, {"count": cursor.rowcount, "cutoff": cutoff_iso})
         return cursor.rowcount
 
     def mark_proposal_sent(self, workspace_id: str, proposal_id: int, provider_message_id: str | None, actor: str = "operator") -> None:
@@ -411,16 +411,18 @@ class Store:
 
     def mark_proposal_failed(self, workspace_id: str, proposal_id: int, error: str) -> None:
         with self.connect() as db:
-            db.execute("UPDATE proposals SET status='send_failed',error_text=? WHERE workspace_id=? AND id=? AND status='sending'", (error[:500], workspace_id, proposal_id))
-        self.audit(workspace_id, "scheduler", "proposal.send_failed", "proposal", proposal_id, {"error": error[:200]})
+            cursor = db.execute("UPDATE proposals SET status='send_failed',error_text=? WHERE workspace_id=? AND id=? AND status='sending'", (error[:500], workspace_id, proposal_id))
+            if cursor.rowcount:
+                self._audit_in_transaction(db, workspace_id, "scheduler", "proposal.send_failed", "proposal", proposal_id, {"error": error[:200]})
 
     def mark_proposal_manual_required(self, workspace_id: str, proposal_id: int, error: str) -> None:
         with self.connect() as db:
-            db.execute(
+            cursor = db.execute(
                 "UPDATE proposals SET status='manual_required',error_text=? WHERE workspace_id=? AND id=? AND status='sending'",
                 (error[:500], workspace_id, proposal_id),
             )
-        self.audit(workspace_id, "scheduler", "proposal.manual_required", "proposal", proposal_id, {"error": error[:200]})
+            if cursor.rowcount:
+                self._audit_in_transaction(db, workspace_id, "scheduler", "proposal.manual_required", "proposal", proposal_id, {"error": error[:200]})
 
     def reconcile_proposal_delivery(self, workspace_id: str, proposal_id: int, outcome: str, actor: str) -> None:
         """Record an operator-verified outcome for an ambiguous Business API send."""
@@ -676,8 +678,9 @@ class Store:
         if status not in {"sent", "manual_required", "failed", "cancelled"}:
             raise ValueError("Invalid terminal job state")
         with self.connect() as db:
-            db.execute("UPDATE background_jobs SET status=?,last_error=?,updated_at=? WHERE workspace_id=? AND id=?", (status, error, utc_now().isoformat(), workspace_id, job_id))
-        self.audit(workspace_id, "worker", f"job.{status}", "job", job_id, {"error": error} if error else {})
+            cursor = db.execute("UPDATE background_jobs SET status=?,last_error=?,updated_at=? WHERE workspace_id=? AND id=?", (status, error, utc_now().isoformat(), workspace_id, job_id))
+            if cursor.rowcount:
+                self._audit_in_transaction(db, workspace_id, "worker", f"job.{status}", "job", job_id, {"error": error} if error else {})
 
     def recover_stale_jobs(self, workspace_id: str, cutoff_iso: str) -> int:
         message = "Worker stopped while this job was running; verify provider state before handling it manually"
@@ -687,9 +690,9 @@ class Store:
                 "WHERE workspace_id=? AND status='running' AND updated_at<?",
                 (message, utc_now().isoformat(), workspace_id, cutoff_iso),
             )
-        count = cursor.rowcount
-        if count:
-            self.audit(workspace_id, "worker", "jobs.stale_recovered", "job", None, {"count": count, "cutoff": cutoff_iso})
+            count = cursor.rowcount
+            if count:
+                self._audit_in_transaction(db, workspace_id, "worker", "jobs.stale_recovered", "job", None, {"count": count, "cutoff": cutoff_iso})
         return count
 
     def recover_stale_bookings(self, workspace_id: str, cutoff_iso: str) -> int:
@@ -1019,7 +1022,7 @@ class Store:
                 db.execute(f"DELETE FROM scheduling_requests WHERE id IN ({placeholders})", request_ids)
             db.execute("DELETE FROM inbound_messages WHERE workspace_id=? AND sender=?", (workspace_id, contact["sender"]))
             db.execute("DELETE FROM contacts WHERE workspace_id=? AND id=?", (workspace_id, contact_id))
-        self.audit(workspace_id, "operator", "privacy.contact_deleted", "contact", contact_id, {})
+            self._audit_in_transaction(db, workspace_id, "operator", "privacy.contact_deleted", "contact", contact_id, {})
         return True
 
     def purge_expired(self, workspace_id: str, retention_days: int) -> int:
@@ -1032,23 +1035,24 @@ class Store:
                 "DELETE FROM audit_events WHERE workspace_id=? AND action='whatsapp.delivery_status' AND created_at<?",
                 (workspace_id, cutoff),
             )
-        count = cursor.rowcount
-        rate_count = rate_cursor.rowcount
-        delivery_count = delivery_cursor.rowcount
-        delivery_audit_count = delivery_audit_cursor.rowcount
-        if count or rate_count or delivery_count or delivery_audit_count:
-            self.audit(
-                workspace_id,
-                "worker",
-                "privacy.retention_purge",
-                "workspace",
-                workspace_id,
-                {
-                    "messages_deleted": count, "rate_events_deleted": rate_count,
-                    "delivery_events_deleted": delivery_count,
-                    "delivery_audit_events_deleted": delivery_audit_count, "cutoff": cutoff,
-                },
-            )
+            count = cursor.rowcount
+            rate_count = rate_cursor.rowcount
+            delivery_count = delivery_cursor.rowcount
+            delivery_audit_count = delivery_audit_cursor.rowcount
+            if count or rate_count or delivery_count or delivery_audit_count:
+                self._audit_in_transaction(
+                    db,
+                    workspace_id,
+                    "worker",
+                    "privacy.retention_purge",
+                    "workspace",
+                    workspace_id,
+                    {
+                        "messages_deleted": count, "rate_events_deleted": rate_count,
+                        "delivery_events_deleted": delivery_count,
+                        "delivery_audit_events_deleted": delivery_audit_count, "cutoff": cutoff,
+                    },
+                )
         return count
 
     def purge_terminal_scheduling_records(

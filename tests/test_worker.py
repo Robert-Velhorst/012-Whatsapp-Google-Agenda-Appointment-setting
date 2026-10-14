@@ -427,7 +427,6 @@ def test_v4_database_migration_adds_retention_indexes(tmp_path):
     )
     db.commit()
     db.close()
-
     store = Store(database_path)
     try:
         with store.connect() as db:
@@ -450,3 +449,75 @@ def test_v4_database_migration_adds_retention_indexes(tmp_path):
     assert rate_event_count == 5
     assert any("idx_messages_retention" in row[3] for row in message_plan)
     assert any("idx_rate_retention" in row[3] for row in rate_plan)
+
+
+def test_contact_deletion_rolls_back_when_privacy_audit_fails(app_bundle):
+    app, _, _ = app_bundle
+    store = app.extensions["store"]
+    contact_id = store.upsert_contact("default", "31612345678", "Europe/Amsterdam")
+    assert store.accept_inbound_message(
+        "default", "wamid.contact-delete", "31612345678", "synthetic message", utc_now().isoformat(),
+        max_per_sender=10, max_total=10,
+    ) == "accepted"
+    with store.connect() as db:
+        db.execute(
+            "CREATE TRIGGER reject_contact_delete_audit BEFORE INSERT ON audit_events "
+            "WHEN NEW.action='privacy.contact_deleted' BEGIN "
+            "SELECT RAISE(ABORT, 'contact deletion audit unavailable'); END"
+        )
+
+    with pytest.raises(sqlite3.IntegrityError, match="contact deletion audit unavailable"):
+        store.delete_contact("default", contact_id)
+
+    with store.connect() as db:
+        assert db.execute("SELECT COUNT(*) FROM contacts WHERE workspace_id='default' AND id=?", (contact_id,)).fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM inbound_messages WHERE workspace_id='default' AND external_id='wamid.contact-delete'").fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM audit_events WHERE action='privacy.contact_deleted'").fetchone()[0] == 0
+
+
+def test_message_retention_purge_rolls_back_when_audit_fails(app_bundle):
+    app, _, _ = app_bundle
+    store = app.extensions["store"]
+    old = (utc_now() - timedelta(days=100)).isoformat()
+    assert store.accept_inbound_message(
+        "default", "wamid.retention-rollback", "31612345678", "synthetic message", old,
+        max_per_sender=10, max_total=10,
+    ) == "accepted"
+    with store.connect() as db:
+        db.execute(
+            "CREATE TRIGGER reject_message_retention_audit BEFORE INSERT ON audit_events "
+            "WHEN NEW.action='privacy.retention_purge' BEGIN "
+            "SELECT RAISE(ABORT, 'message retention audit unavailable'); END"
+        )
+
+    with pytest.raises(sqlite3.IntegrityError, match="message retention audit unavailable"):
+        store.purge_expired("default", 90)
+
+    with store.connect() as db:
+        assert db.execute("SELECT COUNT(*) FROM inbound_messages WHERE external_id='wamid.retention-rollback'").fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM audit_events WHERE action='privacy.retention_purge'").fetchone()[0] == 0
+
+
+def test_proposal_expiry_rolls_back_when_audit_fails(app_bundle):
+    app, _, _ = app_bundle
+    client = app.test_client()
+    assert post_webhook(client, webhook()).status_code == 200
+    store = app.extensions["store"]
+    proposal_id = store.dashboard("default")["items"][0]["proposal_id"]
+    app.extensions["scheduling"].send_proposal(proposal_id)
+    old = (utc_now() - timedelta(days=100)).isoformat()
+    with store.connect() as db:
+        db.execute("UPDATE proposals SET sent_at=? WHERE workspace_id='default' AND id=?", (old, proposal_id))
+        db.execute(
+            "CREATE TRIGGER reject_proposal_expiry_audit BEFORE INSERT ON audit_events "
+            "WHEN NEW.action='proposals.expired' BEGIN "
+            "SELECT RAISE(ABORT, 'proposal expiry audit unavailable'); END"
+        )
+
+    with pytest.raises(sqlite3.IntegrityError, match="proposal expiry audit unavailable"):
+        store.expire_stale_proposals("default", utc_now().isoformat())
+
+    with store.connect() as db:
+        assert db.execute("SELECT status FROM proposals WHERE workspace_id='default' AND id=?", (proposal_id,)).fetchone()[0] == "sent"
+        assert db.execute("SELECT status FROM scheduling_requests WHERE workspace_id='default' AND id=(SELECT request_id FROM proposals WHERE id=?)", (proposal_id,)).fetchone()[0] == "awaiting_confirmation"
+        assert db.execute("SELECT COUNT(*) FROM audit_events WHERE action='proposals.expired'").fetchone()[0] == 0
