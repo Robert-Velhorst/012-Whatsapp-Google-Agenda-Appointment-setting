@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -8,6 +9,24 @@ from scheduler.store import utc_now
 from scheduler.whatsapp import WhatsAppUnavailable
 
 from .conftest import post_webhook, webhook
+
+
+def _prepare_appointment(app):
+    client = app.test_client()
+    post_webhook(client, webhook())
+    store = app.extensions["store"]
+    proposal_id = store.dashboard("default")["items"][0]["proposal_id"]
+    scheduling = app.extensions["scheduling"]
+    scheduling.send_proposal(proposal_id)
+    post_webhook(client, webhook("wamid.confirm", body="The second one works for me"))
+    appointment_id = store.dashboard("default")["items"][0]["appointment_id"]
+    return store, scheduling, appointment_id
+
+
+def _book_appointment(app):
+    store, scheduling, appointment_id = _prepare_appointment(app)
+    scheduling.book_appointment(appointment_id)
+    return store, scheduling, appointment_id
 
 
 class FailingWhatsApp:
@@ -99,6 +118,67 @@ def test_unexpected_proposal_provider_error_is_non_retryable_and_redacted(app_bu
     proposal = store.get_proposal("default", proposal_id)
     assert proposal["status"] == "manual_required"
     assert secret_provider_detail not in proposal["error_text"]
+    assert secret_provider_detail not in str(store.recent_audit("default", 10))
+
+
+def test_calendar_availability_exception_details_are_not_persisted(app_bundle, monkeypatch):
+    app, calendar, _ = app_bundle
+    secret_provider_detail = "PRIVATE_GOOGLE_RESPONSE_TOKEN"
+
+    def fail_free_slots(*args, **kwargs):
+        raise RuntimeError(secret_provider_detail)
+
+    monkeypatch.setattr(calendar, "free_slots", fail_free_slots)
+    post_webhook(app.test_client(), webhook())
+    store = app.extensions["store"]
+    with store.connect() as db:
+        request_id = db.execute("SELECT id FROM scheduling_requests ORDER BY id DESC LIMIT 1").fetchone()["id"]
+    request = store.request_detail("default", request_id)
+    transition = next(event for event in request["audit"] if event["action"] == "request.transition" and event["detail"].get("to") == "failed")
+
+    assert transition["detail"]["error_class"] == "RuntimeError"
+    assert secret_provider_detail not in str(request)
+
+
+def test_booking_confirmation_exception_details_are_not_audited(app_bundle, monkeypatch):
+    app, _, whatsapp = app_bundle
+    store, scheduling, appointment_id = _prepare_appointment(app)
+    secret_provider_detail = "PRIVATE_WHATSAPP_RESPONSE_TOKEN"
+
+    def fail_send(*args, **kwargs):
+        raise RuntimeError(secret_provider_detail)
+
+    monkeypatch.setattr(whatsapp, "send_reply", fail_send)
+    scheduling.book_appointment(appointment_id)
+
+    with store.connect() as db:
+        audit = db.execute("SELECT detail_json FROM audit_events WHERE action='confirmation.send_failed' AND entity_id=?", (str(appointment_id),)).fetchone()
+    assert audit is not None
+    assert '"error_class": "RuntimeError"' in audit["detail_json"]
+    assert secret_provider_detail not in audit["detail_json"]
+
+
+def test_reminder_provider_exception_details_are_not_persisted(app_bundle, monkeypatch):
+    app, _, whatsapp = app_bundle
+    store, scheduling, appointment_id = _book_appointment(app)
+    scheduling.settings = replace(scheduling.settings, whatsapp_reminder_template="appointment_reminder")
+    secret_provider_detail = "PRIVATE_REMINDER_PROVIDER_TOKEN"
+
+    def fail_template(*args, **kwargs):
+        raise RuntimeError(secret_provider_detail)
+
+    monkeypatch.setattr(whatsapp, "send_template", fail_template)
+    with store.connect() as db:
+        db.execute("UPDATE background_jobs SET run_at=? WHERE dedupe_key LIKE ?", ((utc_now() - timedelta(minutes=1)).isoformat(), f"reminder:{appointment_id}:%"))
+
+    result = app.extensions["scheduling"].run_due_jobs()
+
+    assert result["manual_required"] == 1
+    with store.connect() as db:
+        job = db.execute("SELECT status,last_error FROM background_jobs WHERE dedupe_key LIKE ?", (f"reminder:{appointment_id}:%",)).fetchone()
+    assert job["status"] == "manual_required"
+    assert "unverified" in job["last_error"]
+    assert secret_provider_detail not in job["last_error"]
     assert secret_provider_detail not in str(store.recent_audit("default", 10))
 
 

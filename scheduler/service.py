@@ -211,7 +211,10 @@ class SchedulingService:
                 intent.requested_start, intent.duration_minutes, preferred_time=intent.preferred_time,
             )
         except Exception as exc:  # noqa: BLE001 - Google provider SDK errors are not a stable shared exception type.
-            self.store.transition_request(self.settings.workspace_id, request_id, "failed", "scheduler", {"provider": "google_calendar", "error": str(exc)[:200]})
+            self.store.transition_request(
+                self.settings.workspace_id, request_id, "failed", "scheduler",
+                {"provider": "google_calendar", "error_class": type(exc).__name__},
+            )
             return
         if not slots:
             self.store.transition_request(self.settings.workspace_id, request_id, "needs_clarification", "scheduler", {"reason": "no_slots_in_search_window"})
@@ -430,7 +433,10 @@ class SchedulingService:
                 self._send_booking_confirmation(appointment)
             except Exception as exc:  # noqa: BLE001 - WhatsApp send can fail after booking; preserve the booked state and manual warning.
                 warning = "Calendar event was booked, but WhatsApp confirmation requires operator attention."
-                self.store.audit(self.settings.workspace_id, actor, "confirmation.send_failed", "appointment", appointment_id, {"error": str(exc)[:200]})
+                self.store.audit(
+                    self.settings.workspace_id, actor, "confirmation.send_failed", "appointment", appointment_id,
+                    {"error_class": type(exc).__name__},
+                )
         self._ensure_booking_reminder(appointment)
         self.store.audit(self.settings.workspace_id, actor, "appointment.booked", "appointment", appointment_id, {"google_event_id": event["id"], "warning": warning})
         return {"status": "booked", "event_link": event.get("htmlLink"), "warning": warning}
@@ -723,9 +729,12 @@ class SchedulingService:
                 self.whatsapp.send_template(appointment["sender"], self.settings.whatsapp_reminder_template, appointment["language"], [appointment["title"], local.strftime("%d-%m-%Y %H:%M")])
                 self.store.complete_job(self.settings.workspace_id, job["id"], "sent")
                 totals["sent"] += 1
-            except Exception as exc:  # noqa: BLE001 - provider timeouts are operationally ambiguous; do not auto-retry reminders.
+            except Exception:  # noqa: BLE001 - provider timeouts are operationally ambiguous; do not auto-retry reminders.
                 # Provider timeouts are operationally ambiguous: do not auto-retry or risk duplicate reminders.
-                self.store.complete_job(self.settings.workspace_id, job["id"], "manual_required", str(exc)[:500])
+                self.store.complete_job(
+                    self.settings.workspace_id, job["id"], "manual_required",
+                    "WhatsApp reminder delivery is unverified; check provider status before retrying.",
+                )
                 totals["manual_required"] += 1
         return totals
 
