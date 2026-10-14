@@ -30,7 +30,7 @@ from .config import Settings, rate_limit_client_ip
 from .crypto import CryptoBox
 from .service import AssistedRequestError, AutomationPaused, SchedulingService
 from .store import Store
-from .whatsapp import WhatsAppClient, signature_is_valid
+from .whatsapp import WhatsAppClient, WhatsAppUnavailable, signature_is_valid
 
 
 def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, intent_provider=None) -> Flask:
@@ -290,8 +290,18 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
         try:
             scheduling.send_proposal(proposal_id, settings.operator_name)
             flash("The proposal was sent through WhatsApp Cloud API.", "success")
-        except Exception as exc:  # noqa: BLE001 - provider SDK errors are not a stable shared exception type; preserve the review state.
+        except (KeyError, ValueError) as exc:
             flash(f"Proposal not sent: {exc}", "error")
+        except AutomationPaused:
+            flash("Proposal not sent: WhatsApp sending is disabled while automation is paused.", "error")
+        except WhatsAppUnavailable as exc:
+            if exc.retry_safe:
+                flash("WhatsApp confirmed that the message was not delivered. An explicit retry is available.", "error")
+            else:
+                flash("WhatsApp delivery could not be verified. Check provider status before retrying.", "error")
+        except Exception as exc:  # noqa: BLE001 - provider details must not be reflected into the operator page.
+            app.logger.warning("WhatsApp proposal send failed (%s)", type(exc).__name__)
+            flash("WhatsApp delivery could not be verified. Check provider status before retrying.", "error")
         return redirect(url_for("dashboard"))
 
     @app.post("/actions/proposals/<int:proposal_id>/reconcile")
@@ -644,6 +654,28 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             return _error("proposal_not_sendable", "The proposal cannot be sent in its current state.", 409)
         except AutomationPaused:
             return _error("automation_paused", "WhatsApp sending is disabled while automation is paused.", 409)
+        except WhatsAppUnavailable as exc:
+            if exc.retry_safe:
+                return _error(
+                    "whatsapp_send_failed",
+                    "WhatsApp confirmed that the message was not delivered. An explicit retry is available.",
+                    502,
+                    retryable=True,
+                )
+            return _error(
+                "whatsapp_delivery_unverified",
+                "WhatsApp delivery could not be verified. Check provider status before retrying.",
+                502,
+                retryable=False,
+            )
+        except Exception as exc:  # noqa: BLE001 - provider details must not escape this mutation API.
+            app.logger.warning("WhatsApp proposal API failed (%s)", type(exc).__name__)
+            return _error(
+                "whatsapp_delivery_unverified",
+                "WhatsApp delivery could not be verified. Check provider status before retrying.",
+                502,
+                retryable=False,
+            )
 
     @app.post("/api/appointments/<int:appointment_id>/book")
     @admin_required

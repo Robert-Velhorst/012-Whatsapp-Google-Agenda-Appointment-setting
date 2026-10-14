@@ -295,12 +295,21 @@ class SchedulingService:
             return {"status": "sent", "provider_message_id": provider_id}
         except WhatsAppUnavailable as exc:
             if exc.retry_safe:
-                self.store.mark_proposal_failed(self.settings.workspace_id, proposal_id, str(exc))
+                self.store.mark_proposal_failed(
+                    self.settings.workspace_id, proposal_id,
+                    "WhatsApp confirmed non-delivery; an explicit retry is available.",
+                )
             else:
-                self.store.mark_proposal_manual_required(self.settings.workspace_id, proposal_id, str(exc))
+                self.store.mark_proposal_manual_required(
+                    self.settings.workspace_id, proposal_id,
+                    "WhatsApp delivery is unverified; check provider status before retrying.",
+                )
             raise
         except Exception as exc:  # Provider send errors vary; persist ambiguous delivery for manual review, not retry.
-            self.store.mark_proposal_manual_required(self.settings.workspace_id, proposal_id, str(exc))
+            self.store.mark_proposal_manual_required(
+                self.settings.workspace_id, proposal_id,
+                "WhatsApp delivery is unverified; check provider status before retrying.",
+            )
             raise
 
     def confirm_public(self, token: str, slot_index: int, consent: bool) -> dict[str, Any]:

@@ -11,14 +11,15 @@ from .conftest import post_webhook, webhook
 
 
 class FailingWhatsApp:
-    def __init__(self, retry_safe: bool):
+    def __init__(self, retry_safe: bool, message: str = "simulated provider failure"):
         self.retry_safe = retry_safe
+        self.message = message
 
     def configured(self):
         return True
 
     def send_reply(self, recipient, message, reply_to=None):
-        raise WhatsAppUnavailable("simulated provider failure", retry_safe=self.retry_safe)
+        raise WhatsAppUnavailable(self.message, retry_safe=self.retry_safe)
 
 
 @pytest.mark.parametrize(("retry_safe", "expected_status"), [(False, "manual_required"), (True, "send_failed")])
@@ -33,6 +34,101 @@ def test_proposal_send_distinguishes_ambiguous_delivery(app_bundle, retry_safe, 
         app.extensions["scheduling"].send_proposal(proposal_id)
 
     assert store.get_proposal("default", proposal_id)["status"] == expected_status
+
+
+@pytest.mark.parametrize(
+    ("retry_safe", "expected_status", "error_code", "retryable"),
+    [
+        (True, "send_failed", "whatsapp_send_failed", True),
+        (False, "manual_required", "whatsapp_delivery_unverified", False),
+    ],
+)
+def test_proposal_send_api_maps_delivery_certainty_and_redacts_provider_details(
+    app_bundle, auth_headers, retry_safe, expected_status, error_code, retryable,
+):
+    app, _, _ = app_bundle
+    client = app.test_client()
+    post_webhook(client, webhook())
+    store = app.extensions["store"]
+    proposal_id = store.dashboard("default")["items"][0]["proposal_id"]
+    secret_provider_detail = "PRIVATE_PROVIDER_RESPONSE_DO_NOT_DISCLOSE"
+    app.extensions["scheduling"].whatsapp = FailingWhatsApp(retry_safe, secret_provider_detail)
+
+    response = client.post(f"/api/proposals/{proposal_id}/send", headers=auth_headers)
+
+    expected_message = (
+        "WhatsApp confirmed that the message was not delivered. An explicit retry is available."
+        if retry_safe
+        else "WhatsApp delivery could not be verified. Check provider status before retrying."
+    )
+    assert response.status_code == 502
+    assert response.get_json()["error"] == {
+        "code": error_code,
+        "message": expected_message,
+        "retryable": retryable,
+    }
+    assert secret_provider_detail not in response.get_data(as_text=True)
+    proposal = store.get_proposal("default", proposal_id)
+    assert proposal["status"] == expected_status
+    assert secret_provider_detail not in proposal["error_text"]
+    assert secret_provider_detail not in str(store.recent_audit("default", 10))
+
+
+def test_unexpected_proposal_provider_error_is_non_retryable_and_redacted(app_bundle, auth_headers):
+    app, _, _ = app_bundle
+    client = app.test_client()
+    post_webhook(client, webhook())
+    store = app.extensions["store"]
+    proposal_id = store.dashboard("default")["items"][0]["proposal_id"]
+    secret_provider_detail = "PRIVATE_UNEXPECTED_PROVIDER_RESPONSE"
+
+    class UnexpectedFailingWhatsApp(FailingWhatsApp):
+        def send_reply(self, recipient, message, reply_to=None):
+            raise RuntimeError(secret_provider_detail)
+
+    app.extensions["scheduling"].whatsapp = UnexpectedFailingWhatsApp(False)
+    response = client.post(f"/api/proposals/{proposal_id}/send", headers=auth_headers)
+
+    assert response.status_code == 502
+    assert response.get_json()["error"] == {
+        "code": "whatsapp_delivery_unverified",
+        "message": "WhatsApp delivery could not be verified. Check provider status before retrying.",
+        "retryable": False,
+    }
+    assert secret_provider_detail not in response.get_data(as_text=True)
+    proposal = store.get_proposal("default", proposal_id)
+    assert proposal["status"] == "manual_required"
+    assert secret_provider_detail not in proposal["error_text"]
+    assert secret_provider_detail not in str(store.recent_audit("default", 10))
+
+
+def test_operator_proposal_send_hides_unexpected_provider_details(app_bundle):
+    app, _, _ = app_bundle
+    client = app.test_client()
+    post_webhook(client, webhook())
+    store = app.extensions["store"]
+    proposal_id = store.dashboard("default")["items"][0]["proposal_id"]
+    secret_provider_detail = "PRIVATE_UNEXPECTED_OPERATOR_PROVIDER_RESPONSE"
+
+    class UnexpectedFailingWhatsApp(FailingWhatsApp):
+        def send_reply(self, recipient, message, reply_to=None):
+            raise RuntimeError(secret_provider_detail)
+
+    app.extensions["scheduling"].whatsapp = UnexpectedFailingWhatsApp(False)
+    with client.session_transaction() as current:
+        current["operator_authenticated"] = True
+        current["csrf_token"] = "provider-error-csrf"
+
+    response = client.post(
+        f"/actions/proposals/{proposal_id}/send",
+        data={"csrf_token": "provider-error-csrf"},
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert secret_provider_detail not in response.get_data(as_text=True)
+    assert b"WhatsApp delivery could not be verified" in response.data
+    assert secret_provider_detail not in store.get_proposal("default", proposal_id)["error_text"]
 
 
 def test_operator_can_reconcile_verified_delivery_without_resending(app_bundle):
