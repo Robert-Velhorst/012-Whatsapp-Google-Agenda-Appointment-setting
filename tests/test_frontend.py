@@ -118,3 +118,10 @@ def test_static_assets_are_content_versioned_before_immutable_caching(app_bundle
         assert unversioned.status_code == 200
         assert unversioned.headers["Cache-Control"] == "public, max-age=0, must-revalidate"
 
+
+def test_responsive_scheduling_detail_remains_available_below_desktop_width(app_bundle):
+    app, _, _ = app_bundle
+    stylesheet = (Path(app.static_folder) / "app.css").read_text(encoding="utf-8")
+
+    assert "@media(max-width:1180px){.desk-layout{grid-template-columns:1fr}.detail-rail{display:block}" in stylesheet
+

@@ -152,3 +152,9 @@ Remaining external gate: authorized Meta/Google credentials and approvals, a sta
 - Google Calendar lookup is read-only and validates the deterministic event ID, confirmed status, private appointment marker, and exact timezone-aware interval. A match atomically restores appointment/request state and audit history; an absent event becomes an explicitly retryable failure. Errors or mismatches preserve manual review.
 - Recovery sends no WhatsApp confirmation. Business reminder scheduling is restored only after a verified event; personal assisted-flow communication remains manual.
 - Focused tests passed for matching/absent/mismatched provider events, sanitized lookup errors, retry path, CSRF, and no-send behavior. Full suite and exact-commit hosted checks remain to be run.
+
+## Responsive request-detail accessibility — 2026-10-14
+
+- Fresh browser QA at a 390px mobile viewport showed the scheduling page selected a request in the URL but CSS hid `.detail-rail` below 1180px. This made request details, the personal WhatsApp confirmation draft, and cancel/reconciliation controls unreachable on narrow screens.
+- Changed the responsive layout to render the detail rail below the queue. A synthetic browser walkthrough now reaches the assisted flow, shares the private link only after operator confirmation, confirms a slot with consent, books through a fake Calendar, and displays the manual personal-confirmation draft. The rendered page is 390px wide with no document-level horizontal overflow; the nav retains its intentional horizontal scroll.
+- Added a regression check for the responsive breakpoint. UI QA used a fresh local test database and fake providers only; it did not access personal WhatsApp, Google, ngrok, or HAI. Full suite: 142 passed in 215.07s; `compileall`, `pip check`, and `git diff --check` passed. This CSS/test follow-up is local at this checkpoint; exact-head hosted CI and Windows package checks are still required after push.
