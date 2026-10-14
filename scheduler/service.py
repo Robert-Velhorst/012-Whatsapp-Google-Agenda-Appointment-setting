@@ -223,7 +223,7 @@ class SchedulingService:
         try:
             response = self.whatsapp.send_reply(proposal["sender"], proposal["reply_text"], None)
             provider_id = response.get("messages", [{}])[0].get("id")
-            self.store.mark_proposal_sent(self.settings.workspace_id, proposal_id, provider_id)
+            self.store.mark_proposal_sent(self.settings.workspace_id, proposal_id, provider_id, actor)
             self.store.audit(self.settings.workspace_id, actor, "proposal.sent", "proposal", proposal_id, {"provider_message_id": provider_id})
             return {"status": "sent", "provider_message_id": provider_id}
         except WhatsAppUnavailable as exc:
@@ -278,15 +278,14 @@ class SchedulingService:
     def book_appointment(self, appointment_id: int, actor: str = "operator") -> dict[str, Any]:
         if self.is_paused():
             raise RuntimeError("Automation is paused; external calendar changes are disabled")
-        appointment = self.store.claim_booking(self.settings.workspace_id, appointment_id)
+        appointment = self.store.claim_booking(self.settings.workspace_id, appointment_id, actor)
         if not appointment:
             existing = self.store.get_appointment(self.settings.workspace_id, appointment_id)
             if existing and existing["status"] == "booked":
                 return {"status": "booked", "idempotent": True, "event_link": existing.get("google_event_link")}
             raise ValueError("Appointment is not ready to book")
         if appointment["consent_status"] == "revoked":
-            self.store.mark_booking_failed(self.settings.workspace_id, appointment_id, "Contact consent is revoked")
-            self.store.transition_request(self.settings.workspace_id, appointment["request_id"], "failed", actor, {"reason": "consent_revoked"})
+            self.store.mark_booking_failed(self.settings.workspace_id, appointment_id, "Contact consent is revoked", actor, {"reason": "consent_revoked"})
             raise ValueError("Contact consent is revoked")
         try:
             if not self.calendar.is_slot_available(
@@ -299,8 +298,7 @@ class SchedulingService:
             event = self.calendar.create_event(appointment)
             self.store.mark_booked(self.settings.workspace_id, appointment_id, event["id"], event.get("htmlLink"))
         except Exception as exc:  # Calendar provider errors vary; persist the failed state before surfacing.
-            self.store.mark_booking_failed(self.settings.workspace_id, appointment_id, str(exc))
-            self.store.transition_request(self.settings.workspace_id, appointment["request_id"], "failed", actor, {"error": str(exc)[:200]})
+            self.store.mark_booking_failed(self.settings.workspace_id, appointment_id, str(exc), actor, {"error": str(exc)[:200]})
             raise
 
         warning = None

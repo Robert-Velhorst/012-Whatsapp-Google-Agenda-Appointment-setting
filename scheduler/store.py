@@ -159,16 +159,31 @@ class Store:
         self.audit(workspace_id, "scheduler", "request.detected", "request", request_id, {"confidence": confidence, "duration_minutes": duration})
         return request_id
 
+    def _transition_request_in_transaction(
+        self,
+        db: sqlite3.Connection,
+        workspace_id: str,
+        request_id: int,
+        target: str,
+        actor: str,
+        detail: dict | None = None,
+    ) -> None:
+        row = db.execute("SELECT status FROM scheduling_requests WHERE workspace_id=? AND id=?", (workspace_id, request_id)).fetchone()
+        if not row:
+            raise KeyError("Scheduling request not found")
+        current = row[0]
+        if not transition_allowed(current, target):
+            raise ValueError(f"Invalid request transition {current} -> {target}")
+        now = utc_now().isoformat()
+        db.execute("UPDATE scheduling_requests SET status=?,updated_at=? WHERE workspace_id=? AND id=?", (target, now, workspace_id, request_id))
+        db.execute(
+            "INSERT INTO audit_events(workspace_id,actor,action,entity_type,entity_id,detail_json,created_at) VALUES(?,?,?,?,?,?,?)",
+            (workspace_id, actor, "request.transition", "request", str(request_id), json.dumps({"from": current, "to": target, **(detail or {})}, sort_keys=True), now),
+        )
+
     def transition_request(self, workspace_id: str, request_id: int, target: str, actor: str, detail: dict | None = None) -> None:
         with self.connect() as db:
-            row = db.execute("SELECT status FROM scheduling_requests WHERE workspace_id=? AND id=?", (workspace_id, request_id)).fetchone()
-            if not row:
-                raise KeyError("Scheduling request not found")
-            current = row[0]
-            if not transition_allowed(current, target):
-                raise ValueError(f"Invalid request transition {current} -> {target}")
-            db.execute("UPDATE scheduling_requests SET status=?,updated_at=? WHERE workspace_id=? AND id=?", (target, utc_now().isoformat(), workspace_id, request_id))
-        self.audit(workspace_id, actor, "request.transition", "request", request_id, {"from": current, "to": target, **(detail or {})})
+            self._transition_request_in_transaction(db, workspace_id, request_id, target, actor, detail)
 
     def create_proposal(self, workspace_id: str, request_id: int, reply_text: str, slots: list[str], booking_token: str | None = None) -> tuple[int, str]:
         now = utc_now().isoformat()
@@ -180,7 +195,7 @@ class Store:
                 (workspace_id, request_id, self.crypto.encrypt(reply_text), json.dumps(slots), token_hash, self.crypto.encrypt(raw_token), now),
             )
             proposal_id = int(cursor.lastrowid)
-        self.transition_request(workspace_id, request_id, "proposal_pending", "scheduler", {"proposal_id": proposal_id})
+            self._transition_request_in_transaction(db, workspace_id, request_id, "proposal_pending", "scheduler", {"proposal_id": proposal_id})
         return proposal_id, raw_token
 
     def update_proposal_reply(self, workspace_id: str, proposal_id: int, reply_text: str) -> None:
@@ -228,10 +243,13 @@ class Store:
             if not rows:
                 return 0
             db.executemany("UPDATE proposals SET status='expired' WHERE workspace_id=? AND id=?", [(workspace_id, row["id"]) for row in rows])
-            db.executemany(
-                "UPDATE scheduling_requests SET status='needs_clarification',updated_at=? WHERE workspace_id=? AND id=? AND status='awaiting_confirmation'",
-                [(now, workspace_id, row["request_id"]) for row in rows],
-            )
+            for row in rows:
+                request = db.execute("SELECT status FROM scheduling_requests WHERE workspace_id=? AND id=?", (workspace_id, row["request_id"])).fetchone()
+                if request and request["status"] == "awaiting_confirmation":
+                    self._transition_request_in_transaction(
+                        db, workspace_id, int(row["request_id"]), "needs_clarification", "scheduler",
+                        {"proposal_id": int(row["id"]), "reason": "proposal_expired"},
+                    )
         self.audit(workspace_id, "scheduler", "proposals.expired", "proposal", None, {"count": len(rows), "cutoff": cutoff_iso})
         return len(rows)
 
@@ -254,13 +272,13 @@ class Store:
             self.audit(workspace_id, "worker", "proposals.stale_send_recovered", "proposal", None, {"count": cursor.rowcount, "cutoff": cutoff_iso})
         return cursor.rowcount
 
-    def mark_proposal_sent(self, workspace_id: str, proposal_id: int, provider_message_id: str | None) -> None:
+    def mark_proposal_sent(self, workspace_id: str, proposal_id: int, provider_message_id: str | None, actor: str = "operator") -> None:
         with self.connect() as db:
             row = db.execute("SELECT request_id,status FROM proposals WHERE workspace_id=? AND id=?", (workspace_id, proposal_id)).fetchone()
             if not row or row["status"] != "sending":
                 raise ValueError("Proposal is not sendable")
             db.execute("UPDATE proposals SET status='sent',provider_message_id=?,sent_at=?,error_text=NULL WHERE id=?", (provider_message_id, utc_now().isoformat(), proposal_id))
-        self.transition_request(workspace_id, int(row["request_id"]), "awaiting_confirmation", "operator", {"proposal_id": proposal_id})
+            self._transition_request_in_transaction(db, workspace_id, int(row["request_id"]), "awaiting_confirmation", actor, {"proposal_id": proposal_id})
 
     def record_whatsapp_delivery_status(
         self, workspace_id: str, provider_message_id: str, status: str, provider_timestamp: str,
@@ -326,14 +344,14 @@ class Store:
             )
             if cursor.rowcount != 1:
                 raise ValueError("This assisted proposal is no longer awaiting manual sharing.")
-        self.transition_request(
-            workspace_id, int(row["request_id"]), "awaiting_confirmation", actor,
-            {"proposal_id": proposal_id, "delivery": "operator_confirmed_manual_share"},
-        )
-        self.audit(
-            workspace_id, actor, "proposal.shared_manually", "proposal", proposal_id,
-            {"provider_delivery_verified": False, "channel": "personal_whatsapp"},
-        )
+            self._transition_request_in_transaction(
+                db, workspace_id, int(row["request_id"]), "awaiting_confirmation", actor,
+                {"proposal_id": proposal_id, "delivery": "operator_confirmed_manual_share"},
+            )
+            db.execute(
+                "INSERT INTO audit_events(workspace_id,actor,action,entity_type,entity_id,detail_json,created_at) VALUES(?,?,?,?,?,?,?)",
+                (workspace_id, actor, "proposal.shared_manually", "proposal", str(proposal_id), json.dumps({"provider_delivery_verified": False, "channel": "personal_whatsapp"}, sort_keys=True), now),
+            )
 
     def mark_proposal_failed(self, workspace_id: str, proposal_id: int, error: str) -> None:
         with self.connect() as db:
@@ -377,13 +395,12 @@ class Store:
                     "WHERE workspace_id=? AND id=? AND status='manual_required'",
                     (now, workspace_id, proposal_id),
                 )
-                request_update = db.execute(
-                    "UPDATE scheduling_requests SET status='awaiting_confirmation',updated_at=? "
-                    "WHERE workspace_id=? AND id=? AND status='proposal_pending'",
-                    (now, workspace_id, row["request_id"]),
-                )
-                if proposal_update.rowcount != 1 or request_update.rowcount != 1:
+                if proposal_update.rowcount != 1:
                     raise ValueError("Proposal or request changed during delivery reconciliation")
+                self._transition_request_in_transaction(
+                    db, workspace_id, int(row["request_id"]), "awaiting_confirmation", actor,
+                    {"proposal_id": proposal_id, "delivery_reconciled": outcome},
+                )
             else:
                 proposal_update = db.execute(
                     "UPDATE proposals SET status='send_failed',error_text=? "
@@ -430,8 +447,11 @@ class Store:
                 (workspace_id, row["request_id"], proposal_id, start.isoformat(), end.isoformat(), request_row["timezone"], now, now),
             )
             appointment_id = int(cursor.lastrowid)
-        self.transition_request(workspace_id, int(row["request_id"]), "slot_confirmed", actor, {"slot_index": slot_index, "appointment_id": appointment_id})
-        self.audit(workspace_id, actor, "proposal.confirmed", "proposal", proposal_id, {"slot_index": slot_index})
+            self._transition_request_in_transaction(db, workspace_id, int(row["request_id"]), "slot_confirmed", actor, {"slot_index": slot_index, "appointment_id": appointment_id})
+            db.execute(
+                "INSERT INTO audit_events(workspace_id,actor,action,entity_type,entity_id,detail_json,created_at) VALUES(?,?,?,?,?,?,?)",
+                (workspace_id, actor, "proposal.confirmed", "proposal", str(proposal_id), json.dumps({"slot_index": slot_index}, sort_keys=True), now),
+            )
         return appointment_id
 
     def get_appointment(self, workspace_id: str, appointment_id: int) -> dict[str, Any] | None:
@@ -444,29 +464,54 @@ class Store:
             ).fetchone()
         return dict(row) if row else None
 
-    def claim_booking(self, workspace_id: str, appointment_id: int) -> dict[str, Any] | None:
+    def claim_booking(self, workspace_id: str, appointment_id: int, actor: str = "operator") -> dict[str, Any] | None:
         with self.connect() as db:
+            row = db.execute("SELECT request_id FROM appointments WHERE workspace_id=? AND id=?", (workspace_id, appointment_id)).fetchone()
+            if not row:
+                return None
             cursor = db.execute(
                 "UPDATE appointments SET status='booking',updated_at=? WHERE workspace_id=? AND id=? AND status IN ('pending_approval','failed')",
                 (utc_now().isoformat(), workspace_id, appointment_id),
             )
             if cursor.rowcount != 1:
                 return None
+            self._transition_request_in_transaction(db, workspace_id, int(row["request_id"]), "booking_pending", actor, {"appointment_id": appointment_id})
         appointment = self.get_appointment(workspace_id, appointment_id)
-        self.transition_request(workspace_id, int(appointment["request_id"]), "booking_pending", "operator", {"appointment_id": appointment_id})
         return appointment
 
     def mark_booked(self, workspace_id: str, appointment_id: int, event_id: str, event_link: str | None) -> None:
         now = utc_now().isoformat()
         with self.connect() as db:
-            row = db.execute("SELECT request_id FROM appointments WHERE workspace_id=? AND id=?", (workspace_id, appointment_id)).fetchone()
-            db.execute("UPDATE appointments SET status='booked',google_event_id=?,google_event_link=?,error_text=NULL,updated_at=? WHERE id=?", (event_id, event_link, now, appointment_id))
-        self.transition_request(workspace_id, int(row["request_id"]), "booked", "scheduler", {"appointment_id": appointment_id, "google_event_id": event_id})
+            row = db.execute("SELECT request_id FROM appointments WHERE workspace_id=? AND id=? AND status='booking'", (workspace_id, appointment_id)).fetchone()
+            if not row:
+                raise ValueError("Appointment is not being booked")
+            cursor = db.execute(
+                "UPDATE appointments SET status='booked',google_event_id=?,google_event_link=?,error_text=NULL,updated_at=? WHERE workspace_id=? AND id=? AND status='booking'",
+                (event_id, event_link, now, workspace_id, appointment_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Appointment changed while booking")
+            self._transition_request_in_transaction(db, workspace_id, int(row["request_id"]), "booked", "scheduler", {"appointment_id": appointment_id, "google_event_id": event_id})
 
-    def mark_booking_failed(self, workspace_id: str, appointment_id: int, error: str) -> None:
+    def mark_booking_failed(
+        self,
+        workspace_id: str,
+        appointment_id: int,
+        error: str,
+        actor: str = "scheduler",
+        detail: dict | None = None,
+    ) -> None:
         with self.connect() as db:
-            db.execute("UPDATE appointments SET status='failed',error_text=?,updated_at=? WHERE workspace_id=? AND id=?", (error[:500], utc_now().isoformat(), workspace_id, appointment_id))
-        self.audit(workspace_id, "scheduler", "appointment.booking_failed", "appointment", appointment_id, {"error": error[:200]})
+            row = db.execute("SELECT request_id FROM appointments WHERE workspace_id=? AND id=?", (workspace_id, appointment_id)).fetchone()
+            if not row:
+                raise KeyError("Appointment not found")
+            now = utc_now().isoformat()
+            db.execute("UPDATE appointments SET status='failed',error_text=?,updated_at=? WHERE workspace_id=? AND id=?", (error[:500], now, workspace_id, appointment_id))
+            self._transition_request_in_transaction(db, workspace_id, int(row["request_id"]), "failed", actor, detail or {"error": error[:200]})
+            db.execute(
+                "INSERT INTO audit_events(workspace_id,actor,action,entity_type,entity_id,detail_json,created_at) VALUES(?,?,?,?,?,?,?)",
+                (workspace_id, "scheduler", "appointment.booking_failed", "appointment", str(appointment_id), json.dumps({"error": error[:200]}, sort_keys=True), now),
+            )
 
     @staticmethod
     def _background_job_ids_for_appointment(
@@ -504,7 +549,14 @@ class Store:
             row = db.execute("SELECT request_id,status FROM appointments WHERE workspace_id=? AND id=?", (workspace_id, appointment_id)).fetchone()
             if not row or row["status"] == "cancelled":
                 return False
-            db.execute("UPDATE appointments SET status='cancelled',updated_at=? WHERE id=?", (now, appointment_id))
+            if row["status"] == "booking":
+                raise ValueError("Appointment booking is in progress; wait for it to finish before cancelling")
+            cursor = db.execute(
+                "UPDATE appointments SET status='cancelled',updated_at=? WHERE workspace_id=? AND id=? AND status!='booking' AND status!='cancelled'",
+                (now, workspace_id, appointment_id),
+            )
+            if cursor.rowcount != 1:
+                return False
             reminder_job_ids = self._background_job_ids_for_appointment(
                 db, workspace_id, appointment_id, job_type="appointment_reminder", active_only=True
             )
@@ -512,7 +564,7 @@ class Store:
                 "UPDATE background_jobs SET status='cancelled',updated_at=? WHERE workspace_id=? AND id=? AND status IN ('queued','manual_required','failed')",
                 [(now, workspace_id, job_id) for job_id in reminder_job_ids],
             )
-        self.transition_request(workspace_id, int(row["request_id"]), "cancelled", actor, {"appointment_id": appointment_id})
+            self._transition_request_in_transaction(db, workspace_id, int(row["request_id"]), "cancelled", actor, {"appointment_id": appointment_id})
         return True
 
     def schedule_job(self, workspace_id: str, job_type: str, dedupe_key: str, run_at: str, payload: dict) -> int | None:
@@ -572,16 +624,24 @@ class Store:
             ).fetchall()
             if not rows:
                 return 0
-            db.executemany(
-                "UPDATE appointments SET status='manual_required',error_text=?,updated_at=? WHERE workspace_id=? AND id=? AND status='booking'",
-                [(message, now, workspace_id, row["id"]) for row in rows],
+            recovered = 0
+            for row in rows:
+                cursor = db.execute(
+                    "UPDATE appointments SET status='manual_required',error_text=?,updated_at=? WHERE workspace_id=? AND id=? AND status='booking'",
+                    (message, now, workspace_id, row["id"]),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                self._transition_request_in_transaction(
+                    db, workspace_id, int(row["request_id"]), "failed", "worker",
+                    {"appointment_id": int(row["id"]), "reason": "stale_calendar_booking"},
+                )
+                recovered += 1
+            db.execute(
+                "INSERT INTO audit_events(workspace_id,actor,action,entity_type,entity_id,detail_json,created_at) VALUES(?,?,?,?,?,?,?)",
+                (workspace_id, "worker", "bookings.stale_recovered", "appointment", None, json.dumps({"count": recovered, "cutoff": cutoff_iso}, sort_keys=True), now),
             )
-            db.executemany(
-                "UPDATE scheduling_requests SET status='failed',updated_at=? WHERE workspace_id=? AND id=? AND status='booking_pending'",
-                [(now, workspace_id, row["request_id"]) for row in rows],
-            )
-        self.audit(workspace_id, "worker", "bookings.stale_recovered", "appointment", None, {"count": len(rows), "cutoff": cutoff_iso})
-        return len(rows)
+        return recovered
 
     def outbound_allowed(self, workspace_id: str, subject: str, max_per_hour: int) -> bool:
         cutoff = (utc_now() - timedelta(hours=1)).isoformat()

@@ -542,6 +542,8 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             return jsonify(scheduling.cancel_appointment(appointment_id, settings.operator_name))
         except KeyError:
             return _error("not_found", "Appointment not found", 404)
+        except ValueError:
+            return _error("appointment_not_cancellable", "The appointment cannot be cancelled while booking is in progress.", 409)
 
     @app.get("/api/audit")
     @admin_required

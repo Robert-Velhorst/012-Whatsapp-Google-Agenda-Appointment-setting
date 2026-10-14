@@ -4,6 +4,7 @@ from datetime import timedelta
 
 from scheduler.migrations import MIGRATIONS
 from scheduler.store import Store, utc_now
+from .conftest import post_webhook, webhook
 
 
 def test_reminder_without_approved_template_becomes_manual(app_bundle):
@@ -21,6 +22,33 @@ def test_unknown_job_fails_truthfully(app_bundle):
     store.schedule_job("default", "unknown", "unknown-test", (utc_now() - timedelta(minutes=1)).isoformat(), {})
     result = app.extensions["scheduling"].run_due_jobs()
     assert result["failed"] == 1
+
+
+def test_worker_recovers_stale_booking_and_request_state_atomically(app_bundle):
+    app, _, _ = app_bundle
+    client = app.test_client()
+    post_webhook(client, webhook())
+    store = app.extensions["store"]
+    item = store.dashboard("default")["items"][0]
+    app.extensions["scheduling"].send_proposal(item["proposal_id"])
+    post_webhook(client, webhook("wamid.2", body="The second one works for me"))
+    appointment_id = store.dashboard("default")["items"][0]["appointment_id"]
+    appointment = store.claim_booking("default", appointment_id)
+    assert appointment is not None
+
+    with store.connect() as db:
+        db.execute("UPDATE appointments SET updated_at='2020-01-01T00:00:00+00:00' WHERE id=?", (appointment_id,))
+    recovered = store.recover_stale_bookings("default", "2021-01-01T00:00:00+00:00")
+
+    assert recovered == 1
+    assert store.get_appointment("default", appointment_id)["status"] == "manual_required"
+    request = store.request_detail("default", appointment["request_id"])
+    assert request["status"] == "failed"
+    transition = [
+        event for event in request["audit"]
+        if event["action"] == "request.transition" and event["detail"].get("reason") == "stale_calendar_booking"
+    ]
+    assert len(transition) == 1
 
 
 def test_retention_purge_runs_while_automation_is_paused(app_bundle):

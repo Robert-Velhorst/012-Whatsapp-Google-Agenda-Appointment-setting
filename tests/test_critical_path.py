@@ -1,3 +1,4 @@
+import sqlite3
 from dataclasses import replace
 
 import pytest
@@ -178,6 +179,44 @@ def test_cancelling_appointment_does_not_cancel_prefix_matching_reminder(app_bun
             )
         }
     assert statuses == {"cancel-target": "cancelled", "cancel-other": "queued", "cancel-unrelated-type": "queued"}
+
+
+def test_booking_cannot_be_cancelled_midflight_and_completion_is_atomic(app_bundle, auth_headers):
+    app, _, _ = app_bundle
+    client = app.test_client()
+    post_webhook(client, webhook())
+    store = app.extensions["store"]
+    item = store.dashboard("default")["items"][0]
+    app.extensions["scheduling"].send_proposal(item["proposal_id"])
+    post_webhook(client, webhook("wamid.2", body="The second one works for me"))
+    appointment_id = store.dashboard("default")["items"][0]["appointment_id"]
+
+    assert store.claim_booking("default", appointment_id, "test_operator") is not None
+    appointment = store.get_appointment("default", appointment_id)
+    assert appointment["status"] == "booking"
+    assert store.request_detail("default", appointment["request_id"])["status"] == "booking_pending"
+
+    cancelled = client.post(f"/api/appointments/{appointment_id}/cancel", headers=auth_headers)
+    assert cancelled.status_code == 409
+    assert store.get_appointment("default", appointment_id)["status"] == "booking"
+
+    with store.connect() as db:
+        db.execute(
+            "CREATE TRIGGER fail_transition_audit BEFORE INSERT ON audit_events "
+            "WHEN NEW.action='request.transition' BEGIN SELECT RAISE(ABORT,'injected audit failure'); END"
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="injected audit failure"):
+        store.mark_booked("default", appointment_id, "google-event-1", "https://calendar.example/event")
+
+    assert store.get_appointment("default", appointment_id)["status"] == "booking"
+    assert store.get_appointment("default", appointment_id)["google_event_id"] is None
+    assert store.request_detail("default", appointment["request_id"])["status"] == "booking_pending"
+
+    with store.connect() as db:
+        db.execute("DROP TRIGGER fail_transition_audit")
+    store.mark_booked("default", appointment_id, "google-event-1", "https://calendar.example/event")
+    assert store.get_appointment("default", appointment_id)["status"] == "booked"
+    assert store.request_detail("default", appointment["request_id"])["status"] == "booked"
 
 
 def test_public_booking_link_expires(app_bundle):
