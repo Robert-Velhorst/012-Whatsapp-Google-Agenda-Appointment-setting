@@ -7,7 +7,7 @@ import sys
 import threading
 from pathlib import Path
 
-from waitress import serve
+from waitress import create_server
 
 from scheduler.app import create_app
 from scheduler.config import validate_bind_host
@@ -42,10 +42,12 @@ def main(argv: list[str] | None = None) -> int | None:
                 logger.exception("Background scheduling worker failed")
             stop.wait(interval)
 
-    thread = threading.Thread(target=worker, name="agenda-relay-worker", daemon=True)
-    thread.start()
+    server = None
+    thread = None
     try:
-        serve(
+        # Bind the listener before starting background work. A port/configuration
+        # failure must not send reminders from an instance that never came online.
+        server = create_server(
             app,
             host=host,
             port=int(os.getenv("PORT", "5000")),
@@ -53,10 +55,18 @@ def main(argv: list[str] | None = None) -> int | None:
             connection_limit=max(20, min(int(os.getenv("WAITRESS_CONNECTION_LIMIT", "100")), 1000)),
             channel_timeout=120,
         )
+        thread = threading.Thread(target=worker, name="agenda-relay-worker", daemon=True)
+        thread.start()
+        server.run()
     finally:
         stop.set()
-        thread.join(timeout=5)
-        app.extensions["store"].close()
+        try:
+            if thread is not None:
+                thread.join(timeout=5)
+            if server is not None:
+                server.close()
+        finally:
+            app.extensions["store"].close()
 
 
 if __name__ == "__main__":

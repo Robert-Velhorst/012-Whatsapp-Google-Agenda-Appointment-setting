@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from scheduler import config
 from scheduler import standalone
@@ -72,3 +76,75 @@ def test_frozen_setup_writes_configuration_beside_executable(monkeypatch, tmp_pa
         assert exc.code == 0
 
     assert setup_calls == [package]
+
+
+def test_standalone_does_not_start_worker_when_web_listener_cannot_bind(monkeypatch):
+    worker_calls = []
+    worker_started = threading.Event()
+    store_closed = []
+    service = SimpleNamespace(run_due_jobs=lambda: (worker_calls.append(True), worker_started.set()))
+    app = SimpleNamespace(extensions={
+        "settings": SimpleNamespace(is_production=False),
+        "scheduling": service,
+        "store": SimpleNamespace(close=lambda: store_closed.append(True)),
+    })
+    monkeypatch.setattr(standalone, "create_app", lambda: app)
+    monkeypatch.setenv("PORT", "5019")
+    monkeypatch.setenv("BIND_HOST", "127.0.0.1")
+    monkeypatch.setattr(
+        standalone,
+        "create_server",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("address already in use")),
+        raising=False,
+    )
+
+    def fail_after_worker_starts(*_args, **_kwargs):
+        assert worker_started.wait(timeout=1), "the worker should expose the pre-bind startup race"
+        raise OSError("address already in use")
+
+    monkeypatch.setattr(standalone, "serve", fail_after_worker_starts, raising=False)
+    with pytest.raises(OSError, match="address already in use"):
+        standalone.main([])
+
+    assert worker_calls == []
+    assert store_closed == [True]
+
+
+def test_standalone_binds_before_worker_and_closes_resources(monkeypatch):
+    events = []
+    worker_started = threading.Event()
+    service = SimpleNamespace(
+        run_due_jobs=lambda: (events.append("worker"), worker_started.set())
+    )
+    store = SimpleNamespace(close=lambda: events.append("store_closed"))
+    app = SimpleNamespace(extensions={
+        "settings": SimpleNamespace(is_production=False),
+        "scheduling": service,
+        "store": store,
+    })
+
+    class FakeServer:
+        def run(self):
+            assert worker_started.wait(timeout=1)
+            events.append("server_run")
+
+        def close(self):
+            events.append("server_closed")
+
+    def create_server(*_args, **kwargs):
+        events.append("server_bound")
+        assert kwargs["threads"] == 2
+        assert kwargs["connection_limit"] == 20
+        return FakeServer()
+
+    monkeypatch.setattr(standalone, "create_app", lambda: app)
+    monkeypatch.setattr(standalone, "create_server", create_server)
+    monkeypatch.setenv("PORT", "5019")
+    monkeypatch.setenv("BIND_HOST", "127.0.0.1")
+    monkeypatch.setenv("WAITRESS_THREADS", "1")
+    monkeypatch.setenv("WAITRESS_CONNECTION_LIMIT", "1")
+
+    standalone.main([])
+
+    assert events.index("server_bound") < events.index("worker") < events.index("server_run")
+    assert events[-2:] == ["server_closed", "store_closed"]
