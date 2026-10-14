@@ -40,7 +40,10 @@ def test_rate_limit_reservation_is_atomic(app_bundle):
     store = app.extensions["store"]
 
     def reserve(_):
-        return store.reserve_rate_event("default", "same-contact", "whatsapp.outbound", 5, 60)
+        try:
+            return store.reserve_rate_event("default", "same-contact", "whatsapp.outbound", 5, 60)
+        finally:
+            store.close()
 
     with ThreadPoolExecutor(max_workers=12) as pool:
         results = list(pool.map(reserve, range(24)))
@@ -59,6 +62,8 @@ def test_concurrent_proposal_send_reaches_provider_only_once(app_bundle):
             return "sent"
         except ValueError:
             return "rejected"
+        finally:
+            store.close()
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(send, range(2)))
@@ -78,6 +83,8 @@ def test_concurrent_confirmation_creates_one_appointment(app_bundle):
             return store.confirm_proposal("default", proposal_id, 0, "contact")
         except Exception as exc:
             return type(exc).__name__
+        finally:
+            store.close()
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(confirm, range(2)))
