@@ -475,7 +475,23 @@ class Store:
             if not row or row["status"] == "cancelled":
                 return False
             db.execute("UPDATE appointments SET status='cancelled',updated_at=? WHERE id=?", (now, appointment_id))
-            db.execute("UPDATE background_jobs SET status='cancelled',updated_at=? WHERE workspace_id=? AND payload_json LIKE ? AND status IN ('queued','manual_required','failed')", (now, workspace_id, f'%"appointment_id": {appointment_id}%'))
+            candidates = db.execute(
+                "SELECT id,payload_json FROM background_jobs WHERE workspace_id=? AND job_type='appointment_reminder' "
+                "AND status IN ('queued','manual_required','failed') AND payload_json LIKE ?",
+                (workspace_id, f'%"appointment_id": {appointment_id}%'),
+            ).fetchall()
+            reminder_job_ids = []
+            for candidate in candidates:
+                try:
+                    payload = json.loads(candidate["payload_json"])
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(payload, dict) and type(payload.get("appointment_id")) is int and payload["appointment_id"] == appointment_id:
+                    reminder_job_ids.append(int(candidate["id"]))
+            db.executemany(
+                "UPDATE background_jobs SET status='cancelled',updated_at=? WHERE workspace_id=? AND id=? AND status IN ('queued','manual_required','failed')",
+                [(now, workspace_id, job_id) for job_id in reminder_job_ids],
+            )
         self.transition_request(workspace_id, int(row["request_id"]), "cancelled", actor, {"appointment_id": appointment_id})
         return True
 

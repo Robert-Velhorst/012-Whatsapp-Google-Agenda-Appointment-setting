@@ -153,6 +153,33 @@ def test_public_booking_hides_provider_error_details(app_bundle, caplog):
     assert appointment["appointment_status"] == "failed"
 
 
+def test_cancelling_appointment_does_not_cancel_prefix_matching_reminder(app_bundle):
+    app, _, _ = app_bundle
+    client = app.test_client()
+    post_webhook(client, webhook())
+    store = app.extensions["store"]
+    item = store.dashboard("default")["items"][0]
+    app.extensions["scheduling"].send_proposal(item["proposal_id"])
+    post_webhook(client, webhook("wamid.2", body="The second one works for me"))
+    appointment = store.dashboard("default")["items"][0]
+    appointment_id = appointment["appointment_id"]
+    prefix_matching_id = int(f"{appointment_id}0")
+    store.schedule_job("default", "appointment_reminder", "cancel-target", "2099-01-01T00:00:00+00:00", {"appointment_id": appointment_id})
+    store.schedule_job("default", "appointment_reminder", "cancel-other", "2099-01-01T00:00:00+00:00", {"appointment_id": prefix_matching_id})
+    store.schedule_job("default", "unrelated_job", "cancel-unrelated-type", "2099-01-01T00:00:00+00:00", {"appointment_id": appointment_id})
+
+    assert store.cancel_appointment("default", appointment_id, "operator") is True
+
+    with store.connect() as db:
+        statuses = {
+            row["dedupe_key"]: row["status"]
+            for row in db.execute(
+                "SELECT dedupe_key,status FROM background_jobs WHERE workspace_id='default' AND dedupe_key IN ('cancel-target','cancel-other','cancel-unrelated-type')"
+            )
+        }
+    assert statuses == {"cancel-target": "cancelled", "cancel-other": "queued", "cancel-unrelated-type": "queued"}
+
+
 def test_public_booking_link_expires(app_bundle):
     app, _, _ = app_bundle
     client = app.test_client()
