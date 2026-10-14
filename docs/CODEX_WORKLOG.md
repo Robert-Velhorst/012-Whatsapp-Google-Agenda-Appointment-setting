@@ -145,3 +145,10 @@ Remaining external gate: authorized Meta/Google credentials and approvals, a sta
 - Regression evidence: the race test checks that cancellation is refused mid-flight and injects an SQLite audit insert failure to prove the appointment and request both roll back; it then verifies a successful completion. Full suite: 131 passed. `compileall`, `pip check`, and `git diff --check` pass. This follow-up is local at this checkpoint and requires current-head hosted CI/package validation after push.
 - Extended the same atomic transition path to proposal creation, expiry, delivery reconciliation, and stale-booking recovery. Stale recovery now commits its appointment `manual_required` state, `booking_pending -> failed` request transition, and audits together; a regression verifies both resulting state records.
 - Final local verification for the expanded transaction/recovery changes: 132 tests passed; `compileall`, `pip check`, and `git diff --check` passed. `pip-audit` is not installed in this venv; the exact-commit hosted audit/package workflow is still required.
+
+## Stale Calendar booking reconciliation — 2026-10-14
+
+- Added a session/CSRF-protected dashboard action and bearer-authenticated API endpoint to reconcile appointments left `manual_required` after a stale booking claim.
+- Google Calendar lookup is read-only and validates the deterministic event ID, confirmed status, private appointment marker, and exact timezone-aware interval. A match atomically restores appointment/request state and audit history; an absent event becomes an explicitly retryable failure. Errors or mismatches preserve manual review.
+- Recovery sends no WhatsApp confirmation. Business reminder scheduling is restored only after a verified event; personal assisted-flow communication remains manual.
+- Focused tests passed for matching/absent/mismatched provider events, sanitized lookup errors, retry path, CSRF, and no-send behavior. Full suite and exact-commit hosted checks remain to be run.

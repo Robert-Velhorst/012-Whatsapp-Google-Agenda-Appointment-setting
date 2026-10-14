@@ -313,6 +313,22 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             flash(f"Calendar booking failed safely: {exc}", "error")
         return redirect(safe_next_url(request.referrer))
 
+    @app.post("/actions/appointments/<int:appointment_id>/reconcile")
+    @operator_required
+    def action_reconcile_booking(appointment_id: int):
+        if not valid_csrf():
+            abort(403)
+        try:
+            result = scheduling.reconcile_stale_booking(appointment_id, settings.operator_name)
+            message = result["warning"]
+            flash(message, "success" if result["status"] == "booked" else "error")
+        except (KeyError, ValueError) as exc:
+            flash(f"Calendar reconciliation not completed: {exc}", "error")
+        except Exception as exc:  # noqa: BLE001 - provider errors must not be reflected to the operator page.
+            app.logger.warning("Calendar reconciliation failed (%s)", type(exc).__name__)
+            flash("Google Calendar could not verify this booking. No booking state was changed; try again or inspect the calendar manually.", "error")
+        return redirect(safe_next_url(request.referrer))
+
     @app.post("/actions/appointments/<int:appointment_id>/cancel")
     @operator_required
     def action_cancel(appointment_id: int):
@@ -544,6 +560,19 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             return _error("not_found", "Appointment not found", 404)
         except ValueError:
             return _error("appointment_not_cancellable", "The appointment cannot be cancelled while booking is in progress.", 409)
+
+    @app.post("/api/appointments/<int:appointment_id>/reconcile")
+    @admin_required
+    def api_reconcile_booking(appointment_id: int):
+        try:
+            return jsonify(scheduling.reconcile_stale_booking(appointment_id, settings.operator_name))
+        except KeyError:
+            return _error("not_found", "Appointment not found", 404)
+        except ValueError:
+            return _error("appointment_not_reconcilable", "The appointment is not awaiting calendar reconciliation.", 409)
+        except Exception as exc:  # noqa: BLE001 - provider errors may contain private calendar details.
+            app.logger.warning("Calendar reconciliation API failed (%s)", type(exc).__name__)
+            return _error("calendar_verification_failed", "Google Calendar could not verify this booking. No booking state was changed.", 502)
 
     @app.get("/api/audit")
     @admin_required

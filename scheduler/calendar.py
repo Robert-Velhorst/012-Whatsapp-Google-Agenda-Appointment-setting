@@ -142,8 +142,50 @@ class GoogleCalendar:
             ).execute()
         except HttpError as exc:
             if getattr(exc, "resp", None) is not None and exc.resp.status == 409:
-                return service.events().get(calendarId=self.settings.google_calendar_id, eventId=event_id).execute()
+                existing = self.find_appointment_event(appointment)
+                if existing is None:
+                    raise CalendarUnavailable("Google Calendar event ID already exists but is not an active matching appointment.") from exc
+                return existing
             raise
+
+    def find_appointment_event(self, appointment: dict) -> dict | None:
+        """Verify whether this appointment's deterministic Google event already exists."""
+        event_id = self._event_id(appointment["workspace_id"], appointment["id"])
+        try:
+            event = self._service().events().get(calendarId=self.settings.google_calendar_id, eventId=event_id).execute()
+        except HttpError as exc:
+            if getattr(exc, "resp", None) is not None and exc.resp.status == 404:
+                return None
+            raise CalendarUnavailable("Google Calendar could not verify the appointment event.") from exc
+        if not isinstance(event, dict) or event.get("status") == "cancelled":
+            return None
+        if event.get("id") != event_id or event.get("status") != "confirmed":
+            raise CalendarUnavailable("Google Calendar returned an event that cannot be safely reconciled.")
+
+        extended = event.get("extendedProperties")
+        private = extended.get("private") if isinstance(extended, dict) else None
+        if not isinstance(private, dict):
+            raise CalendarUnavailable("Google Calendar event is missing its Agenda Relay appointment marker.")
+        if private.get("agendaRelayAppointmentId") != str(appointment["id"]):
+            raise CalendarUnavailable("Google Calendar returned an event that does not match this appointment.")
+        try:
+            event_start = datetime.fromisoformat(event["start"]["dateTime"])
+            event_end = datetime.fromisoformat(event["end"]["dateTime"])
+            appointment_start = datetime.fromisoformat(appointment["start_at"])
+            appointment_end = datetime.fromisoformat(appointment["end_at"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise CalendarUnavailable("Google Calendar returned an incomplete appointment event.") from exc
+        if (
+            event_start.utcoffset() is None
+            or event_end.utcoffset() is None
+            or event_start != appointment_start
+            or event_end != appointment_end
+        ):
+            raise CalendarUnavailable("Google Calendar event time does not match this appointment.")
+        event_link = event.get("htmlLink")
+        if event_link is not None and not isinstance(event_link, str):
+            raise CalendarUnavailable("Google Calendar returned an invalid appointment link.")
+        return {"id": event_id, "htmlLink": event_link}
 
     def update_event(self, event_id: str, start_at: str, end_at: str, timezone_name: str) -> dict:
         service = self._service()

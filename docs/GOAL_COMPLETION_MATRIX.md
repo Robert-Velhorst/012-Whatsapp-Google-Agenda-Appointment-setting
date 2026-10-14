@@ -130,6 +130,8 @@ The operator can paste a relevant message into the authenticated **Personal What
 
 ## Targeted follow-up — 2026-10-14
 
+- Added an operator reconciliation action for stale Calendar bookings. It performs a read-only lookup of the deterministic event, validates active status, Agenda Relay appointment marker, and exact timezone-aware start/end values, then atomically restores the appointment/request to booked. If no event exists, it exposes a separate explicit retry. Provider errors or event mismatches leave the manual-review state intact. No WhatsApp confirmation is sent during recovery; personal-flow confirmations remain operator-assisted. Focused reconciliation/calendar/UI tests passed; full-suite and exact-head CI results are pending this checkpoint.
+
 - Closed a Windows/ngrok OAuth bootstrap deadlock: the tunnel launcher now uses the protected `public_ingress` readiness contract. Google OAuth may be disconnected only while automation is paused; full production configuration and signed WhatsApp webhook settings must already validate.
 - Closed an unsafe resume path: the operator action cannot resume automation while configuration errors or provider disconnections remain.
 - Regression evidence: `tests/test_hai_integration.py` covers paused/unpaused OAuth bootstrap and authenticated readiness; `tests/test_security_privacy.py` covers the refused resume and visible error message. Full suite: 66 passed; dependency audit and consistency checks passed; PowerShell parser accepted `windows/Start-Ngrok.ps1`.

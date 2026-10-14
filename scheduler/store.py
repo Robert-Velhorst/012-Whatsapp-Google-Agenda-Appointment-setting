@@ -643,6 +643,54 @@ class Store:
             )
         return recovered
 
+    def reconcile_stale_booking(self, workspace_id: str, appointment_id: int, event: dict | None, actor: str) -> str:
+        """Record an operator-triggered provider lookup for a stale calendar booking."""
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT request_id,status FROM appointments WHERE workspace_id=? AND id=?",
+                (workspace_id, appointment_id),
+            ).fetchone()
+            if not row:
+                raise KeyError("Appointment not found")
+            if row["status"] != "manual_required":
+                raise ValueError("Appointment is not awaiting calendar reconciliation")
+
+            if event is not None:
+                event_id = event.get("id") if isinstance(event, dict) else None
+                event_link = event.get("htmlLink") if isinstance(event, dict) else None
+                if not isinstance(event_id, str) or not event_id or (event_link is not None and not isinstance(event_link, str)):
+                    raise ValueError("Calendar verification returned invalid event details")
+                cursor = db.execute(
+                    "UPDATE appointments SET status='booked',google_event_id=?,google_event_link=?,error_text=NULL,updated_at=? "
+                    "WHERE workspace_id=? AND id=? AND status='manual_required'",
+                    (event_id, event_link, now, workspace_id, appointment_id),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("Appointment changed during calendar reconciliation")
+                self._transition_request_in_transaction(
+                    db, workspace_id, int(row["request_id"]), "booked", actor,
+                    {"appointment_id": appointment_id, "reason": "verified_calendar_event", "google_event_id": event_id},
+                )
+                outcome = "event_found"
+                detail = {"outcome": outcome, "provider": "google_calendar", "whatsapp_sent": False}
+            else:
+                cursor = db.execute(
+                    "UPDATE appointments SET status='failed',error_text=?,updated_at=? "
+                    "WHERE workspace_id=? AND id=? AND status='manual_required'",
+                    ("No matching Google Calendar event was found; an explicit retry is available.", now, workspace_id, appointment_id),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("Appointment changed during calendar reconciliation")
+                outcome = "event_not_found"
+                detail = {"outcome": outcome, "provider": "google_calendar", "retry_requires_explicit_operator_action": True}
+
+            db.execute(
+                "INSERT INTO audit_events(workspace_id,actor,action,entity_type,entity_id,detail_json,created_at) VALUES(?,?,?,?,?,?,?)",
+                (workspace_id, actor, "appointment.booking_reconciled", "appointment", str(appointment_id), json.dumps(detail, sort_keys=True), now),
+            )
+        return outcome
+
     def outbound_allowed(self, workspace_id: str, subject: str, max_per_hour: int) -> bool:
         cutoff = (utc_now() - timedelta(hours=1)).isoformat()
         with self.connect() as db:

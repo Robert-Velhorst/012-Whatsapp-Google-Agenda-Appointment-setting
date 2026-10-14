@@ -38,7 +38,7 @@ The booking confirmation is sent after the event write. A reminder job is queued
 
 ## 7. Audit and recovery
 
-All state transitions, authentication events, provider success/failure, pause changes, reminder outcomes, privacy operations, and retention purges are timestamped. Ambiguous provider timeouts are not automatically retried. Stale send, booking, and worker claims are recovered to manual review after 15 minutes so a process crash cannot silently strand or replay external work.
+All state transitions, authentication events, provider success/failure, pause changes, reminder outcomes, privacy operations, and retention purges are timestamped. Ambiguous provider timeouts are not automatically retried. Stale send, booking, and worker claims are recovered to manual review after 15 minutes so a process crash cannot silently strand or replay external work. For a stale Calendar booking, an operator can run a read-only lookup of the deterministic event ID. Only an active, confirmed event with the expected appointment marker and exact start/end times restores `booked`; absence changes the appointment to an explicitly retryable failure. Lookup errors or mismatches leave it in manual review. Reconciliation sends no WhatsApp confirmation, so the operator must follow up manually.
 
 ## Smoke-test evidence
 

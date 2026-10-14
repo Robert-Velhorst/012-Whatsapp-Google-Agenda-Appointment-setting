@@ -31,6 +31,73 @@ def test_calendar_cancel_treats_missing_event_as_idempotent(app_bundle):
     assert calendar.cancel_event("already-deleted") is None
 
 
+def test_calendar_lookup_verifies_event_id_marker_and_interval(app_bundle):
+    app, _, _ = app_bundle
+    calendar = GoogleCalendar(app.extensions["settings"], CryptoBox("test-encryption-key"))
+    appointment = {
+        "workspace_id": "default", "id": 12,
+        "start_at": "2030-01-07T10:00:00+01:00", "end_at": "2030-01-07T10:30:00+01:00",
+    }
+    event_id = calendar._event_id(appointment["workspace_id"], appointment["id"])
+    event = {
+        "id": event_id,
+        "status": "confirmed",
+        "extendedProperties": {"private": {"agendaRelayAppointmentId": "12"}},
+        "start": {"dateTime": "2030-01-07T09:00:00+00:00"},
+        "end": {"dateTime": "2030-01-07T09:30:00+00:00"},
+        "htmlLink": "https://calendar.google.com/event/12",
+    }
+
+    class GetEvents:
+        def get(self, **kwargs):
+            assert kwargs == {"calendarId": "primary", "eventId": event_id}
+            return SimpleNamespace(execute=lambda: event)
+
+    calendar._service = lambda: SimpleNamespace(events=lambda: GetEvents())
+
+    assert calendar.find_appointment_event(appointment) == {"id": event_id, "htmlLink": event["htmlLink"]}
+
+
+def test_calendar_lookup_returns_none_for_missing_event(app_bundle):
+    app, _, _ = app_bundle
+    calendar = GoogleCalendar(app.extensions["settings"], CryptoBox("test-encryption-key"))
+
+    class MissingEvents:
+        def get(self, **kwargs):
+            return DeleteCall()
+
+    calendar._service = lambda: SimpleNamespace(events=lambda: MissingEvents())
+
+    assert calendar.find_appointment_event({"workspace_id": "default", "id": 12}) is None
+
+
+@pytest.mark.parametrize("mutation", ["marker", "time", "status"])
+def test_calendar_lookup_rejects_mismatched_event(app_bundle, mutation):
+    app, _, _ = app_bundle
+    calendar = GoogleCalendar(app.extensions["settings"], CryptoBox("test-encryption-key"))
+    appointment = {
+        "workspace_id": "default", "id": 12,
+        "start_at": "2030-01-07T10:00:00+01:00", "end_at": "2030-01-07T10:30:00+01:00",
+    }
+    event = {
+        "id": calendar._event_id("default", 12),
+        "status": "confirmed",
+        "extendedProperties": {"private": {"agendaRelayAppointmentId": "12"}},
+        "start": {"dateTime": appointment["start_at"]},
+        "end": {"dateTime": appointment["end_at"]},
+    }
+    if mutation == "marker":
+        event["extendedProperties"]["private"]["agendaRelayAppointmentId"] = "99"
+    elif mutation == "time":
+        event["start"]["dateTime"] = "2030-01-07T11:00:00+01:00"
+    else:
+        event["status"] = "tentative"
+    calendar._service = lambda: SimpleNamespace(events=lambda: SimpleNamespace(get=lambda **kwargs: SimpleNamespace(execute=lambda: event)))
+
+    with pytest.raises(CalendarUnavailable):
+        calendar.find_appointment_event(appointment)
+
+
 def test_google_token_write_is_atomic_and_encrypted(app_bundle, tmp_path):
     app, _, _ = app_bundle
     token_path = tmp_path / "credentials" / "google-token.json"

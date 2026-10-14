@@ -20,7 +20,7 @@ REQUEST_TRANSITIONS = {
     "slot_confirmed": {"booking_pending", "cancelled", "failed"},
     "booking_pending": {"booked", "cancelled", "failed"},
     "booked": {"cancelled", "failed"},
-    "failed": {"proposal_pending", "booking_pending", "cancelled"},
+    "failed": {"proposal_pending", "booking_pending", "booked", "cancelled"},
     "cancelled": set(),
 }
 

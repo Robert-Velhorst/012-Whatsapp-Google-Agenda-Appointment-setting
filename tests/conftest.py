@@ -16,6 +16,8 @@ class FakeCalendar:
     def __init__(self):
         self.created = []
         self.cancelled = []
+        self.events = {}
+        self.lookup_error = None
 
     def connected(self):
         return True
@@ -34,7 +36,14 @@ class FakeCalendar:
 
     def create_event(self, appointment):
         self.created.append(dict(appointment))
-        return {"id": f"event-{appointment['id']}", "htmlLink": f"https://calendar.google.com/event/{appointment['id']}"}
+        event = {"id": f"event-{appointment['id']}", "htmlLink": f"https://calendar.google.com/event/{appointment['id']}"}
+        self.events[int(appointment["id"])] = event
+        return event
+
+    def find_appointment_event(self, appointment):
+        if self.lookup_error:
+            raise self.lookup_error
+        return self.events.get(int(appointment["id"]))
 
     def cancel_event(self, event_id):
         self.cancelled.append(event_id)

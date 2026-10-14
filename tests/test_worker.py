@@ -7,6 +7,21 @@ from scheduler.store import Store, utc_now
 from .conftest import post_webhook, webhook
 
 
+def _stale_booking(app):
+    post_webhook(app.test_client(), webhook())
+    store = app.extensions["store"]
+    item = store.dashboard("default")["items"][0]
+    app.extensions["scheduling"].send_proposal(item["proposal_id"])
+    post_webhook(app.test_client(), webhook("wamid.2", body="The second one works for me"))
+    appointment_id = store.dashboard("default")["items"][0]["appointment_id"]
+    appointment = store.claim_booking("default", appointment_id)
+    assert appointment is not None
+    with store.connect() as db:
+        db.execute("UPDATE appointments SET updated_at='2020-01-01T00:00:00+00:00' WHERE id=?", (appointment_id,))
+    assert store.recover_stale_bookings("default", "2021-01-01T00:00:00+00:00") == 1
+    return store, appointment_id, appointment
+
+
 def test_reminder_without_approved_template_becomes_manual(app_bundle):
     app, _, _ = app_bundle
     store = app.extensions["store"]
@@ -26,21 +41,8 @@ def test_unknown_job_fails_truthfully(app_bundle):
 
 def test_worker_recovers_stale_booking_and_request_state_atomically(app_bundle):
     app, _, _ = app_bundle
-    client = app.test_client()
-    post_webhook(client, webhook())
-    store = app.extensions["store"]
-    item = store.dashboard("default")["items"][0]
-    app.extensions["scheduling"].send_proposal(item["proposal_id"])
-    post_webhook(client, webhook("wamid.2", body="The second one works for me"))
-    appointment_id = store.dashboard("default")["items"][0]["appointment_id"]
-    appointment = store.claim_booking("default", appointment_id)
-    assert appointment is not None
+    store, appointment_id, appointment = _stale_booking(app)
 
-    with store.connect() as db:
-        db.execute("UPDATE appointments SET updated_at='2020-01-01T00:00:00+00:00' WHERE id=?", (appointment_id,))
-    recovered = store.recover_stale_bookings("default", "2021-01-01T00:00:00+00:00")
-
-    assert recovered == 1
     assert store.get_appointment("default", appointment_id)["status"] == "manual_required"
     request = store.request_detail("default", appointment["request_id"])
     assert request["status"] == "failed"
@@ -49,6 +51,75 @@ def test_worker_recovers_stale_booking_and_request_state_atomically(app_bundle):
         if event["action"] == "request.transition" and event["detail"].get("reason") == "stale_calendar_booking"
     ]
     assert len(transition) == 1
+
+
+def test_stale_booking_reconciliation_restores_verified_event_without_sending_whatsapp(app_bundle):
+    app, calendar, whatsapp = app_bundle
+    store, appointment_id, appointment = _stale_booking(app)
+    calendar.events[appointment_id] = {"id": f"event-{appointment_id}", "htmlLink": f"https://calendar.google.com/event/{appointment_id}"}
+    sent_before = len(whatsapp.sent)
+
+    result = app.extensions["scheduling"].reconcile_stale_booking(appointment_id)
+
+    assert result["status"] == "booked"
+    recovered = store.get_appointment("default", appointment_id)
+    assert recovered["status"] == "booked"
+    assert recovered["google_event_id"] == f"event-{appointment_id}"
+    assert store.request_detail("default", appointment["request_id"])["status"] == "booked"
+    assert len(whatsapp.sent) == sent_before
+    reminder_offset = app.extensions["settings"].reminder_minutes_before
+    assert any(job["dedupe_key"] == f"reminder:{appointment_id}:{reminder_offset}" for job in store.dashboard("default")["jobs"])
+
+
+def test_stale_booking_not_found_becomes_explicitly_retryable(app_bundle):
+    app, calendar, _ = app_bundle
+    store, appointment_id, _ = _stale_booking(app)
+
+    result = app.extensions["scheduling"].reconcile_stale_booking(appointment_id)
+
+    assert result["status"] == "failed"
+    assert result["retryable"] is True
+    assert store.get_appointment("default", appointment_id)["status"] == "failed"
+    assert calendar.created == []
+
+    booked = app.extensions["scheduling"].book_appointment(appointment_id)
+    assert booked["status"] == "booked"
+    assert len(calendar.created) == 1
+
+
+def test_stale_booking_lookup_failure_does_not_change_manual_state(app_bundle, auth_headers):
+    app, calendar, _ = app_bundle
+    store, appointment_id, _ = _stale_booking(app)
+    calendar.lookup_error = RuntimeError("private calendar response")
+
+    response = app.test_client().post(f"/api/appointments/{appointment_id}/reconcile", headers=auth_headers)
+
+    assert response.status_code == 502
+    assert b"private calendar response" not in response.data
+    assert store.get_appointment("default", appointment_id)["status"] == "manual_required"
+
+
+def test_operator_can_reconcile_stale_booking_from_csrf_protected_dashboard(app_bundle):
+    app, _, _ = app_bundle
+    store, appointment_id, appointment = _stale_booking(app)
+    client = app.test_client()
+    with client.session_transaction() as current:
+        current["operator_authenticated"] = True
+        current["csrf_token"] = "booking-reconcile-csrf"
+
+    page = client.get(f"/?view=scheduling&request={appointment['request_id']}")
+    assert page.status_code == 200
+    assert b"Calendar booking needs verification" in page.data
+    assert b"Check Google Calendar" in page.data
+
+    rejected = client.post(f"/actions/appointments/{appointment_id}/reconcile")
+    assert rejected.status_code == 403
+    accepted = client.post(
+        f"/actions/appointments/{appointment_id}/reconcile",
+        data={"csrf_token": "booking-reconcile-csrf"},
+    )
+    assert accepted.status_code == 302
+    assert store.get_appointment("default", appointment_id)["status"] == "failed"
 
 
 def test_retention_purge_runs_while_automation_is_paused(app_bundle):

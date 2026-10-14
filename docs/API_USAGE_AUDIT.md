@@ -22,6 +22,7 @@ All operator endpoints require bearer token or authenticated session. Session st
 | `GET /api/requests`, `/<id>` | Dashboard/API users | Search/filter/paginated requests and detail; page size is 1–100 and page number is clamped to available results |
 | `POST /api/proposals/<id>/send` | Dashboard/API users | Rate-limited official WhatsApp send |
 | `POST /api/appointments/<id>/book` | Dashboard/API users | Idempotent Google event creation |
+| `POST /api/appointments/<id>/reconcile` | Dashboard/API users | Read-only verification of a stale booking's deterministic Calendar event; restores booked state only for a verified matching event, or enables an explicit retry when absent; never sends WhatsApp |
 | `POST /api/appointments/<id>/cancel` | Dashboard/API users | Calendar cancellation and job stop |
 | `GET /api/audit` | Audit view/API users | Workspace-scoped event history, clamped to 1–500 rows |
 | `GET /api/contacts/<id>/export` | Privacy workflow | Downloadable contact JSON export containing contact, decrypted messages, scheduling requests, proposal drafts/slots, linked provider delivery receipts, and appointments; excludes recipient IDs and booking tokens and records successful exports in the audit trail |
@@ -31,6 +32,8 @@ All operator endpoints require bearer token or authenticated session. Session st
 The personal WhatsApp screen is session-only (not bearer API): `POST /actions/assisted/analyze` performs transient local analysis and a Calendar availability query, while `POST /actions/assisted/<id>/shared` activates the private booking link only after the operator confirms manual sharing. Both require CSRF and create no WhatsApp API calls.
 
 Browser contact deletion is handled by `POST /actions/contacts/<id>/delete`, not the bearer API: it requires the authenticated operator session, CSRF, a fresh current-password check, and an IP-scoped attempt limit. It refuses contacts with unresolved appointments; the operator must cancel or resolve those appointments separately first.
+
+Stale booking reconciliation is available through the session-protected, CSRF-checked `POST /actions/appointments/<id>/reconcile` route or the bearer-authenticated API route above. Provider lookup errors are sanitized and leave the `manual_required` state unchanged. A verified event restores the appointment and request to `booked` atomically. If no event exists, the appointment becomes `failed` and the operator may separately choose **Retry booking**. Recovery does not send WhatsApp confirmation; follow-up remains manual.
 
 ## External provider calls
 

@@ -327,6 +327,34 @@ class SchedulingService:
         changed = self.store.cancel_appointment(self.settings.workspace_id, appointment_id, actor)
         return {"status": "cancelled", "changed": changed}
 
+    def reconcile_stale_booking(self, appointment_id: int, actor: str = "operator") -> dict[str, Any]:
+        appointment = self.store.get_appointment(self.settings.workspace_id, appointment_id)
+        if not appointment:
+            raise KeyError("Appointment not found")
+        if appointment["status"] != "manual_required":
+            raise ValueError("Appointment is not awaiting calendar reconciliation")
+
+        event = self.calendar.find_appointment_event(appointment)
+        outcome = self.store.reconcile_stale_booking(self.settings.workspace_id, appointment_id, event, actor)
+        if outcome == "event_not_found":
+            return {
+                "status": "failed",
+                "retryable": True,
+                "warning": "No matching Google Calendar event was found. Review the request, then explicitly retry booking if appropriate.",
+            }
+
+        reminder_at = datetime.fromisoformat(appointment["start_at"]).astimezone(UTC) - timedelta(minutes=self.settings.reminder_minutes_before)
+        if reminder_at > utc_now() and not appointment["sender"].startswith("assisted:"):
+            self.store.schedule_job(
+                self.settings.workspace_id, "appointment_reminder", f"reminder:{appointment_id}:{self.settings.reminder_minutes_before}",
+                reminder_at.isoformat(), {"appointment_id": appointment_id},
+            )
+        return {
+            "status": "booked",
+            "event_link": event.get("htmlLink") if event else None,
+            "warning": "Google Calendar confirms the event. No WhatsApp confirmation was sent during recovery; follow up manually.",
+        }
+
     def run_due_jobs(self, limit: int = 20) -> dict[str, int]:
         totals = {"claimed": 0, "sent": 0, "manual_required": 0, "failed": 0, "recovered": 0, "recovered_sends": 0, "recovered_bookings": 0, "expired": 0}
         totals["recovered"] = self.store.recover_stale_jobs(
