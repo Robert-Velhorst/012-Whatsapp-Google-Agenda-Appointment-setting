@@ -165,3 +165,11 @@ Remaining external gate: authorized Meta/Google credentials and approvals, a sta
 - Ran `windows/Test-Package.ps1` against that executable on loopback port 5191 with a fresh disposable database: health `true`, development mode, branded login HTTP 200, 66.1 MiB measured working set. The application process was stopped by the smoke script afterward.
 - The exact-head hosted Windows package workflow `38494863561` passed dependency audits, all 142 tests, PowerShell runtime checks, package build, package smoke test, and artifact upload. The separate Ubuntu CI run `38494863543` remained queued at the time of this checkpoint.
 - No real Google, Meta/WhatsApp, ngrok, HAI, or customer data was used. Local smoke-test artifacts are in unique system-temp folders; they are not part of the repository or product data.
+
+## Calendar retry identity follow-up — 2026-10-14
+
+- Fixed a retry loop in which Google Calendar could continue returning 409 for a deterministic event ID after the corresponding event was cancelled/tombstoned, even after read-only reconciliation marked the appointment retryable.
+- Added migrations 7–8 for a persisted booking-attempt counter. Existing `booking`, `booked`, `manual_required`, and `failed` appointments retain attempt 1 and therefore their original lookup ID; new attempts increment atomically when claimed. Same-attempt retries stay idempotent, while an explicit retry after no-event reconciliation gets a distinct deterministic ID.
+- Regression coverage verifies v6 data backfill, first-attempt ID compatibility, distinct retry IDs, Calendar 409 handling, and the stale reconciliation → explicit retry state path. Targeted tests: `27 passed`; full suite: `145 passed in 160.10s`. `compileall`, `pip check`, and `git diff --check` passed; Ruff is unavailable in this local venv.
+- Google Calendar API guidance says IDs must be unique per calendar and recommends generating a new ID for a new instance after a 409 duplicate. Local Calendar behavior is mocked; no Google account or live Calendar was used.
+- Hosted exact-commit workflows, standalone rebuild, and provider acceptance remain pending for this follow-up.

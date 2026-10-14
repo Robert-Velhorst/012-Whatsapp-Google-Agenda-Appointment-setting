@@ -159,7 +159,7 @@ The frontend is server-rendered Flask/Jinja with local CSS and JavaScript assets
 
 The database holds workspaces, contacts, inbound messages, scheduling requests, proposals, appointments, background jobs, audit events, rate events, system state and schema versions. Migrations run during application initialization; `python -m scheduler.cli migrate` explicitly initializes/applies them. Back up before upgrading. There are no automatic downgrade migrations.
 
-The main request lifecycle is `detected → proposal_pending → awaiting_confirmation → slot_confirmed → booking_pending → booked`. Failure, clarification and cancellation states describe exceptions. Proposal sends and appointment writes have separate atomic claims. A deterministic Google event ID supports recovery from duplicate insertion attempts; it does not reserve a proposed time against unrelated calendar edits.
+The main request lifecycle is `detected → proposal_pending → awaiting_confirmation → slot_confirmed → booking_pending → booked`. Failure, clarification and cancellation states describe exceptions. Proposal sends and appointment writes have separate atomic claims. A persisted booking-attempt counter gives each deliberate retry a deterministic Google event ID while preserving the first-attempt ID for crash recovery. A same-attempt duplicate insert can safely recover the existing event; a new attempt is used only after an operator-triggered, read-only reconciliation finds no matching event. Event IDs do not reserve a proposed time against unrelated calendar edits.
 
 ## Configuration reference
 

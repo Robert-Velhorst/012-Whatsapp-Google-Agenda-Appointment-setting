@@ -28,7 +28,7 @@ Confirmation atomically closes the proposal and creates exactly one pending appo
 
 ## 5. Google Calendar event
 
-The operator chooses **Book confirmed slot**. Agenda Relay claims the appointment atomically and inserts a deterministic Google event ID. A retry after a provider 409 fetches the existing event instead of duplicating it. Only a stored, verified email is sent as a Calendar attendee; a WhatsApp display name is never treated as an email.
+The operator chooses **Book confirmed slot**. Agenda Relay claims the appointment atomically and inserts a deterministic Google event ID for that booking attempt. A same-attempt retry after a provider 409 fetches the existing event instead of duplicating it. If stale-booking reconciliation verifies that no event exists, an explicit operator retry advances the persisted attempt number and gets a new deterministic ID; this avoids reusing a cancelled/tombstoned event ID. Only a stored, verified email is sent as a Calendar attendee; a WhatsApp display name is never treated as an email.
 
 If event creation succeeds but WhatsApp confirmation fails, the appointment remains truthfully booked and the dashboard/audit trail flags communication attention.
 
@@ -38,7 +38,7 @@ The booking confirmation is sent after the event write. A reminder job is queued
 
 ## 7. Audit and recovery
 
-All state transitions, authentication events, provider success/failure, pause changes, reminder outcomes, privacy operations, and retention purges are timestamped. Ambiguous provider timeouts are not automatically retried. Stale send, booking, and worker claims are recovered to manual review after 15 minutes so a process crash cannot silently strand or replay external work. For a stale Calendar booking, an operator can run a read-only lookup of the deterministic event ID. Only an active, confirmed event with the expected appointment marker and exact start/end times restores `booked`; absence changes the appointment to an explicitly retryable failure. Lookup errors or mismatches leave it in manual review. Reconciliation sends no WhatsApp confirmation, so the operator must follow up manually.
+All state transitions, authentication events, provider success/failure, pause changes, reminder outcomes, privacy operations, and retention purges are timestamped. Ambiguous provider timeouts are not automatically retried. Stale send, booking, and worker claims are recovered to manual review after 15 minutes so a process crash cannot silently strand or replay external work. For a stale Calendar booking, an operator can run a read-only lookup of the current attempt's deterministic event ID. Only an active, confirmed event with the expected appointment marker and exact start/end times restores `booked`; absence changes the appointment to an explicitly retryable failure. Lookup errors or mismatches leave it in manual review. An explicit retry increments the persisted attempt and uses a fresh event ID. Reconciliation sends no WhatsApp confirmation, so the operator must follow up manually.
 
 ## Smoke-test evidence
 

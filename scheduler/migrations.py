@@ -95,6 +95,13 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX IF NOT EXISTS idx_whatsapp_delivery_retention
           ON whatsapp_delivery_events(workspace_id, received_at);
     """),
+    (7, """
+        ALTER TABLE appointments ADD COLUMN booking_attempt INTEGER NOT NULL DEFAULT 0;
+    """),
+    (8, """
+        UPDATE appointments SET booking_attempt=1
+        WHERE status IN ('booking','booked','manual_required','failed') AND booking_attempt=0;
+    """),
 ]
 
 

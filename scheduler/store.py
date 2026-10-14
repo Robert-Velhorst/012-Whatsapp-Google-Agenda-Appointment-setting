@@ -470,7 +470,8 @@ class Store:
             if not row:
                 return None
             cursor = db.execute(
-                "UPDATE appointments SET status='booking',updated_at=? WHERE workspace_id=? AND id=? AND status IN ('pending_approval','failed')",
+                "UPDATE appointments SET status='booking',booking_attempt=booking_attempt+1,updated_at=? "
+                "WHERE workspace_id=? AND id=? AND status IN ('pending_approval','failed')",
                 (utc_now().isoformat(), workspace_id, appointment_id),
             )
             if cursor.rowcount != 1:

@@ -58,6 +58,51 @@ def test_calendar_lookup_verifies_event_id_marker_and_interval(app_bundle):
     assert calendar.find_appointment_event(appointment) == {"id": event_id, "htmlLink": event["htmlLink"]}
 
 
+def test_booking_attempt_event_ids_preserve_first_attempt_and_separate_retries():
+    first = GoogleCalendar._event_id("default", 12)
+    explicit_first = GoogleCalendar._event_id("default", 12, 1)
+    retry = GoogleCalendar._event_id("default", 12, 2)
+
+    assert first == explicit_first
+    assert retry != first
+    assert set(retry) <= set("0123456789abcdefghijklmnopqrstuv")
+
+
+def test_calendar_insert_uses_new_id_after_confirmed_duplicate_conflict(app_bundle):
+    app, _, _ = app_bundle
+    calendar = GoogleCalendar(app.extensions["settings"], CryptoBox("test-encryption-key"))
+    appointment = {
+        "workspace_id": "default", "id": 12, "booking_attempt": 1,
+        "title": "Consultation", "start_at": "2030-01-07T10:00:00+01:00",
+        "end_at": "2030-01-07T10:30:00+01:00", "timezone": "Europe/Amsterdam",
+    }
+    inserted_ids = []
+
+    class Events:
+        def insert(self, *, calendarId, body, sendUpdates):
+            inserted_ids.append(body["id"])
+            if len(inserted_ids) == 1:
+                return SimpleNamespace(execute=lambda: (_ for _ in ()).throw(
+                    HttpError(SimpleNamespace(status=409, reason="Conflict"), b'{}')
+                ))
+            return SimpleNamespace(execute=lambda: {"id": body["id"], "status": "confirmed"})
+
+        def get(self, *, calendarId, eventId):
+            assert eventId == GoogleCalendar._event_id("default", 12, 1)
+            return SimpleNamespace(execute=lambda: {"id": eventId, "status": "cancelled"})
+
+    calendar._service = lambda: SimpleNamespace(events=lambda: Events())
+
+    with pytest.raises(CalendarUnavailable, match="already exists"):
+        calendar.create_event(appointment)
+
+    appointment["booking_attempt"] = 2
+    result = calendar.create_event(appointment)
+
+    assert result["id"] == GoogleCalendar._event_id("default", 12, 2)
+    assert inserted_ids == [GoogleCalendar._event_id("default", 12, attempt) for attempt in (1, 2)]
+
+
 def test_calendar_lookup_returns_none_for_missing_event(app_bundle):
     app, _, _ = app_bundle
     calendar = GoogleCalendar(app.extensions["settings"], CryptoBox("test-encryption-key"))

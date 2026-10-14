@@ -3,6 +3,7 @@ import sqlite3
 from datetime import timedelta
 
 from scheduler.migrations import MIGRATIONS
+from scheduler.calendar import GoogleCalendar
 from scheduler.store import Store, utc_now
 from .conftest import post_webhook, webhook
 
@@ -81,10 +82,15 @@ def test_stale_booking_not_found_becomes_explicitly_retryable(app_bundle):
     assert result["retryable"] is True
     assert store.get_appointment("default", appointment_id)["status"] == "failed"
     assert calendar.created == []
+    assert store.get_appointment("default", appointment_id)["booking_attempt"] == 1
 
     booked = app.extensions["scheduling"].book_appointment(appointment_id)
     assert booked["status"] == "booked"
     assert len(calendar.created) == 1
+    retry = store.get_appointment("default", appointment_id)
+    assert retry["booking_attempt"] == 2
+    assert GoogleCalendar._event_id("default", appointment_id, 2) != GoogleCalendar._event_id("default", appointment_id, 1)
+    assert calendar.created[0]["booking_attempt"] == 2
 
 
 def test_stale_booking_lookup_failure_does_not_change_manual_state(app_bundle, auth_headers):

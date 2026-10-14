@@ -123,7 +123,9 @@ class GoogleCalendar:
 
     def create_event(self, appointment: dict) -> dict:
         service = self._service()
-        event_id = self._event_id(appointment["workspace_id"], appointment["id"])
+        event_id = self._event_id(
+            appointment["workspace_id"], appointment["id"], int(appointment.get("booking_attempt") or 1)
+        )
         body = {
             "id": event_id,
             "summary": appointment["title"],
@@ -150,7 +152,9 @@ class GoogleCalendar:
 
     def find_appointment_event(self, appointment: dict) -> dict | None:
         """Verify whether this appointment's deterministic Google event already exists."""
-        event_id = self._event_id(appointment["workspace_id"], appointment["id"])
+        event_id = self._event_id(
+            appointment["workspace_id"], appointment["id"], int(appointment.get("booking_attempt") or 1)
+        )
         try:
             event = self._service().events().get(calendarId=self.settings.google_calendar_id, eventId=event_id).execute()
         except HttpError as exc:
@@ -230,7 +234,10 @@ class GoogleCalendar:
         return build("calendar", "v3", credentials=self._credentials(), cache_discovery=False)
 
     @staticmethod
-    def _event_id(workspace_id: str, appointment_id: int) -> str:
-        digest = hashlib.sha256(f"{workspace_id}:{appointment_id}".encode()).digest()[:15]
+    def _event_id(workspace_id: str, appointment_id: int, booking_attempt: int = 1) -> str:
+        identity = f"{workspace_id}:{appointment_id}"
+        if booking_attempt > 1:
+            identity += f":{booking_attempt}"
+        digest = hashlib.sha256(identity.encode()).digest()[:15]
         # Google event IDs accept lower-case base32hex characters (0-9, a-v).
         return "ar" + base64.b32hexencode(digest).decode("ascii").lower().rstrip("=")
