@@ -1,6 +1,7 @@
 import pytest
 
 from scheduler.app import create_app
+from scheduler.config import rate_limit_client_ip, validate_bind_host
 
 from .conftest import post_webhook, webhook
 
@@ -25,6 +26,38 @@ def test_production_rejects_short_encryption_key(tmp_path):
             "whatsapp_access_token": "t" * 64,
             "whatsapp_phone_number_id": "123",
         })
+
+
+def test_invalid_environment_fails_closed_even_when_not_production(tmp_path):
+    with pytest.raises(RuntimeError, match="APP_ENV must be development, test, or production"):
+        create_app({"app_env": "prodution", "database_path": tmp_path / "db.sqlite"})
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "::", "192.168.1.20", "agenda.example.com"])
+def test_nonproduction_server_rejects_non_loopback_bind_hosts(host):
+    with pytest.raises(ValueError, match="loopback"):
+        validate_bind_host(host, is_production=False)
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "::1", "localhost"])
+def test_nonproduction_server_accepts_loopback_bind_hosts(host):
+    assert validate_bind_host(host, is_production=False) == host
+
+
+def test_production_server_can_use_validated_external_ingress_bind_host():
+    assert validate_bind_host("0.0.0.0", is_production=True) == "0.0.0.0"
+
+
+def test_rate_limit_uses_forwarded_client_ip_only_from_trusted_proxy():
+    trusted = "127.0.0.1/32,::1/128"
+    assert rate_limit_client_ip("127.0.0.1", "198.51.100.24", trusted) == "198.51.100.24"
+    assert rate_limit_client_ip("203.0.113.10", "198.51.100.24", trusted) == "203.0.113.10"
+
+
+def test_rate_limit_walks_forwarded_chain_from_trusted_edge_and_fails_safe():
+    trusted = "127.0.0.1/32,10.0.0.0/8"
+    assert rate_limit_client_ip("127.0.0.1", "198.51.100.24, 10.0.0.8", trusted) == "198.51.100.24"
+    assert rate_limit_client_ip("127.0.0.1", "not-an-ip", trusted) == "127.0.0.1"
 
 
 def test_production_personal_assisted_mode_does_not_require_business_api(tmp_path):
@@ -171,6 +204,33 @@ def test_browser_login_throttles_repeated_failures(app_bundle):
     throttled = client.post("/login", data={"csrf_token": csrf, "password": "correct horse battery staple"})
     assert throttled.status_code == 429
     assert b"Too many failed sign-in attempts" in throttled.data
+
+
+def test_browser_login_limits_are_per_forwarded_client_behind_loopback_proxy(app_bundle):
+    app, _, _ = app_bundle
+    client = app.test_client()
+    client.get("/login")
+    with client.session_transaction() as current:
+        csrf = current["csrf_token"]
+    addresses = ["198.51.100.24", "198.51.100.25"]
+    for address in addresses:
+        for _ in range(5):
+            response = client.post(
+                "/login",
+                data={"csrf_token": csrf, "password": "wrong"},
+                headers={"X-Forwarded-For": address},
+            )
+            assert response.status_code == 302
+    blocked = client.post(
+        "/login", data={"csrf_token": csrf, "password": "wrong"},
+        headers={"X-Forwarded-For": addresses[0]},
+    )
+    other_client = client.post(
+        "/login", data={"csrf_token": csrf, "password": "wrong"},
+        headers={"X-Forwarded-For": addresses[1]},
+    )
+    assert blocked.status_code == 429
+    assert other_client.status_code == 429
 
 
 def test_revoked_consent_blocks_proposal_send(app_bundle):

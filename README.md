@@ -194,6 +194,7 @@ Start from [.env.example](.env.example). Set values locally; do not commit `.env
 | `DATA_RETENTION_DAYS` | Worker purge age for inbound messages and rate-event history; default 30 |
 | `BOOKING_LINK_TTL_HOURS` | Proposal lifetime after sending; default 168 (seven days) |
 | `MAX_OUTBOUND_PER_CONTACT_PER_HOUR` | Atomic per-contact send-attempt allowance; default 10 |
+| `TRUSTED_PROXY_NETWORKS` | CIDRs allowed to supply `X-Forwarded-For` for login and contact-deletion rate limits; defaults to loopback for the local ngrok proxy. Set only addresses of proxies that cannot be bypassed; HAI access always uses the direct peer address. |
 | `HAI_CONNECTOR_ENABLED` | Enables the metadata feed; default false |
 | `HAI_ALLOWED_NETWORKS` | Allowed client CIDRs; defaults to IPv4/IPv6 loopback |
 | `HAI_FEED_PAGE_SIZE` | Recent HAI snapshot size, 1–500; default 100 |

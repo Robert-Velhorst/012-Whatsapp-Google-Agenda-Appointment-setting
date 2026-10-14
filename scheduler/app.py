@@ -26,7 +26,7 @@ from flask import (
 from werkzeug.security import check_password_hash
 
 from .calendar import GoogleCalendar
-from .config import Settings
+from .config import Settings, rate_limit_client_ip
 from .crypto import CryptoBox
 from .service import SchedulingService
 from .store import Store
@@ -36,6 +36,8 @@ from .whatsapp import WhatsAppClient, signature_is_valid
 def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, intent_provider=None) -> Flask:
     settings = Settings.from_env(overrides)
     errors, _ = settings.validation()
+    if settings.app_env not in {"development", "test", "production"}:
+        raise RuntimeError("Unsafe configuration: APP_ENV must be development, test, or production")
     if settings.is_production and errors:
         raise RuntimeError("Unsafe production configuration: " + "; ".join(errors))
 
@@ -163,7 +165,7 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
     def login_post():
         if not valid_csrf():
             abort(403)
-        login_subject = request.remote_addr or "unknown"
+        login_subject = rate_limit_client_ip(request.remote_addr, request.headers.get("X-Forwarded-For"), settings.trusted_proxy_networks)
         if not store.rate_allowed(settings.workspace_id, login_subject, "auth.login_failed", 5, 15):
             store.audit(settings.workspace_id, "anonymous", "auth.login_throttled", "operator", None, {"remote": login_subject})
             return render_template("login.html", login_enabled=bool(settings.admin_password_hash), mode=settings.app_env, error="Too many failed sign-in attempts. Try again in 15 minutes."), 429
@@ -348,7 +350,7 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
         if not valid_csrf():
             abort(403)
 
-        login_subject = request.remote_addr or "unknown"
+        login_subject = rate_limit_client_ip(request.remote_addr, request.headers.get("X-Forwarded-For"), settings.trusted_proxy_networks)
         if not store.reserve_rate_event(settings.workspace_id, login_subject, "auth.contact_delete_attempt", 5, 15):
             store.audit(settings.workspace_id, "operator", "auth.contact_delete_throttled", "contact", contact_id, {"remote": login_subject})
             flash("Too many deletion attempts. Try again in 15 minutes.", "error")

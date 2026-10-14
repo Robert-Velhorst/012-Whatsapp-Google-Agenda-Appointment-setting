@@ -8,6 +8,8 @@
 - Application -> Google/Meta: HTTPS provider endpoints through official client libraries/APIs.
 - Meta webhook messages: valid app-secret HMAC plus exact match to the configured WhatsApp phone-number ID before message processing.
 - Container image and Compose services default to production configuration checks; weak/short data-encryption keys are rejected before use.
+- Unknown `APP_ENV` values are rejected unconditionally. Development and test launchers bind only to loopback; external binds require production configuration checks.
+- Login and contact-deletion rate limits use `X-Forwarded-For` only when the immediate peer belongs to `TRUSTED_PROXY_NETWORKS` (loopback by default for the local ngrok agent). Configure only proxy networks that cannot be bypassed. HAI network authorization continues to use the direct peer address and never trusts forwarded headers.
 - Public booking link: 256-bit random bearer token stored encrypted and indexed only by SHA-256 hash; configurable expiry and proposal state prevent stale or post-confirmation reuse.
 - HAI metadata feed: direct client IP allowlist; forwarded headers never grant access, and loopback requests carrying `X-Forwarded-For` are denied so the local public tunnel cannot inherit loopback access.
 
@@ -55,6 +57,7 @@ Every domain table carries `workspace_id`; store queries require it. The shipped
 - SQLite metadata is not field-encrypted; use full-volume encryption and host access controls.
 - Private booking links can be used by anyone who receives the URL until the configured expiry or proposal closure; keep the default seven-day TTL short for sensitive workflows.
 - SQLite-backed browser login throttling is atomic on one host but not globally distributed; place a rate-limiting reverse proxy in front of horizontally scaled public deployments.
+- Proxy-aware login/deletion rate limiting assumes the configured proxy overwrites or appends a truthful client address in `X-Forwarded-For`; do not trust networks reachable directly by untrusted clients.
 - No organization SSO, hardware-backed keys, DLP, SIEM export, or independently audited cryptography deployment exists.
 - WhatsApp API acceptance does not prove delivery/read. Signed callbacks are retained as provider-reported events and shown in the UI. Stored receipt data is limited to provider message ID, status, timestamp, bounded error code, and local receipt time; recipient IDs and raw payloads are not stored. Receipts follow retention and contact export/deletion. Missing or delayed callbacks remain unknown and never trigger resend or booking transitions. Personal WhatsApp has no provider status channel.
 - The personal flow is manual-only: the operator opens WhatsApp, chooses the recipient, sends the draft, then separately confirms sharing to activate the link. The app cannot verify that action. Personal-flow proposals, confirmations, and reminders are blocked from Business API delivery.

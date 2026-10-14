@@ -15,6 +15,57 @@ def _bool(name: str, default: bool = False) -> bool:
     return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def validate_bind_host(host: str, is_production: bool) -> str:
+    """Keep development/test servers loopback-only; public binds require production checks."""
+    normalized = host.strip().lower()
+    if not normalized:
+        raise ValueError("BIND_HOST must not be empty")
+    if is_production:
+        return host
+    if normalized == "localhost":
+        return host
+    try:
+        address = ipaddress.ip_address(normalized)
+    except ValueError as exc:
+        raise ValueError("Non-production BIND_HOST must be a loopback address") from exc
+    if not address.is_loopback:
+        raise ValueError("Non-production BIND_HOST must be a loopback address")
+    return host
+
+
+def rate_limit_client_ip(peer_address: str | None, forwarded_for: str | None, trusted_proxy_networks: str) -> str:
+    """Use forwarded client identity only when the immediate peer is a configured proxy."""
+    peer = (peer_address or "").strip()
+    if not peer:
+        return "unknown"
+    try:
+        peer_ip = ipaddress.ip_address(peer)
+        networks = [
+            ipaddress.ip_network(value.strip(), strict=False)
+            for value in trusted_proxy_networks.split(",")
+            if value.strip()
+        ]
+    except ValueError:
+        return peer
+    if not any(peer_ip in network for network in networks) or not forwarded_for:
+        return peer
+
+    try:
+        forwarded_ips = [ipaddress.ip_address(value.strip()) for value in forwarded_for.split(",")]
+    except ValueError:
+        return peer
+    if not forwarded_ips:
+        return peer
+
+    # Walk from the app toward the client, skipping known proxies. This uses the
+    # last untrusted hop, not a client-controlled leftmost X-Forwarded-For value.
+    for address in reversed([*forwarded_ips, peer_ip]):
+        if any(address in network for network in networks):
+            continue
+        return str(address)
+    return str(forwarded_ips[0])
+
+
 @dataclass(frozen=True)
 class Settings:
     app_env: str
@@ -51,6 +102,7 @@ class Settings:
     max_outbound_per_contact_per_hour: int
     hai_connector_enabled: bool
     hai_allowed_networks: str
+    trusted_proxy_networks: str
     hai_feed_page_size: int
     hai_project_key: str
 
@@ -99,6 +151,7 @@ class Settings:
             "max_outbound_per_contact_per_hour": int(os.getenv("MAX_OUTBOUND_PER_CONTACT_PER_HOUR", "10")),
             "hai_connector_enabled": _bool("HAI_CONNECTOR_ENABLED"),
             "hai_allowed_networks": os.getenv("HAI_ALLOWED_NETWORKS", "127.0.0.1/32,::1/128"),
+            "trusted_proxy_networks": os.getenv("TRUSTED_PROXY_NETWORKS", "127.0.0.1/32,::1/128"),
             "hai_feed_page_size": int(os.getenv("HAI_FEED_PAGE_SIZE", "100")),
             "hai_project_key": os.getenv("HAI_PROJECT_KEY", "012-Whatsapp-Google-Agenda-Appointment-setting"),
         }
@@ -137,6 +190,10 @@ class Settings:
                 errors.append("HAI_ALLOWED_NETWORKS must contain at least one CIDR when the connector is enabled")
         except ValueError:
             errors.append("HAI_ALLOWED_NETWORKS contains an invalid CIDR")
+        try:
+            [ipaddress.ip_network(value.strip(), strict=False) for value in self.trusted_proxy_networks.split(",") if value.strip()]
+        except ValueError:
+            errors.append("TRUSTED_PROXY_NETWORKS contains an invalid CIDR")
         parsed = urlparse(self.public_base_url)
         if not parsed.scheme or not parsed.netloc:
             errors.append("PUBLIC_BASE_URL must be an absolute URL")
