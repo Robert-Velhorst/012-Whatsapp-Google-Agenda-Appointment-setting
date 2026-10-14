@@ -76,6 +76,10 @@ Across both same-day samples (six serial runs), the combined ranges were 230.6�
 
 The structured run artifact at `.ecc/benchmarks/sqlite-workload-2026-10-13.json` records another three-run sample against commit `6eb14af`. It observed 993–1,149 records/second, 0.551–0.584 ms dashboard median, 0.638–0.806 ms dashboard p95, 3.655–4.852 ms for a 500-item HAI page, and 0.48 MiB traced Python peak. These are local synthetic results only; concurrent load, cold cache, and real provider latency remain unmeasured.
 
+## Larger synthetic dataset — 2026-10-14
+
+One run of `python -m scripts.benchmark --records 10000 --reads 1000` on the same Windows 11 host verified all 10,000 records and observed 703.7 writes/second, dashboard reads at 10.771 ms median / 13.652 ms p95 / 120.894 ms maximum, a 6.674 ms HAI page of 500 items, and 0.49 MiB traced Python peak allocation. The workload uses a disposable local database and one process; the memory figure excludes native SQLite allocations. This is a single synthetic sample, not a latency or capacity guarantee. The elevated maximum alongside a much lower p95 should be treated as host/workload variance until repeated under controlled conditions. The benchmark supports keeping bounded pagination and existing indexes; it does not justify a persistence rewrite or a claim about concurrent users.
+
 Calendar availability uses one Google FreeBusy query for the full 21-day search window and filters returned busy ranges against local business hours. In the regression scenario with two weeks of full weekdays, this reduced the provider-call count from 11 per-day queries to one batched query. Booking still performs a separate final availability check before event insertion. The call-count result is a deterministic test, not a live Google latency benchmark.
 
 The executable's larger idle footprint comes from bundled Python and provider libraries. For horizontal scaling, multiple operators, or sustained write concurrency, move persistence and rate/job coordination to PostgreSQL rather than sharing the SQLite file across machines.
