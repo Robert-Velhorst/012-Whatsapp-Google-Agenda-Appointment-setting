@@ -49,6 +49,12 @@ def test_support_bundle_does_not_overwrite_existing_output(monkeypatch, tmp_path
     output = tmp_path / "existing-support.zip"
     original = b"preserve the earlier diagnostic bundle"
     output.write_bytes(original)
+    monkeypatch.setattr(
+        "scheduler.cli.os.link",
+        lambda _temporary, destination: (_ for _ in ()).throw(
+            FileExistsError(17, "File exists", str(destination))
+        ),
+    )
     app = SimpleNamespace(extensions={
         "settings": SimpleNamespace(
             app_env="test", timezone="Europe/Amsterdam", workspace_id="default", database_path=tmp_path / "agenda.sqlite3",

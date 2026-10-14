@@ -96,7 +96,10 @@ def _write_support_bundle(output_path: Path, readiness: dict, audit: list[dict],
             archive.writestr("recent-actions.json", json.dumps(audit, indent=2))
             archive.writestr("runtime.json", json.dumps(runtime, indent=2))
         # Publish with a same-directory hard link to ensure an existing bundle is never replaced.
-        os.link(temporary, output)
+        try:
+            os.link(temporary, output)
+        except FileExistsError as exc:
+            raise FileExistsError(f"Support bundle already exists: {output}") from exc
         return output
     finally:
         temporary.unlink(missing_ok=True)

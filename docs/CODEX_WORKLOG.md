@@ -1,5 +1,10 @@
 # Codex worklog
 
+## 2026-10-14 - Normalize support-bundle collision errors across platforms
+
+- GitHub Actions on Linux exposed that an existing archive was preserved but `FileExistsError` rendered as `File exists`, failing an assertion expecting the stable operator wording `already exists`. Reproduced locally by injecting POSIX errno 17, then normalized the message without changing atomic no-overwrite behavior.
+- The focused support-bundle and backup no-overwrite tests pass. Full suite and exact-head hosted checks are pending.
+
 ## 2026-10-14 - Reconcile ambiguous Calendar creates and repair reminder retries
 
 - Reproduced provider response loss after the fake Calendar had accepted an event, and a local `mark_booked` failure after Calendar creation. Both previously persisted a retryable `failed` state; the next attempt could create a second event. They now transition atomically to `manual_required` with a redacted reason, and an operator reconciliation verifies the deterministic event before marking it booked.
