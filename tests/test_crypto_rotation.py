@@ -10,6 +10,7 @@ import pytest
 from scheduler.crypto import CryptoBox
 from scheduler.crypto_rotation import rotate_encryption_bundle
 from scheduler.cli import main as cli_main
+from scheduler.migrations import MIGRATIONS
 from scheduler import standalone
 
 
@@ -114,6 +115,23 @@ def test_rotation_rejects_malformed_token_before_creating_output(app_bundle, tmp
 
     with pytest.raises(ValueError, match="valid JSON"):
         rotate_encryption_bundle(settings.database_path, token_path, output, settings.data_encryption_key, NEW_KEY)
+
+    assert not output.exists()
+
+
+def test_rotation_rejects_incomplete_schema_even_when_latest_version_is_claimed(tmp_path):
+    invalid = tmp_path / "forged-latest.sqlite3"
+    with closing(sqlite3.connect(invalid)) as db:
+        latest = max(version for version, _ in MIGRATIONS)
+        db.execute("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)")
+        db.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (?, 'now')", (latest,))
+        db.execute("CREATE TABLE inbound_messages(id INTEGER PRIMARY KEY, body_ciphertext TEXT)")
+        db.execute("CREATE TABLE proposals(id INTEGER PRIMARY KEY, reply_ciphertext TEXT, booking_token_ciphertext TEXT)")
+        db.commit()
+
+    output = tmp_path / "must-not-publish"
+    with pytest.raises(ValueError, match="application schema"):
+        rotate_encryption_bundle(invalid, tmp_path / "missing-token.json", output, "old-key", NEW_KEY)
 
     assert not output.exists()
 

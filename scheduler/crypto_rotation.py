@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .crypto import CryptoBox
-from .migrations import MIGRATIONS
+from .database_validation import validate_app_database
 
 _ENCRYPTED_COLUMNS = (
     ("inbound_messages", "body_ciphertext"),
@@ -21,16 +21,8 @@ _ENCRYPTED_COLUMNS = (
 
 
 def _validate_database(connection: sqlite3.Connection) -> None:
-    if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
-        raise ValueError("Database integrity check failed")
-    if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
-        raise ValueError("Database foreign-key check failed")
-    try:
-        versions = [row[0] for row in connection.execute("SELECT version FROM schema_migrations")]
-    except sqlite3.Error as exc:
-        raise ValueError("Database schema is not initialized") from exc
-    if not versions or max(versions) != max(version for version, _ in MIGRATIONS):
-        raise ValueError("Database schema is not at the current migration version")
+    if not validate_app_database(connection):
+        raise ValueError("Database failed integrity or application schema validation")
 
 
 def _reencrypt(value: str | None, old_box: CryptoBox, new_box: CryptoBox) -> str | None:

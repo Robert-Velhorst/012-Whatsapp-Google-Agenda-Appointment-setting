@@ -271,3 +271,9 @@ Remaining external gate: authorized Meta/Google credentials and approvals, a sta
 - A coverage-guided CLI review found that `_online_backup` used `os.replace`, so reusing an explicit output path silently destroyed the earlier backup.
 - Added a regression that was red before the fix and verifies both refusal and byte-for-byte preservation. Backup publication now uses a same-directory hard link, which atomically fails when the destination already exists; temporary files are still removed by the existing cleanup path.
 - Verification: focused CLI/database suite `10 passed`; full suite `234 passed`; `compileall`, `pip check`, and `git diff --check` passed on Windows. Hosted exact-head CI and package verification are pending.
+
+## Key rotation validates the full application schema — 2026-10-14
+
+- A forged SQLite file with only the latest migration number and the three tables/columns touched by encryption rotation passed rotation's weaker `max(version)` check and could be published as a rotation bundle despite missing most application tables.
+- The regression reproduced the unsafe publication before the fix. Backup/restore and encryption rotation now share one validator requiring SQLite integrity, clean foreign keys, the exact migration ledger, and all migration-derived tables and column signatures.
+- Verification: focused crypto-rotation and CLI/database suites `17 passed`; full suite `235 passed`; `compileall`, `pip check`, and `git diff --check` passed on Windows. Hosted exact-head CI and package verification are pending.
