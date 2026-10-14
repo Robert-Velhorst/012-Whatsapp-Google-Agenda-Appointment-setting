@@ -164,8 +164,10 @@ def test_operator_can_reconcile_stale_booking_from_csrf_protected_dashboard(app_
     accepted = client.post(
         f"/actions/appointments/{appointment_id}/reconcile",
         data={"csrf_token": "booking-reconcile-csrf"},
+        headers={"Referer": "https://attacker.example/"},
     )
     assert accepted.status_code == 302
+    assert accepted.headers["Location"] == "/"
     assert store.get_appointment("default", appointment_id)["status"] == "failed"
 
 

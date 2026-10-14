@@ -273,11 +273,11 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
                 blockers = list(readiness["errors"])
                 blockers.extend(provider["detail"] for provider in readiness["providers"].values() if not provider["ready"])
                 flash("Automation cannot resume until setup issues are resolved: " + "; ".join(blockers), "error")
-                return redirect(safe_next_url(request.referrer))
+                return redirect(url_for("dashboard"))
         value = "false" if scheduling.is_paused() else "true"
         store.set_state(settings.workspace_id, "automation_paused", value, settings.operator_name)
         flash("Automation resumed." if value == "false" else "Automation paused. Incoming messages will still be recorded.", "success")
-        return redirect(safe_next_url(request.referrer))
+        return redirect(url_for("dashboard"))
 
     @app.post("/actions/proposals/<int:proposal_id>/send")
     @operator_required
@@ -289,7 +289,7 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             flash("The proposal was sent through WhatsApp Cloud API.", "success")
         except Exception as exc:  # noqa: BLE001 - provider SDK errors are not a stable shared exception type; preserve the review state.
             flash(f"Proposal not sent: {exc}", "error")
-        return redirect(safe_next_url(request.referrer))
+        return redirect(url_for("dashboard"))
 
     @app.post("/actions/proposals/<int:proposal_id>/reconcile")
     @operator_required
@@ -307,7 +307,7 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             flash(f"Delivery could not be reconciled: {exc}", "error")
         except ValueError as exc:
             flash(f"Delivery could not be reconciled: {exc}", "error")
-        return redirect(safe_next_url(request.referrer))
+        return redirect(url_for("dashboard"))
 
     @app.post("/actions/appointments/<int:appointment_id>/book")
     @operator_required
@@ -319,7 +319,7 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             flash(result.get("warning") or "The confirmed slot was booked in Google Calendar.", "success")
         except Exception as exc:  # noqa: BLE001 - report provider failures without converting them into a success state.
             flash(f"Calendar booking failed safely: {exc}", "error")
-        return redirect(safe_next_url(request.referrer))
+        return redirect(url_for("dashboard"))
 
     @app.post("/actions/appointments/<int:appointment_id>/reconcile")
     @operator_required
@@ -335,7 +335,7 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
         except Exception as exc:  # noqa: BLE001 - provider errors must not be reflected to the operator page.
             app.logger.warning("Calendar reconciliation failed (%s)", type(exc).__name__)
             flash("Google Calendar could not verify this booking. No booking state was changed; try again or inspect the calendar manually.", "error")
-        return redirect(safe_next_url(request.referrer))
+        return redirect(url_for("dashboard"))
 
     @app.post("/actions/appointments/<int:appointment_id>/cancel")
     @operator_required
@@ -347,7 +347,7 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             flash("The appointment was cancelled and queued reminders were stopped.", "success")
         except Exception as exc:  # noqa: BLE001 - provider cancellation failures must remain visible to the operator.
             flash(f"Cancellation failed safely: {exc}", "error")
-        return redirect(safe_next_url(request.referrer))
+        return redirect(url_for("dashboard"))
 
     @app.post("/actions/contacts/<int:contact_id>/update")
     @operator_required
