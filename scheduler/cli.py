@@ -117,7 +117,7 @@ def _expected_schema() -> dict[str, dict[str, tuple[str, int, int]]]:
 
 
 def _online_backup(source_path: Path, destination: Path) -> None:
-    """Create a consistent SQLite backup and atomically publish it at destination."""
+    """Create a consistent SQLite backup and atomically publish it without overwriting."""
     source = source_path.resolve()
     output = destination.resolve()
     if source == output:
@@ -131,7 +131,10 @@ def _online_backup(source_path: Path, destination: Path) -> None:
             source_db.backup(target_db)
             if not _validate_app_database(target_db):
                 raise ValueError("Source database failed integrity or schema validation")
-        os.replace(temporary, output)
+        # A same-directory hard link is an atomic no-replace publication on
+        # Windows and POSIX filesystems. os.replace would silently destroy an
+        # existing backup if the caller reused an output path.
+        os.link(temporary, output)
     finally:
         temporary.unlink(missing_ok=True)
 

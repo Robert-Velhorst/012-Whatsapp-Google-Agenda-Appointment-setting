@@ -59,6 +59,19 @@ def test_online_backup_is_consistent_and_refuses_live_database_overwrite(app_bun
         assert connection.execute("SELECT max(version) FROM schema_migrations").fetchone() == (max(version for version, _ in MIGRATIONS),)
 
 
+def test_online_backup_does_not_overwrite_an_existing_backup(app_bundle, tmp_path):
+    app, _, _ = app_bundle
+    database = app.extensions["settings"].database_path
+    output = tmp_path / "existing-backup.sqlite3"
+    original = b"preserve this existing backup"
+    output.write_bytes(original)
+
+    with pytest.raises(FileExistsError):
+        _online_backup(database, output)
+
+    assert output.read_bytes() == original
+
+
 def test_restore_stages_backup_and_keeps_verified_safety_copy(app_bundle, tmp_path):
     app, _, _ = app_bundle
     database = app.extensions["settings"].database_path
