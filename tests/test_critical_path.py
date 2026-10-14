@@ -82,6 +82,83 @@ def test_booking_does_not_create_event_if_selected_slot_is_now_busy(app_bundle):
     assert appointment["status"] == "failed"
 
 
+@pytest.mark.parametrize("failure_point", ["provider_response_lost", "local_commit_failed"])
+def test_ambiguous_calendar_create_requires_reconciliation_before_retry(app_bundle, failure_point):
+    app, calendar, _ = app_bundle
+    client = app.test_client()
+    post_webhook(client, webhook())
+    store = app.extensions["store"]
+    item = store.dashboard("default")["items"][0]
+    app.extensions["scheduling"].send_proposal(item["proposal_id"])
+    post_webhook(client, webhook("wamid.2", body="The second one works for me"))
+    appointment_id = store.dashboard("default")["items"][0]["appointment_id"]
+    create_event = calendar.create_event
+    mark_booked = store.mark_booked
+
+    if failure_point == "provider_response_lost":
+        def create_then_timeout(appointment):
+            create_event(appointment)
+            raise TimeoutError("Google accepted the event, but the response was lost")
+
+        calendar.create_event = create_then_timeout
+        with pytest.raises(CalendarUnavailable, match="may have accepted"):
+            app.extensions["scheduling"].book_appointment(appointment_id)
+    else:
+        def fail_local_commit(*args, **kwargs):
+            raise sqlite3.IntegrityError("local booking commit failed after event creation")
+
+        store.mark_booked = fail_local_commit
+        with pytest.raises(CalendarUnavailable, match="needs reconciliation"):
+            app.extensions["scheduling"].book_appointment(appointment_id)
+
+    assert store.get_appointment("default", appointment_id)["status"] == "manual_required"
+    calendar.create_event = create_event
+    store.mark_booked = mark_booked
+    recovered = app.extensions["scheduling"].reconcile_stale_booking(appointment_id)
+    assert recovered["status"] == "booked"
+    assert store.get_appointment("default", appointment_id)["status"] == "booked"
+    assert len(calendar.created) == 1
+    retry = app.extensions["scheduling"].book_appointment(appointment_id)
+    assert retry["idempotent"] is True
+    assert len(calendar.created) == 1
+
+
+def test_idempotent_booking_retry_repairs_missing_reminder_job(app_bundle):
+    app, calendar, _ = app_bundle
+    client = app.test_client()
+    post_webhook(client, webhook())
+    store = app.extensions["store"]
+    item = store.dashboard("default")["items"][0]
+    app.extensions["scheduling"].send_proposal(item["proposal_id"])
+    post_webhook(client, webhook("wamid.2", body="The second one works for me"))
+    appointment_id = store.dashboard("default")["items"][0]["appointment_id"]
+    scheduling = app.extensions["scheduling"]
+    scheduling.settings = replace(app.extensions["settings"], reminder_minutes_before=5)
+    schedule_job = store.schedule_job
+
+    def fail_reminder_once(workspace_id, job_type, dedupe_key, run_at, payload):
+        if job_type == "appointment_reminder":
+            raise sqlite3.OperationalError("temporary reminder queue failure")
+        return schedule_job(workspace_id, job_type, dedupe_key, run_at, payload)
+
+    store.schedule_job = fail_reminder_once
+    with pytest.raises(sqlite3.OperationalError, match="reminder queue failure"):
+        scheduling.book_appointment(appointment_id)
+    assert store.get_appointment("default", appointment_id)["status"] == "booked"
+    store.schedule_job = schedule_job
+
+    retried = scheduling.book_appointment(appointment_id)
+
+    assert retried["idempotent"] is True
+    assert len(calendar.created) == 1
+    with store.connect() as db:
+        reminder_count = db.execute(
+            "SELECT COUNT(*) FROM background_jobs WHERE workspace_id='default' AND job_type='appointment_reminder' AND dedupe_key=?",
+            (f"reminder:{appointment_id}:5",),
+        ).fetchone()[0]
+    assert reminder_count == 1
+
+
 def test_public_booking_link_requires_consent(app_bundle, auth_headers):
     app, _, _ = app_bundle
     client = app.test_client()
@@ -177,7 +254,7 @@ def test_public_booking_hides_provider_error_details(app_bundle, caplog):
     assert "PRIVATE_PROVIDER_RESPONSE" not in caplog.text
     assert "do-not-disclose" not in caplog.text
     appointment = store.dashboard("default")["items"][0]
-    assert appointment["appointment_status"] == "failed"
+    assert appointment["appointment_status"] == "manual_required"
 
 
 def test_cancelling_appointment_does_not_cancel_prefix_matching_reminder(app_bundle):

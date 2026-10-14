@@ -572,6 +572,46 @@ class Store:
                 (workspace_id, "scheduler", "appointment.booking_failed", "appointment", str(appointment_id), json.dumps({"error": error[:200]}, sort_keys=True), now),
             )
 
+    def mark_booking_manual_required(
+        self,
+        workspace_id: str,
+        appointment_id: int,
+        reason: str,
+        actor: str = "scheduler",
+    ) -> None:
+        if reason not in {"calendar_create_result_unknown", "booking_state_persist_failed"}:
+            raise ValueError("Invalid manual booking reconciliation reason")
+        message = "Google Calendar may contain an event; verify it before retrying"
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT request_id,status FROM appointments WHERE workspace_id=? AND id=?",
+                (workspace_id, appointment_id),
+            ).fetchone()
+            if not row:
+                raise KeyError("Appointment not found")
+            if row["status"] == "manual_required":
+                return
+            if row["status"] != "booking":
+                raise ValueError("Appointment is not being booked")
+            cursor = db.execute(
+                "UPDATE appointments SET status='manual_required',error_text=?,updated_at=? "
+                "WHERE workspace_id=? AND id=? AND status='booking'",
+                (message, now, workspace_id, appointment_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Appointment changed while recording calendar reconciliation")
+            self._transition_request_in_transaction(
+                db, workspace_id, int(row["request_id"]), "failed", actor,
+                {"appointment_id": appointment_id, "reason": reason},
+            )
+            detail = {"reason": reason, "reconciliation_required": True}
+            db.execute(
+                "INSERT INTO audit_events(workspace_id,actor,action,entity_type,entity_id,detail_json,created_at) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (workspace_id, actor, "appointment.booking_manual_required", "appointment", str(appointment_id), json.dumps(detail, sort_keys=True), now),
+            )
+
     @staticmethod
     def _background_job_ids_for_appointment(
         db: sqlite3.Connection,

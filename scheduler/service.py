@@ -308,6 +308,7 @@ class SchedulingService:
         if not appointment:
             existing = self.store.get_appointment(self.settings.workspace_id, appointment_id)
             if existing and existing["status"] == "booked":
+                self._ensure_booking_reminder(existing)
                 return {"status": "booked", "idempotent": True, "event_link": existing.get("google_event_link")}
             raise ValueError("Appointment is not ready to book")
         if appointment["consent_status"] == "revoked":
@@ -321,11 +322,38 @@ class SchedulingService:
                 raise CalendarUnavailable(
                     "The selected time has since become busy. No calendar event was created; review the request and offer new times."
                 )
-            event = self.calendar.create_event(appointment)
-            self.store.mark_booked(self.settings.workspace_id, appointment_id, event["id"], event.get("htmlLink"))
-        except Exception as exc:  # Calendar provider errors vary; persist the failed state before surfacing.
+        except Exception as exc:
             self.store.mark_booking_failed(self.settings.workspace_id, appointment_id, str(exc), actor, {"error": str(exc)[:200]})
             raise
+
+        try:
+            event = self.calendar.create_event(appointment)
+        except Exception as exc:
+            # A provider timeout can happen after Google accepted the insert.
+            # Do not make the appointment immediately retryable: reconcile the
+            # deterministic event ID before another external create attempt.
+            self.store.mark_booking_manual_required(
+                self.settings.workspace_id, appointment_id, "calendar_create_result_unknown", actor
+            )
+            raise CalendarUnavailable(
+                "Google Calendar may have accepted this event. Verify Calendar before retrying the booking."
+            ) from exc
+
+        try:
+            self.store.mark_booked(self.settings.workspace_id, appointment_id, event["id"], event.get("htmlLink"))
+        except Exception as exc:
+            current = self.store.get_appointment(self.settings.workspace_id, appointment_id)
+            if current and current["status"] == "booked":
+                # The commit may have succeeded before its acknowledgement was
+                # lost; continue from the durable state rather than retrying it.
+                event = {"id": current["google_event_id"], "htmlLink": current.get("google_event_link")}
+            else:
+                self.store.mark_booking_manual_required(
+                    self.settings.workspace_id, appointment_id, "booking_state_persist_failed", actor
+                )
+                raise CalendarUnavailable(
+                    "Google Calendar event was created, but local booking state needs reconciliation before retrying."
+                ) from exc
 
         warning = None
         if appointment["sender"].startswith("assisted:"):
@@ -340,14 +368,25 @@ class SchedulingService:
             except Exception as exc:  # noqa: BLE001 - WhatsApp send can fail after booking; preserve the booked state and manual warning.
                 warning = "Calendar event was booked, but WhatsApp confirmation requires operator attention."
                 self.store.audit(self.settings.workspace_id, actor, "confirmation.send_failed", "appointment", appointment_id, {"error": str(exc)[:200]})
-        reminder_at = datetime.fromisoformat(appointment["start_at"]).astimezone(UTC) - timedelta(minutes=self.settings.reminder_minutes_before)
-        if reminder_at > utc_now() and not appointment["sender"].startswith("assisted:"):
-            self.store.schedule_job(
-                self.settings.workspace_id, "appointment_reminder", f"reminder:{appointment_id}:{self.settings.reminder_minutes_before}",
-                reminder_at.isoformat(), {"appointment_id": appointment_id},
-            )
+        self._ensure_booking_reminder(appointment)
         self.store.audit(self.settings.workspace_id, actor, "appointment.booked", "appointment", appointment_id, {"google_event_id": event["id"], "warning": warning})
         return {"status": "booked", "event_link": event.get("htmlLink"), "warning": warning}
+
+    def _ensure_booking_reminder(self, appointment: dict) -> None:
+        if appointment["sender"].startswith("assisted:"):
+            return
+        reminder_at = datetime.fromisoformat(appointment["start_at"]).astimezone(UTC) - timedelta(
+            minutes=self.settings.reminder_minutes_before
+        )
+        if reminder_at <= utc_now():
+            return
+        self.store.schedule_job(
+            self.settings.workspace_id,
+            "appointment_reminder",
+            f"reminder:{appointment['id']}:{self.settings.reminder_minutes_before}",
+            reminder_at.isoformat(),
+            {"appointment_id": appointment["id"]},
+        )
 
     def cancel_appointment(self, appointment_id: int, actor: str = "operator") -> dict:
         if self.is_paused():

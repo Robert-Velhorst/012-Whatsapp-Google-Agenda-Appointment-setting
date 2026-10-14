@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Prevent duplicate Calendar events after ambiguous create/persistence failures by requiring reconciliation before retry; recover missing reminder jobs on idempotent booking retries.
+- Serialize Google OAuth token refreshes across web/worker processes sharing the token file and atomically replace token contents.
 - Make Hetzner the sole documented production ingress path, add a host/Caddy deployment and migration runbook, and remove obsolete ngrok launcher/configuration support.
 - Publish support bundles atomically without overwriting an existing diagnostic archive.
 - Resolve relative `.env`, SQLite, and Google credential/token paths from the executable folder in standalone builds, independent of shortcut working directory.

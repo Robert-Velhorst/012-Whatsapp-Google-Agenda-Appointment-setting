@@ -1,5 +1,11 @@
 # Codex worklog
 
+## 2026-10-14 - Reconcile ambiguous Calendar creates and repair reminder retries
+
+- Reproduced provider response loss after the fake Calendar had accepted an event, and a local `mark_booked` failure after Calendar creation. Both previously persisted a retryable `failed` state; the next attempt could create a second event. They now transition atomically to `manual_required` with a redacted reason, and an operator reconciliation verifies the deterministic event before marking it booked.
+- Reproduced reminder-job persistence failure after the appointment was booked. An idempotent booking retry returned early and left the reminder missing; retries now ensure the reminder job without re-creating the Calendar event or re-sending the confirmation.
+- Added regression coverage for both ambiguous booking failure modes and reminder recovery. Full local suite: 241 passed with warnings treated as errors; `compileall`, `pip check`, and `git diff --check` passed. Fresh standalone Windows 11 package smoke also passed migration, three-field encryption rotation, health, and login; peak idle working set was 67.4 MiB. No real Google/WhatsApp provider or Hetzner environment was accessed.
+
 ## 2026-10-14 - Replace ngrok deployment assumptions with Hetzner
 
 - Removed the Windows ngrok start/stop scripts, process-identity helper, sample configuration, and active README/acceptance references. Historical test reports remain labeled as prior evidence, not a current supported deployment path.
