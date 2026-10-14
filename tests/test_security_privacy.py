@@ -303,6 +303,7 @@ def test_contact_export_delete_and_workspace_isolation(app_bundle, auth_headers)
     appointment_id = export_data["appointments"][0]["id"]
     prefix_matching_id = int(f"{appointment_id}0")
     store.schedule_job("default", "appointment_reminder", "privacy-delete-target", "2099-01-01T00:00:00+00:00", {"appointment_id": appointment_id})
+    store.schedule_job("default", "appointment_followup", "privacy-delete-target-other-type", "2099-01-01T00:00:00+00:00", {"appointment_id": appointment_id})
     store.schedule_job("default", "appointment_reminder", "privacy-delete-prefix", "2099-01-01T00:00:00+00:00", {"appointment_id": prefix_matching_id})
     store.ensure_workspace("other-workspace", "Other", "Europe/Amsterdam")
     store.schedule_job("other-workspace", "appointment_reminder", "privacy-delete-other-workspace", "2099-01-01T00:00:00+00:00", {"appointment_id": appointment_id})
