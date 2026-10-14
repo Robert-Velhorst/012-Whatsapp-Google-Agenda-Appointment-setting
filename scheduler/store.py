@@ -159,6 +159,16 @@ class Store:
             row = db.execute("SELECT * FROM contacts WHERE workspace_id=? AND id=?", (workspace_id, contact_id)).fetchone()
         return dict(row) if row else None
 
+    def request_for_source_message(self, workspace_id: str, source_message_id: str) -> dict[str, Any] | None:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT r.id,r.status,p.id proposal_id FROM scheduling_requests r "
+                "LEFT JOIN proposals p ON p.request_id=r.id "
+                "WHERE r.workspace_id=? AND r.source_message_id=?",
+                (workspace_id, source_message_id),
+            ).fetchone()
+        return dict(row) if row else None
+
     def accept_inbound_message(
         self,
         workspace_id: str,
@@ -181,11 +191,21 @@ class Store:
             # so concurrent callbacks cannot oversubscribe either allowance.
             db.execute("BEGIN IMMEDIATE")
             duplicate = db.execute(
-                "SELECT 1 FROM inbound_messages WHERE workspace_id=? AND external_id=?",
+                "SELECT processing_status,processing_started_at FROM inbound_messages WHERE workspace_id=? AND external_id=?",
                 (workspace_id, external_id),
             ).fetchone()
             if duplicate:
-                return "duplicate"
+                status = duplicate["processing_status"]
+                if status == "processed":
+                    return "duplicate"
+                lease_cutoff = (now - timedelta(minutes=5)).isoformat()
+                if status == "processing" and duplicate["processing_started_at"] and duplicate["processing_started_at"] > lease_cutoff:
+                    return "in_progress"
+                db.execute(
+                    "UPDATE inbound_messages SET processing_status='processing',processing_started_at=? WHERE workspace_id=? AND external_id=?",
+                    (now_text, workspace_id, external_id),
+                )
+                return "retry"
             sender_count = int(db.execute(
                 "SELECT COUNT(*) FROM rate_events WHERE workspace_id=? AND subject=? AND action='whatsapp.inbound' AND created_at>=?",
                 (workspace_id, sender_bucket, cutoff),
@@ -197,8 +217,8 @@ class Store:
             if sender_count >= max_per_sender or total_count >= max_total:
                 return "rate_limited"
             db.execute(
-                "INSERT INTO inbound_messages(workspace_id,external_id,sender,body_ciphertext,received_at) VALUES(?,?,?,?,?)",
-                (workspace_id, external_id, sender, self.crypto.encrypt(body), received_at),
+                "INSERT INTO inbound_messages(workspace_id,external_id,sender,body_ciphertext,received_at,processing_status,processing_started_at) VALUES(?,?,?,?,?,'processing',?)",
+                (workspace_id, external_id, sender, self.crypto.encrypt(body), received_at, now_text),
             )
             db.executemany(
                 "INSERT INTO rate_events(workspace_id,subject,action,created_at) VALUES(?,?,'whatsapp.inbound',?)",
@@ -209,6 +229,28 @@ class Store:
                 {"sender_suffix": sender[-4:]},
             )
         return "accepted"
+
+    def inbound_message_body(self, workspace_id: str, external_id: str) -> str | None:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT body_ciphertext FROM inbound_messages WHERE workspace_id=? AND external_id=?",
+                (workspace_id, external_id),
+            ).fetchone()
+        return self.crypto.decrypt(row["body_ciphertext"]) if row else None
+
+    def complete_inbound_message(self, workspace_id: str, external_id: str) -> None:
+        with self.connect() as db:
+            db.execute(
+                "UPDATE inbound_messages SET processing_status='processed',processing_started_at=NULL WHERE workspace_id=? AND external_id=?",
+                (workspace_id, external_id),
+            )
+
+    def retry_inbound_message(self, workspace_id: str, external_id: str) -> None:
+        with self.connect() as db:
+            db.execute(
+                "UPDATE inbound_messages SET processing_status='pending',processing_started_at=NULL WHERE workspace_id=? AND external_id=? AND processing_status='processing'",
+                (workspace_id, external_id),
+            )
 
     def recent_messages(self, workspace_id: str, sender: str, limit: int = 12) -> list[dict[str, str]]:
         with self.connect() as db:

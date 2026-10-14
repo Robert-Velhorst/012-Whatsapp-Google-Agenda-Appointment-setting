@@ -1,10 +1,12 @@
 
 from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 
 import pytest
 
 from .conftest import post_webhook, signed, webhook
+from scheduler.intent import DEFAULT_PROVIDER
 
 
 def test_health_webhook_verification_and_security_headers(app_bundle):
@@ -96,6 +98,92 @@ def test_webhook_is_idempotent_and_creates_reviewable_proposal(app_bundle, auth_
     assert requests["items"][0]["status"] == "proposal_pending"
     assert requests["items"][0]["proposal_status"] == "pending_approval"
     assert whatsapp.sent == []
+
+
+def test_provider_retry_resumes_inbound_message_after_transient_analysis_failure(app_bundle):
+    app, calendar, _ = app_bundle
+    scheduling = app.extensions["scheduling"]
+
+    class FailOnceIntentProvider:
+        calls = 0
+
+        def analyse(self, *args, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("temporary analysis outage")
+            return DEFAULT_PROVIDER.analyse(*args, **kwargs)
+
+    provider = FailOnceIntentProvider()
+    scheduling.intent_provider = provider
+    client = app.test_client()
+
+    with pytest.raises(RuntimeError, match="temporary analysis outage"):
+        post_webhook(client, webhook(message_id="wamid.retry-after-analysis-error"))
+
+    retry = post_webhook(client, webhook(message_id="wamid.retry-after-analysis-error"))
+
+    assert retry.status_code == 200
+    assert retry.get_json()["proposals"] == 1
+    assert app.extensions["store"].dashboard("default")["total"] == 1
+    assert len(calendar.preferred_times) == 1
+
+
+def test_provider_retry_resumes_after_request_persisted_without_duplicating_it(app_bundle):
+    app, calendar, _ = app_bundle
+    store = app.extensions["store"]
+    original_get_contact = store.get_contact
+    fail_once = True
+
+    def flaky_get_contact(*args, **kwargs):
+        nonlocal fail_once
+        if fail_once:
+            fail_once = False
+            raise RuntimeError("temporary database read outage")
+        return original_get_contact(*args, **kwargs)
+
+    store.get_contact = flaky_get_contact
+    client = app.test_client()
+    payload = webhook(message_id="wamid.retry-after-request-write")
+
+    with pytest.raises(RuntimeError, match="temporary database read outage"):
+        post_webhook(client, payload)
+
+    retry = post_webhook(client, payload)
+
+    assert retry.status_code == 200
+    assert retry.get_json()["proposals"] == 1
+    assert store.dashboard("default")["total"] == 1
+    assert len(calendar.preferred_times) == 1
+
+
+def test_duplicate_webhook_during_processing_requests_provider_retry(app_bundle):
+    app, _, _ = app_bundle
+    scheduling = app.extensions["scheduling"]
+    entered_analysis = Event()
+    resume_analysis = Event()
+
+    class BlockingIntentProvider:
+        def analyse(self, *args, **kwargs):
+            entered_analysis.set()
+            assert resume_analysis.wait(timeout=5)
+            return DEFAULT_PROVIDER.analyse(*args, **kwargs)
+
+    scheduling.intent_provider = BlockingIntentProvider()
+    payload = webhook(message_id="wamid.retry-while-processing")
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first = pool.submit(scheduling.process_payload, payload)
+        assert entered_analysis.wait(timeout=5)
+
+        retry = post_webhook(app.test_client(), payload)
+
+        assert retry.status_code == 503
+        assert retry.get_json()["retry_later"] == 1
+        resume_analysis.set()
+        assert first.result(timeout=5)["proposals"] == 1
+
+    duplicate = post_webhook(app.test_client(), payload)
+    assert duplicate.status_code == 200
+    assert duplicate.get_json()["duplicates"] == 1
 
 
 def test_new_unrelated_message_does_not_reuse_old_scheduling_intent(app_bundle):

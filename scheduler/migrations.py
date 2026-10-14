@@ -102,6 +102,11 @@ MIGRATIONS: list[tuple[int, str]] = [
         UPDATE appointments SET booking_attempt=1
         WHERE status IN ('booking','booked','manual_required','failed') AND booking_attempt=0;
     """),
+    (9, """
+        ALTER TABLE inbound_messages ADD COLUMN processing_status TEXT NOT NULL DEFAULT 'processed'
+          CHECK(processing_status IN ('processing','pending','processed'));
+        ALTER TABLE inbound_messages ADD COLUMN processing_started_at TEXT;
+    """),
 ]
 
 

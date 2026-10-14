@@ -184,7 +184,8 @@ def test_scheduling_webhook_batches_contact_language_request_and_audit_write(app
 
     assert response.status_code == 200
     assert response.get_json()["proposals"] == 1
-    assert sum(statement.strip().upper() == "COMMIT" for statement in statements) == 4
+    # Includes the durable completion marker after the contact/request and proposal writes.
+    assert sum(statement.strip().upper() == "COMMIT" for statement in statements) == 5
 
 
 def test_non_scheduling_webhook_does_not_reset_existing_contact_language(app_bundle):

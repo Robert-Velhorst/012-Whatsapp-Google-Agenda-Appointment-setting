@@ -447,7 +447,7 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             abort(403)
         payload = request.get_json(silent=True) or {}
         result = scheduling.process_payload(payload)
-        return jsonify(result), 200
+        return jsonify(result), 503 if result.get("retry_later") else 200
 
     @app.get("/api/health")
     def health():

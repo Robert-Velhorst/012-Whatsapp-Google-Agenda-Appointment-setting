@@ -24,7 +24,7 @@ class SchedulingService:
     def process_payload(self, payload: Any) -> dict[str, int]:
         result = {
             "accepted": 0, "duplicates": 0, "proposals": 0, "confirmations": 0, "ignored": 0,
-            "delivery_statuses": 0, "duplicate_statuses": 0, "rate_limited": 0,
+            "delivery_statuses": 0, "duplicate_statuses": 0, "rate_limited": 0, "retry_later": 0,
         }
         remaining_message_budget = self.settings.max_inbound_messages_per_webhook
         remaining_status_budget = 200
@@ -134,55 +134,86 @@ class SchedulingService:
                     if ingest_status == "duplicate":
                         result["duplicates"] += 1
                         continue
+                    if ingest_status == "in_progress":
+                        result["duplicates"] += 1
+                        result["retry_later"] += 1
+                        continue
                     if ingest_status == "rate_limited":
                         result["rate_limited"] += 1
                         continue
-                    result["accepted"] += 1
-                    if self.is_paused():
-                        self.store.audit(self.settings.workspace_id, "scheduler", "automation.skipped_paused", "message", external_id, {})
-                        continue
-                    contact_id = self.store.upsert_contact(
-                        self.settings.workspace_id, sender, self.settings.timezone,
-                        display_name=names.get(sender),
-                    )
-                    proposal_cutoff = (utc_now() - timedelta(hours=self.settings.booking_link_ttl_hours)).isoformat()
-                    active = self.store.latest_sent_proposal(self.settings.workspace_id, sender, proposal_cutoff)
-                    if active:
-                        selected = confirmation_index(body, len(active["slots"]))
-                        if selected is not None:
-                            appointment_id = self.store.confirm_proposal(self.settings.workspace_id, active["id"], selected, "contact")
-                            result["confirmations"] += 1
-                            if self.settings.auto_book_confirmed:
-                                self.book_appointment(appointment_id, actor="automation")
+                    if ingest_status == "accepted":
+                        result["accepted"] += 1
+                    else:
+                        result["duplicates"] += 1
+                        try:
+                            stored_body = self.store.inbound_message_body(self.settings.workspace_id, external_id)
+                        except Exception:
+                            self.store.retry_inbound_message(self.settings.workspace_id, external_id)
+                            raise
+                        if stored_body is None:
+                            self.store.retry_inbound_message(self.settings.workspace_id, external_id)
+                            result["retry_later"] += 1
                             continue
-                    local_today = datetime.now(ZoneInfo(self.settings.timezone)).date()
-                    intent = self.intent_provider.analyse(body, local_today, self.settings.default_duration_minutes)
-                    if not intent.is_scheduling:
-                        result["ignored"] += 1
-                        continue
-                    request_id = self.store.update_contact_and_create_request(
-                        self.settings.workspace_id, contact_id, intent.language, names.get(sender),
-                        external_id, intent.title, intent.duration_minutes, self.settings.timezone,
-                        intent.requested_start.isoformat(), intent.confidence,
-                    )
-                    contact = self.store.get_contact(self.settings.workspace_id, contact_id) or {}
+                        body = stored_body
                     try:
-                        slots = self.calendar.free_slots(
-                            intent.requested_start, intent.duration_minutes, preferred_time=intent.preferred_time,
-                        )
-                    except Exception as exc:  # noqa: BLE001 - Google provider SDK errors are not a stable shared exception type.
-                        self.store.transition_request(self.settings.workspace_id, request_id, "failed", "scheduler", {"provider": "google_calendar", "error": str(exc)[:200]})
-                        continue
-                    if not slots:
-                        self.store.transition_request(self.settings.workspace_id, request_id, "needs_clarification", "scheduler", {"reason": "no_slots_in_search_window"})
-                        continue
-                    token = secrets.token_urlsafe(32)
-                    reply = self._proposal_reply(intent.language, slots, token, contact.get("timezone") or self.settings.timezone)
-                    proposal_id, _ = self.store.create_proposal(self.settings.workspace_id, request_id, reply, [slot.isoformat() for slot in slots], token)
-                    result["proposals"] += 1
-                    if self.settings.auto_send_suggestions:
-                        self.send_proposal(proposal_id, actor="automation")
+                        self._process_inbound_message(sender, external_id, body, names.get(sender), result)
+                    except Exception:
+                        self.store.retry_inbound_message(self.settings.workspace_id, external_id)
+                        raise
+                    else:
+                        self.store.complete_inbound_message(self.settings.workspace_id, external_id)
         return result
+
+    def _process_inbound_message(self, sender: str, external_id: str, body: str, display_name: str | None, result: dict[str, int]) -> None:
+        if self.is_paused():
+            self.store.audit(self.settings.workspace_id, "scheduler", "automation.skipped_paused", "message", external_id, {})
+            return
+        contact_id = self.store.upsert_contact(
+            self.settings.workspace_id, sender, self.settings.timezone, display_name=display_name,
+        )
+        proposal_cutoff = (utc_now() - timedelta(hours=self.settings.booking_link_ttl_hours)).isoformat()
+        active = self.store.latest_sent_proposal(self.settings.workspace_id, sender, proposal_cutoff)
+        if active:
+            selected = confirmation_index(body, len(active["slots"]))
+            if selected is not None:
+                appointment_id = self.store.confirm_proposal(self.settings.workspace_id, active["id"], selected, "contact")
+                result["confirmations"] += 1
+                if self.settings.auto_book_confirmed:
+                    self.book_appointment(appointment_id, actor="automation")
+                return
+        local_today = datetime.now(ZoneInfo(self.settings.timezone)).date()
+        intent = self.intent_provider.analyse(body, local_today, self.settings.default_duration_minutes)
+        if not intent.is_scheduling:
+            result["ignored"] += 1
+            return
+        existing_request = self.store.request_for_source_message(self.settings.workspace_id, external_id)
+        if existing_request:
+            if existing_request["proposal_id"] or existing_request["status"] != "detected":
+                return
+            request_id = int(existing_request["id"])
+        else:
+            request_id = self.store.update_contact_and_create_request(
+                self.settings.workspace_id, contact_id, intent.language, display_name,
+                external_id, intent.title, intent.duration_minutes, self.settings.timezone,
+                intent.requested_start.isoformat(), intent.confidence,
+            )
+        contact = self.store.get_contact(self.settings.workspace_id, contact_id) or {}
+        try:
+            slots = self.calendar.free_slots(
+                intent.requested_start, intent.duration_minutes, preferred_time=intent.preferred_time,
+            )
+        except Exception as exc:  # noqa: BLE001 - Google provider SDK errors are not a stable shared exception type.
+            self.store.transition_request(self.settings.workspace_id, request_id, "failed", "scheduler", {"provider": "google_calendar", "error": str(exc)[:200]})
+            return
+        if not slots:
+            self.store.transition_request(self.settings.workspace_id, request_id, "needs_clarification", "scheduler", {"reason": "no_slots_in_search_window"})
+            return
+        token = secrets.token_urlsafe(32)
+        reply = self._proposal_reply(intent.language, slots, token, contact.get("timezone") or self.settings.timezone)
+        proposal_id, _ = self.store.create_proposal(self.settings.workspace_id, request_id, reply, [slot.isoformat() for slot in slots], token)
+        result["proposals"] += 1
+        if self.settings.auto_send_suggestions:
+            self.send_proposal(proposal_id, actor="automation")
 
     def create_assisted_proposal(self, message_text: str) -> int:
         """Create a manual-only personal WhatsApp proposal without retaining pasted text."""
