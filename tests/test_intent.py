@@ -14,6 +14,19 @@ def test_intent_detects_dutch_tomorrow_and_duration():
     assert intent.confidence >= 0.75
 
 
+@pytest.mark.parametrize(("message", "expected"), [
+    ("Kunnen we overmorgen een afspraak inplannen?", date(2026, 8, 10)),
+    ("Can we schedule a call the day after tomorrow?", date(2026, 8, 10)),
+    ("Can we schedule a call tomorrow?", date(2026, 8, 9)),
+    ("Kunnen we morgenmiddag een afspraak plannen?", date(2026, 8, 9)),
+])
+def test_intent_distinguishes_tomorrow_from_day_after_tomorrow(message, expected):
+    intent = analyse(message, date(2026, 8, 8), 60)
+
+    assert intent.is_scheduling
+    assert intent.requested_start == expected
+
+
 def test_intent_handles_hours_and_invalid_duration():
     assert analyse("schedule a call for 2 hours", date(2026, 8, 8), 30).duration_minutes == 120
     assert analyse("schedule a call for 900 minutes", date(2026, 8, 8), 30).duration_minutes == 30

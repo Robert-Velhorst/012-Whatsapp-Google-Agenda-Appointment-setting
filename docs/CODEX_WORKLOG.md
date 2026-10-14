@@ -382,3 +382,10 @@ Remaining external gate: authorized Meta/Google credentials and approvals, a sta
 - A cursor-continuation patch is being kept in a separate local HAI checkout as requested. Its Go tests, formatting, and PostgreSQL-backed migration run are not verified because Go/gofmt and the dedicated HAI database test DSN are unavailable here. It has not been committed, pushed, or opened as a PR.
 - Hetzner remains the only cloud target; the application repo has no active ngrok launcher/configuration. No Hetzner server, DNS, firewall, TLS, Google account, WhatsApp provider, or live HAI endpoint was changed or exercised. PR #13 remains a draft pending hosted checks and external acceptance.
 - Three serial, temporary-SQLite benchmark runs on the updated lock verified 1,000 records each and measured 838.9–934.5 writes/second, 0.585–1.051 ms dashboard median, 0.693–1.491 ms p95, 4.701–9.065 ms for 500 HAI items, and 0.49 MiB traced Python peak. Raw results and the non-production limitations are recorded in `.ecc/benchmarks/sqlite-workload-2026-10-14.json` and `docs/PERFORMANCE.md`.
+
+## Relative date parsing correction — 2026-10-15
+
+- A deterministic-intent audit found a wrong-day defect: substring matching interpreted Dutch `overmorgen` as `morgen`, while English “the day after tomorrow” was not recognized and defaulted to today.
+- Date parsing now checks bounded Dutch day-after-tomorrow forms and the English phrase before matching tomorrow with word boundaries; Dutch compounds such as `morgenmiddag` and `overmorgenmiddag` remain supported.
+- Regression tests reproduced both defects before the fix. Focused intent/assisted-flow tests: `42 passed`; full local suite: `300 passed in 314.80s`; `compileall`, `pip check`, and `git diff --check` passed. Hosted checks are required on the new pushed SHA; the prior exact SHA's Windows package check passed but does not verify this change.
+- No provider account, personal conversation, live HAI service, or Hetzner host was used.

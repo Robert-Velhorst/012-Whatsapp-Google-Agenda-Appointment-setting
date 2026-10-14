@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import date, time
+from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 
 def signed_in_client(app):
@@ -49,6 +50,19 @@ def test_assisted_analysis_passes_dutch_clock_time_and_default_duration_to_calen
     with app.extensions["store"].connect() as db:
         request_row = db.execute("SELECT duration_minutes FROM scheduling_requests").fetchone()
     assert request_row["duration_minutes"] == app.extensions["settings"].default_duration_minutes
+
+
+def test_assisted_analysis_uses_the_correct_dutch_day_after_tomorrow(app_bundle):
+    app, _, _ = app_bundle
+    settings = app.extensions["settings"]
+    today = datetime.now(ZoneInfo(settings.timezone)).date()
+
+    proposal_id = app.extensions["scheduling"].create_assisted_proposal(
+        "Kunnen we overmorgen een afspraak inplannen?",
+    )
+    proposal = app.extensions["store"].get_proposal("default", proposal_id)
+
+    assert date.fromisoformat(proposal["requested_start"]) == today + timedelta(days=2)
 
 
 def test_assisted_proposal_requires_operator_confirmation_before_booking_link_works(app_bundle):

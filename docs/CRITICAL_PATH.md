@@ -14,7 +14,7 @@ When automation is paused, signed inbound messages are still recorded but no pro
 
 ## 2. Detect appointment intent
 
-The local deterministic provider inspects up to twelve recent sender messages. It recognizes Dutch and English scheduling language, explicit/tomorrow/weekday dates, bounded durations, language, title, and confidence. Conversation text never leaves the process for AI analysis.
+The local deterministic provider inspects up to twelve recent sender messages. It recognizes Dutch and English scheduling language, explicit dates, tomorrow/day-after-tomorrow, weekdays, next-week dates, bounded durations, language, title, and confidence. Conversation text never leaves the process for AI analysis.
 
 ## 3. Propose slots
 

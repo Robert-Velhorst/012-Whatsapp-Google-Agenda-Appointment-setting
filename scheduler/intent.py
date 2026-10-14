@@ -85,7 +85,9 @@ class DeterministicIntentProvider:
             # A week-level request anchors Monday, but retains any named weekday.
             days_until_monday = 7 - today.weekday()
             target = today + timedelta(days=days_until_monday + (explicit_weekday or 0))
-        elif "tomorrow" in lower or "morgen" in lower:
+        elif re.search(r"\bovermorgen(?:ochtend|middag|avond)?\b|\bday after tomorrow\b", lower):
+            target = today + timedelta(days=2)
+        elif re.search(r"\btomorrow\b|\bmorgen(?:ochtend|middag|avond)?\b", lower):
             target = today + timedelta(days=1)
         elif explicit_weekday is not None:
             offset = (explicit_weekday - today.weekday()) % 7

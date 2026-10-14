@@ -1,6 +1,6 @@
 # Giant prompt completion matrix
 
-Status is evidence-based as of 2026-10-14. `Implemented` means locally wired and tested. `Partial` identifies a real remaining gap. `Blocked` is reserved for provider/account/deployment action unavailable in this workspace.
+Status is evidence-based as of 2026-10-15. `Implemented` means locally wired and tested. `Partial` identifies a real remaining gap. `Blocked` is reserved for provider/account/deployment action unavailable in this workspace.
 
 | Phase | Requirement | Status | Evidence / gap |
 |---:|---|---|---|
@@ -29,7 +29,7 @@ Status is evidence-based as of 2026-10-14. `Implemented` means locally wired and
 | 022 | Search/filter/pagination | Implemented | Workspace SQL filters and bounded pagination |
 | 023 | Import/export | Partial | CSV and privacy JSON export; no data import |
 | 024 | Templates/presets/defaults | Partial | Environment defaults and Meta template setting; no preset UI |
-| 025 | AI abstraction/fallback | Implemented | `IntentProvider` with deterministic local default |
+| 025 | AI abstraction/fallback | Implemented | `IntentProvider` with deterministic local default; English and Dutch relative/weekday date parsing |
 | 026 | Review/approval gates | Implemented | Separate proposal and booking approvals by default |
 | 027 | Notifications/reminders | Partial | Worker complete; real approved template not available |
 | 028 | Privacy/delete | Implemented | Export, retention purge, consent controls, guarded API deletion, and CSRF-protected browser deletion requiring current-password reauthentication; active appointments must be cancelled first |
@@ -167,6 +167,10 @@ Booked-event cancellation now uses a durable `cancelling` claim, atomic local co
 ## OAuth and assisted-flow reliability follow-up (2026-10-14)
 
 Google refresh-token failures now give safe reconnect/retry guidance, and readiness preserves that distinction instead of labelling a transient transport outage as missing OAuth. Personal assisted-mode Calendar failures no longer render or persist raw provider exception messages; audits retain only the provider and exception class. Local evidence: 281 Python tests passed; compilation, dependency check, and diff check passed. Exact-head commit `bb42458` passed hosted Windows packaging, dependency audits, tests, and package smoke. The newer readiness refinement requires a fresh exact-head CI run. No live Google account or Hetzner host was used.
+
+## Date parsing correction — 2026-10-15
+
+The personal-flow parser previously matched the `morgen` substring inside Dutch `overmorgen`, proposing tomorrow instead of the day after tomorrow; the English phrase “the day after tomorrow” also fell back to today. Exact-boundary parsing now distinguishes tomorrow from day after tomorrow, including Dutch day-part compounds. Regression tests reproduced both wrong outputs before the fix. The focused intent and assisted-flow suites passed (`42 passed`); the full local suite passed (`300 passed`), along with compilation, `pip check`, and `git diff --check`. Hosted exact-head checks for the follow-up commit are pending. No personal conversation or external provider was used.
 
 ## Overall verdict
 
