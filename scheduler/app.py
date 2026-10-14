@@ -25,10 +25,10 @@ from flask import (
 )
 from werkzeug.security import check_password_hash
 
-from .calendar import CalendarUnavailable, GoogleCalendar
+from .calendar import CalendarBookingOutcomeUnknown, CalendarSlotUnavailable, CalendarUnavailable, GoogleCalendar
 from .config import Settings, rate_limit_client_ip
 from .crypto import CryptoBox
-from .service import AssistedRequestError, SchedulingService
+from .service import AssistedRequestError, AutomationPaused, SchedulingService
 from .store import Store
 from .whatsapp import WhatsAppClient, signature_is_valid
 
@@ -642,6 +642,8 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             return jsonify(scheduling.send_proposal(proposal_id, settings.operator_name))
         except (KeyError, ValueError):
             return _error("proposal_not_sendable", "The proposal cannot be sent in its current state.", 409)
+        except AutomationPaused:
+            return _error("automation_paused", "WhatsApp sending is disabled while automation is paused.", 409)
 
     @app.post("/api/appointments/<int:appointment_id>/book")
     @admin_required
@@ -650,6 +652,26 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             return jsonify(scheduling.book_appointment(appointment_id, settings.operator_name))
         except (KeyError, ValueError):
             return _error("appointment_not_bookable", "The appointment cannot be booked in its current state.", 409)
+        except CalendarSlotUnavailable as exc:
+            return _error("calendar_slot_unavailable", str(exc), 409)
+        except CalendarBookingOutcomeUnknown:
+            return _error(
+                "calendar_booking_unverified",
+                "Google Calendar may have accepted this event. Verify Calendar before retrying the booking.",
+                502,
+                retryable=False,
+            )
+        except CalendarUnavailable:
+            return _error(
+                "calendar_booking_unverified",
+                "Google Calendar availability could not be verified. No event was created; review Calendar before retrying.",
+                502,
+            )
+        except AutomationPaused:
+            return _error("automation_paused", "Calendar changes are disabled while automation is paused.", 409)
+        except Exception as exc:  # noqa: BLE001 - provider/storage errors must not escape the JSON API.
+            app.logger.warning("Calendar booking API failed (%s)", type(exc).__name__)
+            return _error("booking_failed", "Calendar booking could not be completed. Verify the appointment state before retrying.", 500, retryable=False)
 
     @app.post("/api/appointments/<int:appointment_id>/cancel")
     @admin_required
@@ -661,12 +683,12 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
         except ValueError:
             return _error("appointment_not_cancellable", "The appointment is not safely cancellable in its current state.", 409)
         except CalendarUnavailable:
-            return _error("calendar_cancellation_unverified", "Google Calendar cancellation could not be confirmed. Reconcile the event before retrying.", 502)
-        except RuntimeError:
+            return _error("calendar_cancellation_unverified", "Google Calendar cancellation could not be confirmed. Reconcile the event before retrying.", 502, retryable=False)
+        except AutomationPaused:
             return _error("automation_paused", "Calendar changes are disabled while automation is paused.", 409)
         except Exception as exc:  # noqa: BLE001 - provider errors may include private Calendar details.
             app.logger.warning("Calendar cancellation failed (%s)", type(exc).__name__)
-            return _error("calendar_cancellation_unverified", "Google Calendar cancellation could not be confirmed. Reconcile the event before retrying.", 502)
+            return _error("calendar_cancellation_unverified", "Google Calendar cancellation could not be confirmed. Reconcile the event before retrying.", 502, retryable=False)
 
     @app.post("/api/appointments/<int:appointment_id>/reconcile-cancel")
     @admin_required
@@ -732,8 +754,10 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
     return app
 
 
-def _error(code: str, message: str, status: int):
-    return jsonify({"error": {"code": code, "message": message, "retryable": status >= 500 or status == 429}}), status
+def _error(code: str, message: str, status: int, retryable: bool | None = None):
+    if retryable is None:
+        retryable = status >= 500 or status == 429
+    return jsonify({"error": {"code": code, "message": message, "retryable": retryable}}), status
 
 
 def _csv_safe(value: object) -> object:

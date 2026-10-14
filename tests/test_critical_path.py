@@ -40,6 +40,145 @@ def test_message_to_proposal_to_confirmation_to_calendar_event(app_bundle, auth_
     assert len(calendar.created) == 1
 
 
+def test_booking_api_sanitizes_calendar_availability_errors_and_persists_no_provider_detail(app_bundle, auth_headers):
+    app, calendar, _ = app_bundle
+    client = app.test_client()
+    post_webhook(client, webhook())
+    store = app.extensions["store"]
+    item = store.dashboard("default")["items"][0]
+    app.extensions["scheduling"].send_proposal(item["proposal_id"])
+    post_webhook(client, webhook("wamid.2", body="The second one works for me"))
+    item = store.dashboard("default")["items"][0]
+    secret_provider_detail = "PRIVATE_CALENDAR_PROVIDER_SECRET"
+
+    def fail_availability(*_args, **_kwargs):
+        raise RuntimeError(secret_provider_detail)
+
+    calendar.is_slot_available = fail_availability
+    response = client.post(f"/api/appointments/{item['appointment_id']}/book", headers=auth_headers)
+
+    assert response.status_code == 502
+    assert response.get_json()["error"] == {
+        "code": "calendar_booking_unverified",
+        "message": "Google Calendar availability could not be verified. No event was created; review Calendar before retrying.",
+        "retryable": True,
+    }
+    assert secret_provider_detail not in response.get_data(as_text=True)
+    with store.connect() as db:
+        appointment = db.execute("SELECT error_text FROM appointments WHERE id=?", (item["appointment_id"],)).fetchone()
+        audit = db.execute(
+            "SELECT detail_json FROM audit_events ORDER BY id DESC LIMIT 6",
+        ).fetchall()
+    assert secret_provider_detail not in appointment["error_text"]
+    assert secret_provider_detail not in " ".join(row["detail_json"] for row in audit)
+    assert any('"error_class": "RuntimeError"' in row["detail_json"] for row in audit)
+
+
+def test_booking_api_returns_conflict_when_calendar_changes_are_paused(app_bundle, auth_headers):
+    app, _, _ = app_bundle
+    client = app.test_client()
+    post_webhook(client, webhook())
+    store = app.extensions["store"]
+    item = store.dashboard("default")["items"][0]
+    app.extensions["scheduling"].send_proposal(item["proposal_id"])
+    post_webhook(client, webhook("wamid.2", body="The second one works for me"))
+    item = store.dashboard("default")["items"][0]
+    store.set_state("default", "automation_paused", "true", "test")
+
+    response = client.post(f"/api/appointments/{item['appointment_id']}/book", headers=auth_headers)
+
+    assert response.status_code == 409
+    assert response.get_json()["error"] == {
+        "code": "automation_paused",
+        "message": "Calendar changes are disabled while automation is paused.",
+        "retryable": False,
+    }
+
+
+def test_booking_api_does_not_misclassify_unexpected_runtime_errors_as_paused(app_bundle, auth_headers, monkeypatch):
+    app, _, _ = app_bundle
+    secret_detail = "PRIVATE_INTERNAL_BOOKING_DETAIL"
+
+    def fail_booking(*_args, **_kwargs):
+        raise RuntimeError(secret_detail)
+
+    monkeypatch.setattr(app.extensions["scheduling"], "book_appointment", fail_booking)
+    response = app.test_client().post("/api/appointments/999/book", headers=auth_headers)
+
+    assert response.status_code == 500
+    assert response.get_json()["error"] == {
+        "code": "booking_failed",
+        "message": "Calendar booking could not be completed. Verify the appointment state before retrying.",
+        "retryable": False,
+    }
+    assert secret_detail not in response.get_data(as_text=True)
+
+
+def test_proposal_api_returns_conflict_when_outbound_automation_is_paused(app_bundle, auth_headers):
+    app, _, whatsapp = app_bundle
+    client = app.test_client()
+    post_webhook(client, webhook())
+    store = app.extensions["store"]
+    proposal_id = store.dashboard("default")["items"][0]["proposal_id"]
+    store.set_state("default", "automation_paused", "true", "test")
+
+    response = client.post(f"/api/proposals/{proposal_id}/send", headers=auth_headers)
+
+    assert response.status_code == 409
+    assert response.get_json()["error"] == {
+        "code": "automation_paused",
+        "message": "WhatsApp sending is disabled while automation is paused.",
+        "retryable": False,
+    }
+    assert whatsapp.sent == []
+
+
+def test_booking_api_returns_conflict_when_slot_became_busy(app_bundle, auth_headers):
+    app, calendar, _ = app_bundle
+    client = app.test_client()
+    post_webhook(client, webhook())
+    store = app.extensions["store"]
+    item = store.dashboard("default")["items"][0]
+    app.extensions["scheduling"].send_proposal(item["proposal_id"])
+    post_webhook(client, webhook("wamid.2", body="The second one works for me"))
+    item = store.dashboard("default")["items"][0]
+    calendar.is_slot_available = lambda *_args, **_kwargs: False
+
+    response = client.post(f"/api/appointments/{item['appointment_id']}/book", headers=auth_headers)
+
+    assert response.status_code == 409
+    assert response.get_json()["error"] == {
+        "code": "calendar_slot_unavailable",
+        "message": "The selected time has since become busy. No calendar event was created; review the request and offer new times.",
+        "retryable": False,
+    }
+    assert calendar.created == []
+
+
+def test_booking_api_marks_ambiguous_calendar_create_non_retryable(app_bundle, auth_headers):
+    app, calendar, _ = app_bundle
+    client = app.test_client()
+    post_webhook(client, webhook())
+    store = app.extensions["store"]
+    item = store.dashboard("default")["items"][0]
+    app.extensions["scheduling"].send_proposal(item["proposal_id"])
+    post_webhook(client, webhook("wamid.2", body="The second one works for me"))
+    item = store.dashboard("default")["items"][0]
+    secret_provider_detail = "PRIVATE_CALENDAR_CREATE_RESPONSE"
+    calendar.create_event = lambda _appointment: (_ for _ in ()).throw(RuntimeError(secret_provider_detail))
+
+    response = client.post(f"/api/appointments/{item['appointment_id']}/book", headers=auth_headers)
+
+    assert response.status_code == 502
+    assert response.get_json()["error"] == {
+        "code": "calendar_booking_unverified",
+        "message": "Google Calendar may have accepted this event. Verify Calendar before retrying the booking.",
+        "retryable": False,
+    }
+    assert secret_provider_detail not in response.get_data(as_text=True)
+    assert store.get_appointment("default", item["appointment_id"])["status"] == "manual_required"
+
+
 def test_request_creation_rolls_back_when_audit_insert_fails(app_bundle):
     app, _, _ = app_bundle
     store = app.extensions["store"]
@@ -451,6 +590,7 @@ def test_calendar_cancellation_timeout_is_reconciled_without_losing_state(app_bu
 
     assert cancelled.status_code == 502, cancelled.get_json()
     assert cancelled.get_json()["error"]["code"] == "calendar_cancellation_unverified"
+    assert cancelled.get_json()["error"]["retryable"] is False
     assert "synthetic response lost" not in cancelled.get_data(as_text=True)
     assert store.get_appointment("default", appointment_id)["status"] == "cancel_manual_required"
     assert store.request_detail("default", 1)["status"] == "booked"

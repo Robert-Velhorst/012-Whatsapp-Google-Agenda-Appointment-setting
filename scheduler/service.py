@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from .calendar import CalendarUnavailable
+from .calendar import CalendarBookingOutcomeUnknown, CalendarSlotUnavailable, CalendarUnavailable
 from .config import Settings
 from .intent import DEFAULT_PROVIDER, IntentProvider, confirmation_index
 from .store import Store, utc_now
@@ -15,6 +15,10 @@ from .whatsapp import WhatsAppUnavailable
 
 class AssistedRequestError(ValueError):
     """A safe, operator-correctable error while preparing personal-mode times."""
+
+
+class AutomationPaused(RuntimeError):
+    """An external action was refused because operator automation is paused."""
 
 
 class SchedulingService:
@@ -270,7 +274,7 @@ class SchedulingService:
 
     def send_proposal(self, proposal_id: int, actor: str = "operator") -> dict:
         if self.is_paused():
-            raise RuntimeError("Automation is paused; resume it before sending")
+            raise AutomationPaused("Automation is paused; resume it before sending")
         proposal = self.store.get_proposal(self.settings.workspace_id, proposal_id)
         if not proposal:
             raise KeyError("Proposal not found")
@@ -340,7 +344,7 @@ class SchedulingService:
 
     def book_appointment(self, appointment_id: int, actor: str = "operator") -> dict[str, Any]:
         if self.is_paused():
-            raise RuntimeError("Automation is paused; external calendar changes are disabled")
+            raise AutomationPaused("Automation is paused; external calendar changes are disabled")
         appointment = self.store.claim_booking(self.settings.workspace_id, appointment_id, actor)
         if not appointment:
             existing = self.store.get_appointment(self.settings.workspace_id, appointment_id)
@@ -356,12 +360,25 @@ class SchedulingService:
                 datetime.fromisoformat(appointment["start_at"]),
                 datetime.fromisoformat(appointment["end_at"]),
             ):
-                raise CalendarUnavailable(
+                raise CalendarSlotUnavailable(
                     "The selected time has since become busy. No calendar event was created; review the request and offer new times."
                 )
         except Exception as exc:
-            self.store.mark_booking_failed(self.settings.workspace_id, appointment_id, str(exc), actor, {"error": str(exc)[:200]})
-            raise
+            if isinstance(exc, CalendarSlotUnavailable):
+                self.store.mark_booking_failed(
+                    self.settings.workspace_id, appointment_id,
+                    "The selected time has since become busy", actor,
+                    {"reason": "calendar_slot_unavailable"},
+                )
+                raise
+            self.store.mark_booking_failed(
+                self.settings.workspace_id, appointment_id,
+                "Google Calendar availability could not be verified", actor,
+                {"reason": "availability_check_failed", "error_class": type(exc).__name__},
+            )
+            raise CalendarUnavailable(
+                "Google Calendar availability could not be verified. No event was created; review Calendar before retrying."
+            ) from exc
 
         try:
             event = self.calendar.create_event(appointment)
@@ -372,7 +389,7 @@ class SchedulingService:
             self.store.mark_booking_manual_required(
                 self.settings.workspace_id, appointment_id, "calendar_create_result_unknown", actor
             )
-            raise CalendarUnavailable(
+            raise CalendarBookingOutcomeUnknown(
                 "Google Calendar may have accepted this event. Verify Calendar before retrying the booking."
             ) from exc
 
@@ -388,7 +405,7 @@ class SchedulingService:
                 self.store.mark_booking_manual_required(
                     self.settings.workspace_id, appointment_id, "booking_state_persist_failed", actor
                 )
-                raise CalendarUnavailable(
+                raise CalendarBookingOutcomeUnknown(
                     "Google Calendar event was created, but local booking state needs reconciliation before retrying."
                 ) from exc
 
@@ -427,7 +444,7 @@ class SchedulingService:
 
     def cancel_appointment(self, appointment_id: int, actor: str = "operator") -> dict:
         if self.is_paused():
-            raise RuntimeError("Automation is paused; external calendar changes are disabled")
+            raise AutomationPaused("Automation is paused; external calendar changes are disabled")
         appointment = self.store.get_appointment(self.settings.workspace_id, appointment_id)
         if not appointment:
             raise KeyError("Appointment not found")
@@ -485,7 +502,7 @@ class SchedulingService:
 
     def prepare_reschedule(self, appointment_id: int, requested_start: str, actor: str = "operator") -> dict[str, Any]:
         if self.is_paused():
-            raise RuntimeError("Automation is paused; calendar changes are disabled")
+            raise AutomationPaused("Automation is paused; calendar changes are disabled")
         appointment = self.store.get_appointment(self.settings.workspace_id, appointment_id)
         if not appointment:
             raise KeyError("Appointment not found")
@@ -529,7 +546,7 @@ class SchedulingService:
 
     def confirm_reschedule(self, appointment_id: int, actor: str = "operator") -> dict[str, Any]:
         if self.is_paused():
-            raise RuntimeError("Automation is paused; calendar changes are disabled")
+            raise AutomationPaused("Automation is paused; calendar changes are disabled")
         appointment = self.store.claim_reschedule(self.settings.workspace_id, appointment_id, actor)
         if not appointment:
             raise ValueError("No unconfirmed reschedule is available to confirm")

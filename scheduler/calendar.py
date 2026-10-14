@@ -81,6 +81,14 @@ class CalendarUnavailable(RuntimeError):
     pass
 
 
+class CalendarSlotUnavailable(CalendarUnavailable):
+    """The requested slot was checked successfully but is no longer free."""
+
+
+class CalendarBookingOutcomeUnknown(CalendarUnavailable):
+    """Calendar may have accepted a write that the caller did not verify."""
+
+
 class GoogleCalendar:
     def __init__(self, settings: Settings, crypto: CryptoBox | None = None):
         self.settings = settings
