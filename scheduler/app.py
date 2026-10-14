@@ -527,7 +527,15 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
     def google_callback():
         if request.args.get("state") != session.pop("google_oauth_state", None):
             return _error("invalid_oauth_state", "Invalid Google OAuth state", 400)
-        calendar.exchange_code(request.url, settings.public_base_url + "/api/google/callback")
+        if request.args.get("error"):
+            flash("Google Calendar authorization was cancelled. Your calendar connection was not changed.", "error")
+            return redirect(url_for("dashboard"))
+        try:
+            calendar.exchange_code(request.url, settings.public_base_url + "/api/google/callback")
+        except Exception as exc:  # noqa: BLE001 - provider OAuth libraries expose several unrelated error types.
+            app.logger.warning("Google Calendar authorization callback failed (%s)", type(exc).__name__)
+            flash("Google Calendar connection could not be completed. Please try again.", "error")
+            return redirect(url_for("dashboard"))
         store.audit(settings.workspace_id, settings.operator_name, "provider.google_connected", "provider", "google_calendar")
         return redirect(url_for("dashboard"))
 

@@ -12,6 +12,14 @@ from scheduler.calendar import CalendarUnavailable, GoogleCalendar
 from scheduler.crypto import CryptoBox
 
 
+def _google_oauth_client(app):
+    client = app.test_client()
+    with client.session_transaction() as current:
+        current["operator_authenticated"] = True
+        current["google_oauth_state"] = "oauth-state"
+    return client
+
+
 class DeleteCall:
     def execute(self):
         raise HttpError(SimpleNamespace(status=404, reason="Not Found"), b'{}')
@@ -32,6 +40,61 @@ def test_calendar_cancel_treats_missing_event_as_idempotent(app_bundle):
     calendar = GoogleCalendar(app.extensions["settings"], CryptoBox("test-encryption-key"))
     calendar._service = lambda: Service()
     assert calendar.cancel_event("already-deleted") is None
+
+
+def test_google_oauth_denial_does_not_exchange_a_missing_code(app_bundle):
+    app, calendar, _ = app_bundle
+    calendar.exchange_code = lambda *_args: pytest.fail("OAuth denial must not exchange a code")
+    client = _google_oauth_client(app)
+
+    response = client.get("/api/google/callback?state=oauth-state&error=access_denied")
+
+    assert response.status_code == 302
+    dashboard = client.get(response.headers["Location"])
+    assert b"Google Calendar authorization was cancelled" in dashboard.data
+    assert b"access_denied" not in dashboard.data
+
+
+def test_google_oauth_callback_rejects_invalid_state_without_exchange(app_bundle):
+    app, calendar, _ = app_bundle
+    calendar.exchange_code = lambda *_args: pytest.fail("Invalid OAuth state must not exchange a code")
+    client = _google_oauth_client(app)
+
+    response = client.get("/api/google/callback?state=attacker-state&code=synthetic-code")
+
+    assert response.status_code == 400
+    assert b"Invalid Google OAuth state" in response.data
+
+
+def test_google_oauth_success_audits_only_after_exchange(app_bundle):
+    app, calendar, _ = app_bundle
+    exchanges = []
+    calendar.exchange_code = lambda authorization_response, redirect_uri: exchanges.append((authorization_response, redirect_uri))
+    client = _google_oauth_client(app)
+
+    response = client.get("/api/google/callback?state=oauth-state&code=synthetic-code")
+
+    assert response.status_code == 302
+    assert len(exchanges) == 1
+    assert exchanges[0][1] == "http://localhost/api/google/callback"
+    audit = app.extensions["store"].recent_audit("default")
+    assert any(item["action"] == "provider.google_connected" for item in audit)
+
+
+def test_google_oauth_exchange_failure_is_sanitized_and_retryable(app_bundle, caplog):
+    app, calendar, _ = app_bundle
+    calendar.exchange_code = lambda *_args: (_ for _ in ()).throw(
+        RuntimeError("PRIVATE_PROVIDER_RESPONSE access_token=do-not-disclose")
+    )
+    client = _google_oauth_client(app)
+
+    response = client.get("/api/google/callback?state=oauth-state&code=synthetic-code")
+
+    assert response.status_code == 302
+    dashboard = client.get(response.headers["Location"])
+    assert b"Google Calendar connection could not be completed" in dashboard.data
+    assert b"PRIVATE_PROVIDER_RESPONSE" not in dashboard.data
+    assert "PRIVATE_PROVIDER_RESPONSE" not in caplog.text
 
 
 def test_calendar_lookup_verifies_event_id_marker_and_interval(app_bundle):

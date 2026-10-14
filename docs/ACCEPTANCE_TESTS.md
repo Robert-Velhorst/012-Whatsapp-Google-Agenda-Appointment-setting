@@ -24,6 +24,7 @@
 | Jobs | `tests/test_worker.py` | Missing/unknown reminders are never reported sent |
 | Concurrency/recovery | `tests/test_provider_safety.py` | Atomic rate/send/confirmation claims; ambiguous delivery and stale work require manual review |
 | Calendar/token safety | `tests/test_calendar_safety.py` | Missing event cancellation is idempotent; OAuth token replacement is atomic and encrypted |
+| Google OAuth callback | `tests/test_calendar_safety.py::test_google_oauth_*` | Denial is recoverable, state is validated, provider failures are sanitized, and connection audit is written only after token exchange succeeds |
 | HAI | `tests/test_hai_integration.py` | Disabled by default; local/PII-minimized; emits `cursor`/`nextCursor`; endpoint continuation works when a caller supplies `cursor`; rejects external peers/invalid cursors. Does not prove current HAI reader sends/persists the cursor; see `docs/HAI_INTEGRATION.md` |
 | Personal WhatsApp assisted flow | `tests/test_assisted_personal.py`, `test_personal_whatsapp_assisted_screen_is_in_operator_navigation` | Pasted text is transient; explicit manual-share activation; no Business API send, personal confirmation, or reminder; booking records manual confirmation follow-up rather than a failed send |
 | Personal-only production configuration | `test_production_personal_assisted_mode_does_not_require_business_api` | Strong production configuration and Google client work without Meta credentials; WhatsApp webhook remains disabled |
