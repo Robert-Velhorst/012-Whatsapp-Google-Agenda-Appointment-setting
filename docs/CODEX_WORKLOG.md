@@ -301,3 +301,9 @@ Remaining external gate: authorized Meta/Google credentials and approvals, a sta
 - A forged SQLite file with only the latest migration number and the three tables/columns touched by encryption rotation passed rotation's weaker `max(version)` check and could be published as a rotation bundle despite missing most application tables.
 - The regression reproduced the unsafe publication before the fix. Backup/restore and encryption rotation now share one validator requiring SQLite integrity, clean foreign keys, the exact migration ledger, and all migration-derived tables and column signatures.
 - Verification: focused crypto-rotation and CLI/database suites `17 passed`; full suite `235 passed`; `compileall`, `pip check`, and `git diff --check` passed on Windows. Hosted exact-head CI and package verification are pending.
+
+## Encrypted-field reads fail safely on malformed ciphertext — 2026-10-14
+
+- Branch-aware coverage reported `scheduler/crypto.py` at 70%. A targeted regression reproduced unhandled `UnicodeEncodeError` for non-ASCII ciphertext text and `UnicodeDecodeError` for authenticated ciphertext containing non-UTF-8 bytes. Either could turn an operator view of corrupted/mismatched stored data into a server error.
+- Non-strict display decryption now returns the existing explicit corruption marker for invalid tokens and Unicode encoding/decoding failures. Strict decryption remains fail-closed for key rotation and integrity-sensitive operations.
+- Verification: focused crypto tests `4 passed`; full suite `246 passed in 174.44s` with warnings treated as errors; `compileall`, `pip check`, and `git diff --check` passed. Windows package and exact-head hosted checks are pending. No provider or production data was used.

@@ -30,7 +30,7 @@ class CryptoBox:
         if value.startswith("enc:") and self._fernet:
             try:
                 return self._fernet.decrypt(value[4:].encode("ascii")).decode("utf-8")
-            except InvalidToken:
+            except (InvalidToken, UnicodeDecodeError, UnicodeEncodeError):
                 return "[encrypted with a different key]"
         return value
 
