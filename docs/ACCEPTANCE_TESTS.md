@@ -14,6 +14,7 @@
 | Event idempotency | critical-path test repeat booking | Second call returns booked without second event |
 | Cancellation | `test_cancel_is_idempotent_and_calls_calendar` | Provider event cancelled and local jobs stopped |
 | Production guard | `test_production_configuration_fails_closed` | Unsafe production startup raises |
+| CLI doctor | `test_doctor_exits_nonzero_when_database_is_unhealthy` | Exit status is failure if provider readiness or database integrity/writability fails |
 | Auth/CSRF | `test_api_requires_authentication`, `test_browser_login_and_csrf` | Protected data inaccessible; session mutations require CSRF |
 | Redirect/CSV safety | `tests/test_security_privacy.py` redirect cases, `test_csv_export_neutralizes_spreadsheet_formulas` | External and protocol-relative redirects refused for login and action referrers; safe same-origin redirects retained; spreadsheet formulas neutralized |
 | Static asset cache | `test_static_assets_are_content_versioned_before_immutable_caching` | Only content-matching CSS URLs receive immutable caching; legacy/unversioned URLs revalidate |

@@ -216,7 +216,7 @@ def main(argv: list[str] | None = None) -> int:
             "writable": _database_is_healthy_and_writable(settings.database_path),
         }
         print(json.dumps(result, indent=2))
-        return 0 if result["ready"] else 1
+        return 0 if result["ready"] and result["database"]["writable"] else 1
     if args.command == "migrate":
         print(json.dumps({"ok": True, "database": str(settings.database_path.resolve())}))
         return 0

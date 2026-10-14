@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import closing
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,6 +12,7 @@ from scheduler.cli import (
     _online_backup,
     _restore_database,
     _validate_app_database,
+    main,
 )
 from scheduler.migrations import MIGRATIONS
 
@@ -23,6 +26,23 @@ def test_database_doctor_checks_integrity_and_write_lock(app_bundle, tmp_path):
     broken = tmp_path / "not-a-database.sqlite3"
     broken.write_text("not sqlite", encoding="utf-8")
     assert not _database_is_healthy_and_writable(broken)
+
+
+def test_doctor_exits_nonzero_when_database_is_unhealthy(monkeypatch, tmp_path, capsys):
+    app = SimpleNamespace(extensions={
+        "settings": SimpleNamespace(database_path=tmp_path / "unhealthy.sqlite3"),
+        "store": object(),
+        "scheduling": SimpleNamespace(readiness=lambda: {"ready": True}),
+    })
+    monkeypatch.setattr("scheduler.cli.create_app", lambda: app)
+    monkeypatch.setattr("scheduler.cli._database_is_healthy_and_writable", lambda _path: False)
+
+    exit_code = main(["doctor"])
+    report = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 1
+    assert report["ready"] is True
+    assert report["database"]["writable"] is False
 
 
 def test_online_backup_is_consistent_and_refuses_live_database_overwrite(app_bundle, tmp_path):
