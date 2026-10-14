@@ -72,7 +72,7 @@ Status is evidence-based as of 2026-10-14. `Implemented` means locally wired and
 | 065 | Privacy impact | Implemented | Data inventory, consent, encryption, deletion, retention |
 | 066 | Supply chain | Implemented | Locked environments, CI `pip-audit`, and live audit with no known vulnerabilities |
 | 067 | License/third-party review | Partial | Providers/dependencies recorded; formal counsel review external |
-| 068 | CI/CD gates | Implemented | Compile, tests, Docker build GitHub workflow |
+| 068 | CI/CD gates | Implemented | Compile, tests, secret-safe Docker Compose configuration validation, and Docker build GitHub workflow |
 | 069 | Release/canary/rollback | Partial | Procedure documented; no live deployment to exercise |
 | 070 | Operator runbook | Implemented | Runbook covers daily, incidents, backup, release |
 | 071 | User guide/help | Implemented | README plus in-app workflow help |

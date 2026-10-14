@@ -17,4 +17,5 @@ jobs:
       - run: pip-audit
       - run: python -m compileall -q scheduler run.py
       - run: pytest -q
+      - run: docker compose config --no-env-resolution --quiet
       - run: docker build -t agenda-relay:test .

@@ -1,5 +1,10 @@
 # Codex worklog
 
+## 2026-10-14 - Validate Hetzner Compose without printing secrets
+
+- Production-readiness review found that the Docker CI built the image but never parsed the two-service Compose deployment model, and the README's bare `docker compose config` could print interpolated secrets to the terminal. CI now validates Compose structure with `docker compose config --no-env-resolution --quiet`; the operator command and Hetzner runbook use `docker compose config --quiet` so the real local environment is checked without rendering values.
+- Local Docker Compose 5.3.1 passed the no-environment static check and the documented quiet check against a temporary copy of `.env.example`. The fixture was removed; no credentials, container, or provider were used. Exact-head CI remains pending.
+
 ## 2026-10-14 - Validate the local-only HAI cursor continuation patch
 
 - The first executable HAI check found a compile error in a new HTTP-query regression: the test's captured query is `map[string][]string`, not `url.Values`. Corrected the assertion to require exactly one preserved `limit` and one replacement `cursor` value.

@@ -100,7 +100,7 @@ For a packaged Windows installation, use `AgendaRelay.exe doctor`, `AgendaRelay.
 Create `.env`, point `GOOGLE_CLIENT_SECRETS_FILE_HOST` at the host credential JSON, then run:
 
 ```powershell
-docker compose config
+docker compose config --quiet
 docker compose build
 docker compose up -d
 ```
