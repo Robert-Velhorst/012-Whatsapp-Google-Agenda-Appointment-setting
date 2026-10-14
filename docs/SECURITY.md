@@ -29,6 +29,7 @@ Secrets are environment-owned. They are excluded from Git, Docker build context,
 ## Web security
 
 Responses include CSP, frame denial, MIME sniff prevention, no-referrer, restricted browser permissions, no-store, and production HSTS. Production requires HTTPS and strong non-default secrets. OAuth uses a session-bound random state.
+- Public booking responses map expected validation errors to fixed text and never reflect raw calendar/provider exceptions to bearer-link holders; provider exception details remain restricted to operator-side recovery records.
 
 ## Authorization and ownership
 

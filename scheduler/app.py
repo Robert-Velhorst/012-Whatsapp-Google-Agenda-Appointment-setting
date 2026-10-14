@@ -25,7 +25,7 @@ from flask import (
 )
 from werkzeug.security import check_password_hash
 
-from .calendar import GoogleCalendar
+from .calendar import CalendarUnavailable, GoogleCalendar
 from .config import Settings, rate_limit_client_ip
 from .crypto import CryptoBox
 from .service import SchedulingService
@@ -393,10 +393,20 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             return render_template("booking_complete.html", appointment_id=result["appointment_id"], booked=result["booked"], warning=result["warning"])
         except KeyError:
             abort(404)
-        except Exception as exc:  # noqa: BLE001 - provider SDK failures return the still-reviewable booking page.
+        except Exception as exc:  # noqa: BLE001 - provider SDK errors must never be reflected to bearer-link holders.
             proposal = store.get_proposal_by_token(token)
             timezone_name = (proposal or {}).get("contact_timezone") or settings.timezone
-            return render_template("booking.html", proposal=proposal, token=token, timezone_name=timezone_name, display_slots=booking_slots(proposal), error=str(exc), auto_book_confirmed=settings.auto_book_confirmed and not scheduling.is_paused()), 400
+            safe_messages = {
+                "Consent is required before confirming a slot": "Please agree to the scheduling consent before choosing a time.",
+                "Selected slot is outside proposal": "Choose one of the times listed on this page.",
+                "That time has just become unavailable. Please choose another of the proposed times.": "That time has just become unavailable. Please choose another proposed time.",
+                "This booking link has expired; ask for new time suggestions": "This booking link has expired. Please ask the sender for new time suggestions.",
+                "This contact has revoked consent": "This booking link is no longer active. Please contact the sender.",
+            }
+            safe_error = safe_messages.get(str(exc), "We couldn't confirm this selection. It may not be booked yet; please contact the sender.")
+            if not isinstance(exc, (ValueError, CalendarUnavailable)):
+                app.logger.warning("Public booking confirmation failed (%s)", type(exc).__name__)
+            return render_template("booking.html", proposal=proposal, token=token, timezone_name=timezone_name, display_slots=booking_slots(proposal), error=safe_error, auto_book_confirmed=settings.auto_book_confirmed and not scheduling.is_paused()), 400
 
     @app.get("/webhook/whatsapp")
     def verify_webhook():

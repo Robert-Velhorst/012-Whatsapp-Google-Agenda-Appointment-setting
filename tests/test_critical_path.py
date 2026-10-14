@@ -93,7 +93,7 @@ def test_busy_public_slot_does_not_consume_proposal(app_bundle):
     response = client.post(f"/book/{proposal['booking_token']}", data={"csrf_token": csrf, "slot": "0", "consent": "yes"})
 
     assert response.status_code == 400
-    assert b"choose another of the proposed times" in response.data
+    assert b"choose another proposed time" in response.data
     assert store.get_proposal("default", item["proposal_id"])["status"] == "sent"
     assert store.dashboard("default")["items"][0].get("appointment_id") is None
 
@@ -119,6 +119,38 @@ def test_public_auto_booking_reports_calendar_and_whatsapp_result(app_bundle):
     assert b"sent through WhatsApp" in response.data
     assert len(calendar.created) == 1
     assert len(whatsapp.sent) == 2
+
+
+def test_public_booking_hides_provider_error_details(app_bundle, caplog):
+    app, calendar, _ = app_bundle
+    client = app.test_client()
+    post_webhook(client, webhook())
+    store = app.extensions["store"]
+    item = store.dashboard("default")["items"][0]
+    app.extensions["scheduling"].send_proposal(item["proposal_id"])
+    proposal = store.get_proposal("default", item["proposal_id"])
+    client.get(f"/book/{proposal['booking_token']}")
+    with client.session_transaction() as current:
+        csrf = current["csrf_token"]
+    app.extensions["scheduling"].settings = replace(app.extensions["settings"], auto_book_confirmed=True)
+    calendar.is_slot_available = lambda start, end: True
+    calendar.create_event = lambda appointment: (_ for _ in ()).throw(
+        RuntimeError("PRIVATE_PROVIDER_RESPONSE access_token=do-not-disclose")
+    )
+
+    response = client.post(
+        f"/book/{proposal['booking_token']}",
+        data={"csrf_token": csrf, "slot": "0", "consent": "yes"},
+    )
+
+    assert response.status_code == 400
+    assert b"confirm this selection" in response.data
+    assert b"PRIVATE_PROVIDER_RESPONSE" not in response.data
+    assert b"do-not-disclose" not in response.data
+    assert "PRIVATE_PROVIDER_RESPONSE" not in caplog.text
+    assert "do-not-disclose" not in caplog.text
+    appointment = store.dashboard("default")["items"][0]
+    assert appointment["appointment_status"] == "failed"
 
 
 def test_public_booking_link_expires(app_bundle):
