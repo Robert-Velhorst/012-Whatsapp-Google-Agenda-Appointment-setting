@@ -302,11 +302,18 @@ class SchedulingService:
             raise
 
         warning = None
-        try:
-            self._send_booking_confirmation(appointment)
-        except Exception as exc:  # noqa: BLE001 - WhatsApp send can fail after booking; preserve the booked state and manual warning.
-            warning = "Calendar event was booked, but WhatsApp confirmation requires operator attention."
-            self.store.audit(self.settings.workspace_id, actor, "confirmation.send_failed", "appointment", appointment_id, {"error": str(exc)[:200]})
+        if appointment["sender"].startswith("assisted:"):
+            warning = "Appointment booked in Google Calendar. Send the WhatsApp confirmation draft manually."
+            self.store.audit(
+                self.settings.workspace_id, actor, "confirmation.manual_required", "appointment", appointment_id,
+                {"channel": "personal_whatsapp", "automatic_send": False},
+            )
+        else:
+            try:
+                self._send_booking_confirmation(appointment)
+            except Exception as exc:  # noqa: BLE001 - WhatsApp send can fail after booking; preserve the booked state and manual warning.
+                warning = "Calendar event was booked, but WhatsApp confirmation requires operator attention."
+                self.store.audit(self.settings.workspace_id, actor, "confirmation.send_failed", "appointment", appointment_id, {"error": str(exc)[:200]})
         reminder_at = datetime.fromisoformat(appointment["start_at"]).astimezone(UTC) - timedelta(minutes=self.settings.reminder_minutes_before)
         if reminder_at > utc_now() and not appointment["sender"].startswith("assisted:"):
             self.store.schedule_job(

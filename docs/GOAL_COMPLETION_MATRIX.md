@@ -135,6 +135,8 @@ The operator can paste a relevant message into the authenticated **Personal What
 
 - Calendar retry safety: migrations 7–8 persist the booking attempt and backfill legacy in-flight/failed appointments to attempt 1, preserving their existing deterministic event ID. A separately claimed retry increments the counter and uses a new deterministic ID, preventing a tombstoned 409 ID from making the advertised retry unusable. Targeted regressions: 27 passed; full suite: 145 passed; compileall, pip check, and diff check passed. Exact-head hosted checks remain pending.
 
+- Personal confirmation audit correctness: intentional manual follow-up after an assisted booking is now recorded as `confirmation.manual_required` rather than a failed send. Tests assert the personal flow never invokes the automatic sender, while Business API send failures retain their existing handling. Focused/full verification for this follow-up is pending.
+
 - Closed a Windows/ngrok OAuth bootstrap deadlock: the tunnel launcher now uses the protected `public_ingress` readiness contract. Google OAuth may be disconnected only while automation is paused; full production configuration and signed WhatsApp webhook settings must already validate.
 - Closed an unsafe resume path: the operator action cannot resume automation while configuration errors or provider disconnections remain.
 - Regression evidence: `tests/test_hai_integration.py` covers paused/unpaused OAuth bootstrap and authenticated readiness; `tests/test_security_privacy.py` covers the refused resume and visible error message. Full suite: 66 passed; dependency audit and consistency checks passed; PowerShell parser accepted `windows/Start-Ngrok.ps1`.

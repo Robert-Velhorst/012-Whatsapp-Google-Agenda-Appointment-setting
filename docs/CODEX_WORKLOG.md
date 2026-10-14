@@ -173,3 +173,9 @@ Remaining external gate: authorized Meta/Google credentials and approvals, a sta
 - Regression coverage verifies v6 data backfill, first-attempt ID compatibility, distinct retry IDs, Calendar 409 handling, and the stale reconciliation → explicit retry state path. Targeted tests: `27 passed`; full suite: `145 passed in 160.10s`. `compileall`, `pip check`, and `git diff --check` passed; Ruff is unavailable in this local venv.
 - Google Calendar API guidance says IDs must be unique per calendar and recommends generating a new ID for a new instance after a 409 duplicate. Local Calendar behavior is mocked; no Google account or live Calendar was used.
 - Hosted exact-commit workflows, standalone rebuild, and provider acceptance remain pending for this follow-up.
+
+## Personal confirmation audit correctness — 2026-10-14
+
+- The rendered assisted-booking audit showed `confirmation.send_failed` even though personal WhatsApp sends are intentionally prohibited. The old service path called the guarded send routine, treated its expected refusal as a delivery failure, and then emitted a generic warning.
+- Booking now skips the send routine entirely for assisted personal records, emits an explicit `confirmation.manual_required` audit event with `automatic_send=false`, and returns an instruction to manually send the existing confirmation draft. Business API delivery/error handling is unchanged.
+- A regression replaces the automatic send routine with an assertion failure, proves it is never invoked for the personal path, and verifies that the audit never labels the intentional manual follow-up as a send failure. Full suite, package check, and browser-visible audit-state refresh remain pending.

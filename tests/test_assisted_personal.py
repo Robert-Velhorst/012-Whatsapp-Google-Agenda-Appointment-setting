@@ -71,15 +71,25 @@ def test_assisted_booking_never_sends_personal_confirmation_or_queues_reminder(a
     proposal_id = service.create_assisted_proposal("Please schedule a 30 minute call next week")
     store.mark_assisted_proposal_shared("default", proposal_id, "operator")
     appointment_id = store.confirm_proposal("default", proposal_id, 0, "contact")
+    service._send_booking_confirmation = lambda _appointment: (_ for _ in ()).throw(
+        AssertionError("personal WhatsApp must not enter the automatic confirmation path")
+    )
 
     result = service.book_appointment(appointment_id)
 
     assert result["status"] == "booked"
-    assert result["warning"] == "Calendar event was booked, but WhatsApp confirmation requires operator attention."
+    assert result["warning"] == "Appointment booked in Google Calendar. Send the WhatsApp confirmation draft manually."
     assert len(calendar.created) == 1
     assert calendar.created[0]["sender"].startswith("assisted:")
     assert whatsapp.sent == []
     assert store.dashboard("default")["jobs"] == []
+    audit = store.recent_audit("default")
+    assert any(
+        item["action"] == "confirmation.manual_required"
+        and item["detail"] == {"automatic_send": False, "channel": "personal_whatsapp"}
+        for item in audit
+    )
+    assert not any(item["action"] == "confirmation.send_failed" for item in audit)
 
 
 def test_assisted_proposal_cannot_be_sent_through_business_api(app_bundle):
