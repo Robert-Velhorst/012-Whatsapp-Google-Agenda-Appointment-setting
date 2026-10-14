@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import os
+import threading
 from datetime import datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -31,6 +32,7 @@ class GoogleCalendar:
     def __init__(self, settings: Settings, crypto: CryptoBox | None = None):
         self.settings = settings
         self.crypto = crypto or CryptoBox(settings.data_encryption_key)
+        self._token_refresh_lock = threading.Lock()
 
     def authorization_url(self, redirect_uri: str, state: str) -> str:
         flow = Flow.from_client_secrets_file(self.settings.google_client_secrets_file, scopes=SCOPES, state=state, redirect_uri=redirect_uri)
@@ -208,27 +210,38 @@ class GoogleCalendar:
 
     def _credentials(self) -> Credentials:
         token_path = Path(self.settings.google_token_file)
-        if not token_path.exists():
-            raise CalendarUnavailable("Google Calendar is not connected; visit /api/google/connect first.")
-        serialized = self.crypto.decrypt(token_path.read_text(encoding="utf-8"))
-        credentials = Credentials.from_authorized_user_info(json.loads(serialized), SCOPES)
+        credentials = self._read_credentials(token_path)
         if credentials.expired and credentials.refresh_token:
-            credentials.refresh(Request())
-            self._write_token(credentials.to_json())
+            # Waitress can call Calendar from several request threads. Reload after
+            # acquiring the lock so only the first thread refreshes a stale token.
+            with self._token_refresh_lock:
+                credentials = self._read_credentials(token_path)
+                if credentials.expired and credentials.refresh_token:
+                    credentials.refresh(Request())
+                    self._write_token(credentials.to_json())
         if not credentials.valid:
             raise CalendarUnavailable("Google Calendar authorization has expired; reconnect it.")
         return credentials
 
+    def _read_credentials(self, token_path: Path) -> Credentials:
+        if not token_path.exists():
+            raise CalendarUnavailable("Google Calendar is not connected; visit /api/google/connect first.")
+        serialized = self.crypto.decrypt(token_path.read_text(encoding="utf-8"))
+        return Credentials.from_authorized_user_info(json.loads(serialized), SCOPES)
+
     def _write_token(self, serialized: str) -> None:
         token_path = Path(self.settings.google_token_file)
         token_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = token_path.with_name(f".{token_path.name}.{os.getpid()}.tmp")
-        temporary.write_text(self.crypto.encrypt(serialized), encoding="utf-8")
+        temporary = token_path.with_name(f".{token_path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
         try:
-            temporary.chmod(0o600)
-        except OSError:
-            pass
-        os.replace(temporary, token_path)
+            temporary.write_text(self.crypto.encrypt(serialized), encoding="utf-8")
+            try:
+                temporary.chmod(0o600)
+            except OSError:
+                pass
+            os.replace(temporary, token_path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def _service(self):
         return build("calendar", "v3", credentials=self._credentials(), cache_discovery=False)

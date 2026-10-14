@@ -1,3 +1,6 @@
+import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
@@ -155,6 +158,66 @@ def test_google_token_write_is_atomic_and_encrypted(app_bundle, tmp_path):
     stored = token_path.read_text(encoding="utf-8")
     assert stored.startswith("enc:")
     assert crypto.decrypt(stored) == '{"refresh_token":"secret"}'
+    assert list(token_path.parent.glob("*.tmp")) == []
+
+
+def test_concurrent_expired_token_reads_refresh_once_and_return_current_credentials(app_bundle, tmp_path, monkeypatch):
+    app, _, _ = app_bundle
+    token_path = tmp_path / "credentials" / "google-token.json"
+    settings = replace(app.extensions["settings"], google_token_file=str(token_path))
+    crypto = CryptoBox("test-encryption-key")
+    calendar = GoogleCalendar(settings, crypto)
+    token_path.parent.mkdir(parents=True)
+    token_path.write_text(crypto.encrypt('{"token":"old"}'), encoding="utf-8")
+
+    caller_count = 8
+    initial_reads = threading.Barrier(caller_count)
+    counter_lock = threading.Lock()
+    read_count = 0
+    refresh_count = 0
+
+    class FakeCredentials:
+        def __init__(self, token):
+            self.token = token
+            self.refresh_token = "refresh-token"
+
+        @classmethod
+        def from_authorized_user_info(cls, info, scopes):
+            nonlocal read_count
+            with counter_lock:
+                read_count += 1
+                current_read = read_count
+            if current_read <= caller_count:
+                initial_reads.wait(timeout=5)
+            return cls(info["token"])
+
+        @property
+        def expired(self):
+            return self.token == "old"
+
+        @property
+        def valid(self):
+            return self.token == "new"
+
+        def refresh(self, request):
+            nonlocal refresh_count
+            with counter_lock:
+                refresh_count += 1
+            self.token = "new"
+
+        def to_json(self):
+            return json.dumps({"token": self.token})
+
+    monkeypatch.setattr("scheduler.calendar.Credentials", FakeCredentials)
+    monkeypatch.setattr("scheduler.calendar.Request", lambda: object())
+
+    with ThreadPoolExecutor(max_workers=caller_count) as pool:
+        credentials = list(pool.map(lambda _: calendar._credentials(), range(caller_count)))
+
+    assert refresh_count == 1
+    assert all(item.valid and item.token == "new" for item in credentials)
+    stored = crypto.decrypt(token_path.read_text(encoding="utf-8"))
+    assert json.loads(stored) == {"token": "new"}
     assert list(token_path.parent.glob("*.tmp")) == []
 
 
