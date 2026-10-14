@@ -1,5 +1,44 @@
 from hashlib import sha256
 from pathlib import Path
+import re
+
+
+def test_shared_html_template_has_noindex_description_for_operator_and_booking_pages(app_bundle):
+    app, _, _ = app_bundle
+    client = app.test_client()
+
+    login = client.get("/login")
+    assert login.status_code == 200
+    assert b'<meta name="description"' in login.data
+    assert b'<meta name="robots" content="noindex, nofollow">' in login.data
+
+    service = app.extensions["scheduling"]
+    store = app.extensions["store"]
+    proposal_id = service.create_assisted_proposal("Can we schedule a 30 minute call next week?")
+    store.mark_assisted_proposal_shared("default", proposal_id, "test")
+    token = store.get_proposal("default", proposal_id)["booking_token"]
+    booking = client.get(f"/book/{token}")
+
+    assert booking.status_code == 200
+    assert b'<meta name="description"' in booking.data
+    assert b'<meta name="robots" content="noindex, nofollow">' in booking.data
+
+
+def test_amber_status_color_meets_wcag_small_text_contrast(app_bundle):
+    app, _, _ = app_bundle
+    css = Path(app.static_folder, "app.css").read_text(encoding="utf-8")
+    amber_colors = re.findall(r"--amber:(#[0-9a-fA-F]{6})", css)
+    assert amber_colors
+
+    def luminance(color):
+        channels = [int(color[index:index + 2], 16) / 255 for index in (1, 3, 5)]
+        linear = [value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4 for value in channels]
+        return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+    foreground = luminance(amber_colors[-1])
+    for background in ("#ffffff", "#fff6e7"):
+        ratio = (luminance(background) + 0.05) / (foreground + 0.05)
+        assert ratio >= 4.5, f"amber contrast is {ratio:.2f}:1 on {background}"
 
 
 def test_favicon_is_linked_and_served(app_bundle):

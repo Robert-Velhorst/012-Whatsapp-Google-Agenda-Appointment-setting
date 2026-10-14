@@ -1,5 +1,11 @@
 # Codex worklog
 
+## 2026-10-14 - Fix UI contrast and private-page metadata
+
+- A local synthetic-provider browser rehearsal exercised sign-in, the assisted personal-WhatsApp analysis/review path, the manual-share confirmation, anonymous booking-link access, consent, and recorded slot selection. The browser console was clean and the observed HTML/CSS requests returned 200. No real provider or WhatsApp link was opened.
+- Mobile Lighthouse identified a WCAG contrast failure for the small amber provider-status text (4.14:1 on white) and missing page description. Darkened the shared amber token to exceed 4.5:1 on white and the amber notice background, and added a generic description plus `noindex, nofollow` to the shared template so tokenized booking pages are not offered for indexing.
+- Added regressions for the amber contrast ratio and metadata on login and booking pages. Focused tests pass; full suite: 260 passed in 148.03 seconds. Mobile Lighthouse snapshot: accessibility, best-practices, SEO, and agentic-browsing all 100, zero failed audits. At 375×812 emulation, document scroll width equals the viewport width; no visual baseline exists, so this is not a visual-regression pass. No live Hetzner or provider action was performed.
+
 ## 2026-10-14 - Resume WhatsApp webhook messages after transient failures
 
 - Reproduced a delivery-loss bug: after a signed webhook persisted an inbound message, a transient intent-analysis failure returned an error; the provider retry was then treated as a completed duplicate, so no scheduling request or proposal was created. A second injected failure after request persistence also showed that replay needed to avoid the unique source-message constraint.
