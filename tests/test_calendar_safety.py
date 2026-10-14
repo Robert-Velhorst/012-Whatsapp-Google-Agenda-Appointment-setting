@@ -11,6 +11,13 @@ from googleapiclient.errors import HttpError
 from scheduler.calendar import CalendarUnavailable, GoogleCalendar
 from scheduler.crypto import CryptoBox
 
+INVALID_BUSY_INTERVALS = [
+    pytest.param([{"start": "2030-01-07T10:45:00+01:00", "end": "2030-01-07T10:15:00+01:00"}], id="reversed"),
+    pytest.param([{"start": "2030-01-07T10:15:00+01:00", "end": "2030-01-07T10:15:00+01:00"}], id="zero-length"),
+    pytest.param([{"start": "2030-01-07T10:00:00", "end": "2030-01-07T10:30:00+01:00"}], id="timezone-free"),
+    pytest.param([{"start": "invalid", "end": "2030-01-07T10:30:00+01:00"}], id="malformed"),
+]
+
 
 def _google_oauth_client(app):
     client = app.test_client()
@@ -334,6 +341,16 @@ def test_free_slots_prioritizes_requested_time_then_closest_alternatives(app_bun
     assert [slot.strftime("%H:%M") for slot in slots] == ["15:00", "14:30", "15:30"]
 
 
+@pytest.mark.parametrize("busy", INVALID_BUSY_INTERVALS)
+def test_free_slots_rejects_invalid_provider_busy_intervals(app_bundle, busy):
+    app, _, _ = app_bundle
+    calendar = GoogleCalendar(app.extensions["settings"])
+    calendar._service = lambda: SimpleNamespace(freebusy=lambda: SimpleNamespace(query=lambda **kw: SimpleNamespace(execute=lambda: {"calendars": {"primary": {"busy": busy}}})))
+
+    with pytest.raises(CalendarUnavailable, match="invalid busy interval"):
+        calendar.free_slots(date(2030, 1, 7), 30)
+
+
 @pytest.mark.parametrize("response", [{}, {"calendars": {}}, {"calendars": {"primary": {}}}])
 def test_missing_availability_is_not_treated_as_free(app_bundle, response):
     app, _, _ = app_bundle
@@ -350,3 +367,14 @@ def test_confirmed_slot_availability_recheck(app_bundle, busy, expected):
     calendar._service = lambda: SimpleNamespace(freebusy=lambda: SimpleNamespace(query=lambda **kw: SimpleNamespace(execute=lambda: {"calendars": {"primary": {"busy": busy}}})))
     start = datetime.fromisoformat("2030-01-07T10:00:00+01:00")
     assert calendar.is_slot_available(start, start + timedelta(minutes=30)) is expected
+
+
+@pytest.mark.parametrize("busy", INVALID_BUSY_INTERVALS)
+def test_confirmed_slot_recheck_fails_closed_on_invalid_provider_busy_intervals(app_bundle, busy):
+    app, _, _ = app_bundle
+    calendar = GoogleCalendar(app.extensions["settings"])
+    calendar._service = lambda: SimpleNamespace(freebusy=lambda: SimpleNamespace(query=lambda **kw: SimpleNamespace(execute=lambda: {"calendars": {"primary": {"busy": busy}}})))
+    start = datetime.fromisoformat("2030-01-07T10:00:00+01:00")
+
+    with pytest.raises(CalendarUnavailable, match="invalid busy interval"):
+        calendar.is_slot_available(start, start + timedelta(minutes=30))

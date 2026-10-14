@@ -68,10 +68,7 @@ class GoogleCalendar:
             raise CalendarUnavailable("Google Calendar did not return valid availability; no slots were proposed.")
         if calendar_data.get("errors"):
             raise CalendarUnavailable(f"Google Calendar FreeBusy error: {calendar_data['errors']}")
-        ranges = [
-            (datetime.fromisoformat(item["start"]).astimezone(tz), datetime.fromisoformat(item["end"]).astimezone(tz))
-            for item in calendar_data.get("busy", [])
-        ]
+        ranges = self._parse_busy_intervals(calendar_data["busy"], tz)
 
         slots: list[datetime] = []
         for offset in range(21):
@@ -118,17 +115,31 @@ class GoogleCalendar:
             raise CalendarUnavailable("Google Calendar did not return valid availability; the appointment was not booked.")
         if calendar_data.get("errors"):
             raise CalendarUnavailable(f"Google Calendar FreeBusy error: {calendar_data['errors']}")
-        for item in calendar_data["busy"]:
-            try:
-                busy_start = datetime.fromisoformat(item["start"])
-                busy_end = datetime.fromisoformat(item["end"])
-            except (KeyError, TypeError, ValueError) as exc:
-                raise CalendarUnavailable("Google Calendar returned an invalid busy interval; the appointment was not booked.") from exc
-            if busy_start.tzinfo is None or busy_end.tzinfo is None:
-                raise CalendarUnavailable("Google Calendar returned a timezone-free busy interval; the appointment was not booked.")
+        for busy_start, busy_end in self._parse_busy_intervals(calendar_data["busy"]):
             if start_at < busy_end and end_at > busy_start:
                 return False
         return True
+
+    @staticmethod
+    def _parse_busy_intervals(
+        busy: list, timezone: ZoneInfo | None = None,
+    ) -> list[tuple[datetime, datetime]]:
+        intervals = []
+        for item in busy:
+            try:
+                if not isinstance(item, dict):
+                    raise TypeError("busy interval is not an object")
+                start = datetime.fromisoformat(item["start"])
+                end = datetime.fromisoformat(item["end"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise CalendarUnavailable("Google Calendar returned an invalid busy interval.") from exc
+            if start.utcoffset() is None or end.utcoffset() is None or end <= start:
+                raise CalendarUnavailable("Google Calendar returned an invalid busy interval.")
+            if timezone is not None:
+                start = start.astimezone(timezone)
+                end = end.astimezone(timezone)
+            intervals.append((start, end))
+        return intervals
 
     def create_event(self, appointment: dict) -> dict:
         service = self._service()
