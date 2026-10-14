@@ -54,6 +54,14 @@ def test_calendar_cancel_treats_missing_event_as_idempotent(app_bundle):
     assert calendar.cancel_event("already-deleted") is None
 
 
+def test_google_oauth_connect_requires_operator_login(app_bundle):
+    app, _, _ = app_bundle
+    response = app.test_client().get("/api/google/connect")
+
+    assert response.status_code == 401
+    assert response.get_json()["error"]["code"] == "authentication_required"
+
+
 def test_google_oauth_denial_does_not_exchange_a_missing_code(app_bundle):
     app, calendar, _ = app_bundle
     calendar.exchange_code = lambda *_args: pytest.fail("OAuth denial must not exchange a code")
@@ -76,6 +84,17 @@ def test_google_oauth_callback_rejects_invalid_state_without_exchange(app_bundle
 
     assert response.status_code == 400
     assert b"Invalid Google OAuth state" in response.data
+
+
+@pytest.mark.parametrize("query", ["code=synthetic-code", "state=attacker-state&code=synthetic-code"])
+def test_google_oauth_callback_rejects_missing_session_state(app_bundle, query):
+    app, calendar, _ = app_bundle
+    calendar.exchange_code = lambda *_args: pytest.fail("Missing OAuth state must not exchange a code")
+
+    response = app.test_client().get(f"/api/google/callback?{query}")
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["code"] == "invalid_oauth_state"
 
 
 def test_google_oauth_success_audits_only_after_exchange(app_bundle):

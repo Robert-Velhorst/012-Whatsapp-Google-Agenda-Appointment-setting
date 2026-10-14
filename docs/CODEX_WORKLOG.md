@@ -1,5 +1,11 @@
 # Codex worklog
 
+## 2026-10-14 - Reject OAuth callbacks without a session state
+
+- App-wide OAuth review found that the callback compared the query state directly to `session.pop(..., None)`. With both values absent, `None == None` passed and a supplied authorization code reached the token-exchange adapter. The callback now requires non-empty query and session states and uses `secrets.compare_digest`; state remains single-use.
+- Added regression coverage for missing query state, unsolicited state without an initiating session, invalid state, valid exchange, and OAuth denial. Also asserted that the connect endpoint rejects unauthenticated requests. The pre-fix missing-state test failed by reaching code exchange; the five focused OAuth tests pass.
+- Full suite: 263 passed in 746.17 seconds; `compileall`, `pip check`, and `git diff --check` passed. Fresh Windows 11 x64 standalone build and isolated package smoke passed migration, three encrypted-field rotations, default backup creation, health, and branded login (67.4 MiB working set; ZIP SHA-256 `1AFA0AE3CC6E74D5339974E26ED6E691D03D22582751E2B99661E8DB1BB67E55`).
+
 ## 2026-10-14 - Fix UI contrast and private-page metadata
 
 - A local synthetic-provider browser rehearsal exercised sign-in, the assisted personal-WhatsApp analysis/review path, the manual-share confirmation, anonymous booking-link access, consent, and recorded slot selection. The browser console was clean and the observed HTML/CSS requests returned 200. No real provider or WhatsApp link was opened.

@@ -525,7 +525,9 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
 
     @app.get("/api/google/callback")
     def google_callback():
-        if request.args.get("state") != session.pop("google_oauth_state", None):
+        supplied_state = request.args.get("state")
+        expected_state = session.pop("google_oauth_state", None)
+        if not supplied_state or not expected_state or not secrets.compare_digest(supplied_state, expected_state):
             return _error("invalid_oauth_state", "Invalid Google OAuth state", 400)
         if request.args.get("error"):
             flash("Google Calendar authorization was cancelled. Your calendar connection was not changed.", "error")
