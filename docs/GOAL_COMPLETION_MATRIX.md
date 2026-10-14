@@ -135,7 +135,9 @@ The operator can paste a relevant message into the authenticated **Personal What
 
 - Calendar retry safety: migrations 7–8 persist the booking attempt and backfill legacy in-flight/failed appointments to attempt 1, preserving their existing deterministic event ID. A separately claimed retry increments the counter and uses a new deterministic ID, preventing a tombstoned 409 ID from making the advertised retry unusable. Targeted regressions: 27 passed; full suite: 145 passed; compileall, pip check, and diff check passed. Exact-head hosted checks remain pending.
 
-- Personal confirmation audit correctness: intentional manual follow-up after an assisted booking is now recorded as `confirmation.manual_required` rather than a failed send. Tests assert the personal flow never invokes the automatic sender, while Business API send failures retain their existing handling. Focused/full verification for this follow-up is pending.
+- Personal confirmation audit correctness: intentional manual follow-up after an assisted booking is now recorded as `confirmation.manual_required` rather than a failed send. Tests assert the personal flow never invokes the automatic sender, while Business API send failures retain their existing handling. Full local suite: 145 passed.
+
+- SQLite close contention: exact-head Linux CI had a real failure under 24-way rate-limit reservation because every thread ran `PRAGMA optimize` as it closed its connection. Removed that unnecessary per-thread write-capable shutdown step; the concurrency regression and full 145-test suite pass locally, along with compileall, pip check, and diff check. Fresh exact-head hosted checks are pending.
 
 - Closed a Windows/ngrok OAuth bootstrap deadlock: the tunnel launcher now uses the protected `public_ingress` readiness contract. Google OAuth may be disconnected only while automation is paused; full production configuration and signed WhatsApp webhook settings must already validate.
 - Closed an unsafe resume path: the operator action cannot resume automation while configuration errors or provider disconnections remain.

@@ -178,4 +178,10 @@ Remaining external gate: authorized Meta/Google credentials and approvals, a sta
 
 - The rendered assisted-booking audit showed `confirmation.send_failed` even though personal WhatsApp sends are intentionally prohibited. The old service path called the guarded send routine, treated its expected refusal as a delivery failure, and then emitted a generic warning.
 - Booking now skips the send routine entirely for assisted personal records, emits an explicit `confirmation.manual_required` audit event with `automatic_send=false`, and returns an instruction to manually send the existing confirmation draft. Business API delivery/error handling is unchanged.
-- A regression replaces the automatic send routine with an assertion failure, proves it is never invoked for the personal path, and verifies that the audit never labels the intentional manual follow-up as a send failure. Full suite, package check, and browser-visible audit-state refresh remain pending.
+- A regression replaces the automatic send routine with an assertion failure, proves it is never invoked for the personal path, and verifies that the audit never labels the intentional manual follow-up as a send failure. Targeted assisted and booking tests passed; full suite: `145 passed`. The browser-level content was observed before the fix, with backend post-fix behavior verified by tests.
+
+## SQLite close contention fix — 2026-10-14
+
+- Exact-head Linux CI failed `test_rate_limit_reservation_is_atomic`: concurrent worker threads completed rate reservations, then `Store.close()` ran `PRAGMA optimize` on each thread-local connection and raised `sqlite3.OperationalError: database is locked`.
+- Removed the per-thread optimizer call. It was an unnecessary write-capable shutdown action and could turn otherwise successful worker operations into errors; the application uses fixed indexed queries and does not depend on optimizer-generated statistics for correctness.
+- The current regression is the existing 24-way concurrent reservation/connection-close test. Focused tests: `18 passed`; full suite: `145 passed`; `compileall`, `pip check`, and `git diff --check` passed. Fresh Linux/Windows hosted workflows remain pending.

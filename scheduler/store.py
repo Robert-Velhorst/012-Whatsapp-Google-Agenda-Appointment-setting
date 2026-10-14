@@ -54,11 +54,8 @@ class Store:
         """Close the connection owned by the current thread."""
         connection = getattr(self._local, "connection", None)
         if connection is not None:
-            try:
-                connection.execute("PRAGMA optimize")
-            finally:
-                connection.close()
-                del self._local.connection
+            connection.close()
+            del self._local.connection
 
     def ensure_workspace(self, workspace_id: str, name: str, timezone_name: str) -> None:
         now = utc_now().isoformat()
