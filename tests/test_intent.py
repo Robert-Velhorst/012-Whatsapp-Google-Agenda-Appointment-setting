@@ -50,6 +50,18 @@ def test_intent_maps_next_week_to_next_monday(message):
     assert intent.requested_start == date(2026, 10, 19)
 
 
+@pytest.mark.parametrize(("message", "expected"), [
+    ("Can we schedule a call next week on Tuesday afternoon?", date(2026, 10, 20)),
+    ("Could we meet next week Friday?", date(2026, 10, 23)),
+    ("Kunnen we volgende week dinsdagmiddag afspreken?", date(2026, 10, 20)),
+])
+def test_intent_respects_weekday_named_with_next_week(message, expected):
+    intent = analyse(message, date(2026, 10, 13), 30)
+
+    assert intent.is_scheduling
+    assert intent.requested_start == expected
+
+
 def test_confirmation_index_is_bounded():
     assert confirmation_index("The second one works", 3) == 1
     assert confirmation_index("derde graag", 3) == 2

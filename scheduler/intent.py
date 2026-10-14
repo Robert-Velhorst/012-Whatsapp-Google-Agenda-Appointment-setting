@@ -61,6 +61,12 @@ class DeterministicIntentProvider:
 
         target = today
         explicit_date = re.search(r"\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\b", lower)
+        explicit_weekday = None
+        for word, index in WEEKDAYS.items():
+            compact_dutch_daypart = rf"\b{word}(?:ochtend|morgen|middag|avond)\b" if word.endswith("dag") else r"(?!)"
+            if re.search(rf"\b{word}\b|{compact_dutch_daypart}", lower):
+                explicit_weekday = index
+                break
         if explicit_date:
             day, month = int(explicit_date.group(1)), int(explicit_date.group(2))
             year = int(explicit_date.group(3)) if explicit_date.group(3) else today.year
@@ -73,18 +79,16 @@ class DeterministicIntentProvider:
             except ValueError:
                 target = today
         elif re.search(r"\b(?:next week|following week|volgende week|komende week)\b", lower):
-            # A week-level request is a date window, not a request for today's slots.
+            # A week-level request anchors Monday, but retains any named weekday.
             days_until_monday = 7 - today.weekday()
-            target = today + timedelta(days=days_until_monday)
+            target = today + timedelta(days=days_until_monday + (explicit_weekday or 0))
         elif "tomorrow" in lower or "morgen" in lower:
             target = today + timedelta(days=1)
+        elif explicit_weekday is not None:
+            offset = (explicit_weekday - today.weekday()) % 7
+            target = today + timedelta(days=offset or 7)
         else:
-            for word, index in WEEKDAYS.items():
-                compact_dutch_daypart = rf"\b{word}(?:ochtend|morgen|middag|avond)\b" if word.endswith("dag") else r"(?!)"
-                if re.search(rf"\b{word}\b|{compact_dutch_daypart}", lower):
-                    offset = (index - today.weekday()) % 7
-                    target = today + timedelta(days=offset or 7)
-                    break
+            target = today
 
         title = "Consultation" if any(word in lower for word in ("consultation", "consult", "advies")) else "Appointment"
         if any(word in lower for word in ("call", "bellen", "phone", "telefoon")):
