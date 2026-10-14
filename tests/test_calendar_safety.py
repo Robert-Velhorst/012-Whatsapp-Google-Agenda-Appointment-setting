@@ -1,8 +1,13 @@
 import json
+import os
+import subprocess
+import sys
 import threading
+import time as time_module
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import date, datetime, time, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -289,6 +294,131 @@ def test_concurrent_expired_token_reads_refresh_once_and_return_current_credenti
     stored = crypto.decrypt(token_path.read_text(encoding="utf-8"))
     assert json.loads(stored) == {"token": "new"}
     assert list(token_path.parent.glob("*.tmp")) == []
+
+
+def test_separate_calendar_instances_share_expired_token_refresh(app_bundle, tmp_path, monkeypatch):
+    app, _, _ = app_bundle
+    token_path = tmp_path / "credentials" / "google-token.json"
+    settings = replace(app.extensions["settings"], google_token_file=str(token_path))
+    crypto = CryptoBox("test-encryption-key")
+    calendars = [GoogleCalendar(settings, crypto), GoogleCalendar(settings, crypto)]
+    token_path.parent.mkdir(parents=True)
+    token_path.write_text(crypto.encrypt('{"token":"old"}'), encoding="utf-8")
+
+    initial_reads = threading.Barrier(2)
+    lock_reload_reads = threading.Barrier(2)
+    counter_lock = threading.Lock()
+    reads = 0
+    refreshes = 0
+
+    class FakeCredentials:
+        def __init__(self, token):
+            self.token = token
+            self.refresh_token = "refresh-token"
+
+        @classmethod
+        def from_authorized_user_info(cls, info, scopes):
+            nonlocal reads
+            with counter_lock:
+                reads += 1
+                current_read = reads
+            if current_read <= 2:
+                initial_reads.wait(timeout=5)
+            elif current_read <= 4:
+                try:
+                    lock_reload_reads.wait(timeout=0.25)
+                except threading.BrokenBarrierError:
+                    pass
+            return cls(info["token"])
+
+        @property
+        def expired(self):
+            return self.token == "old"
+
+        @property
+        def valid(self):
+            return self.token.startswith("new-")
+
+        def refresh(self, request):
+            nonlocal refreshes
+            with counter_lock:
+                refreshes += 1
+                number = refreshes
+            self.token = f"new-{number}"
+
+        def to_json(self):
+            return json.dumps({"token": self.token})
+
+    monkeypatch.setattr("scheduler.calendar.Credentials", FakeCredentials)
+    monkeypatch.setattr("scheduler.calendar.Request", lambda: object())
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        credentials = list(pool.map(lambda calendar: calendar._credentials(), calendars))
+
+    assert refreshes == 1
+    assert all(item.valid for item in credentials)
+    stored = crypto.decrypt(token_path.read_text(encoding="utf-8"))
+    assert json.loads(stored)["token"].startswith("new-")
+
+
+def test_token_refresh_guard_serializes_separate_processes(tmp_path):
+    token_path = tmp_path / "credentials" / "google-token.json"
+    marker_path = tmp_path / "events.txt"
+    ready_path = tmp_path / "ready"
+    start_path = tmp_path / "start"
+    ready_path.mkdir()
+    script = """
+import os
+import time
+from pathlib import Path
+from scheduler.calendar import _token_refresh_guard
+
+token_path = Path(os.environ["TOKEN_PATH"])
+marker_path = Path(os.environ["MARKER_PATH"])
+ready_path = Path(os.environ["READY_PATH"])
+start_path = Path(os.environ["START_PATH"])
+ready_path.joinpath(str(os.getpid())).touch()
+deadline = time.monotonic() + 5
+while not start_path.exists() and time.monotonic() < deadline:
+    time.sleep(0.01)
+if not start_path.exists():
+    raise SystemExit("parent did not release workers")
+with _token_refresh_guard(token_path):
+    with marker_path.open("a", encoding="utf-8") as handle:
+        handle.write("start\\n")
+    time.sleep(0.15)
+    with marker_path.open("a", encoding="utf-8") as handle:
+        handle.write("end\\n")
+"""
+    child_env = os.environ.copy()
+    child_env.update(
+        {
+            "TOKEN_PATH": str(token_path),
+            "MARKER_PATH": str(marker_path),
+            "READY_PATH": str(ready_path),
+            "START_PATH": str(start_path),
+        }
+    )
+    workers = [
+        subprocess.Popen(
+            [sys.executable, "-c", script],
+            cwd=str(Path(__file__).resolve().parents[1]),
+            env=child_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for _ in range(2)
+    ]
+    deadline = time_module.monotonic() + 10
+    while time_module.monotonic() < deadline and len(list(ready_path.glob("*"))) < 2:
+        time_module.sleep(0.02)
+    assert len(list(ready_path.glob("*"))) == 2
+    start_path.touch()
+
+    results = [worker.communicate(timeout=10) for worker in workers]
+    assert [worker.returncode for worker in workers] == [0, 0], results
+    assert marker_path.read_text(encoding="utf-8").splitlines() == ["start", "end", "start", "end"]
 
 
 def test_free_slots_uses_one_batched_freebusy_query_for_search_window(app_bundle):

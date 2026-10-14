@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import base64
+from contextlib import contextmanager
 import hashlib
 import json
 import os
+import tempfile
 import threading
+import time as _time
 from datetime import datetime, time, timedelta
 from pathlib import Path
+from typing import Iterator
 from zoneinfo import ZoneInfo
 
 from google.auth.transport.requests import Request
@@ -23,6 +27,54 @@ SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",
 ]
 
+_TOKEN_LOCKS_GUARD = threading.Lock()
+_TOKEN_THREAD_LOCKS: dict[str, threading.Lock] = {}
+
+
+@contextmanager
+def _token_refresh_guard(token_path: Path) -> Iterator[None]:
+    """Serialize refreshes across threads and processes sharing the token file."""
+    key = str(token_path.resolve())
+    with _TOKEN_LOCKS_GUARD:
+        thread_lock = _TOKEN_THREAD_LOCKS.setdefault(key, threading.Lock())
+
+    with thread_lock:
+        lock_path = token_path.with_name(f".{token_path.name}.refresh.lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            lock_file = os.fdopen(descriptor, "r+b")
+        except BaseException:
+            os.close(descriptor)
+            raise
+        with lock_file:
+            if os.fstat(lock_file.fileno()).st_size == 0:
+                lock_file.write(b"\0")
+                lock_file.flush()
+            lock_file.seek(0)
+            if os.name == "nt":
+                import msvcrt
+
+                while True:
+                    try:
+                        msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+                        break
+                    except OSError:
+                        _time.sleep(0.05)
+                try:
+                    yield
+                finally:
+                    lock_file.seek(0)
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
 
 class CalendarUnavailable(RuntimeError):
     pass
@@ -32,7 +84,6 @@ class GoogleCalendar:
     def __init__(self, settings: Settings, crypto: CryptoBox | None = None):
         self.settings = settings
         self.crypto = crypto or CryptoBox(settings.data_encryption_key)
-        self._token_refresh_lock = threading.Lock()
 
     def authorization_url(self, redirect_uri: str, state: str) -> str:
         flow = Flow.from_client_secrets_file(self.settings.google_client_secrets_file, scopes=SCOPES, state=state, redirect_uri=redirect_uri)
@@ -230,9 +281,10 @@ class GoogleCalendar:
         token_path = Path(self.settings.google_token_file)
         credentials = self._read_credentials(token_path)
         if credentials.expired and credentials.refresh_token:
-            # Waitress can call Calendar from several request threads. Reload after
-            # acquiring the lock so only the first thread refreshes a stale token.
-            with self._token_refresh_lock:
+            # The web and worker services share this token file but run in
+            # separate processes/containers. Lock the shared path, then reload
+            # so only one caller refreshes a stale token.
+            with _token_refresh_guard(token_path):
                 credentials = self._read_credentials(token_path)
                 if credentials.expired and credentials.refresh_token:
                     credentials.refresh(Request())
@@ -250,9 +302,15 @@ class GoogleCalendar:
     def _write_token(self, serialized: str) -> None:
         token_path = Path(self.settings.google_token_file)
         token_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = token_path.with_name(f".{token_path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{token_path.name}.", suffix=".tmp", dir=token_path.parent
+        )
+        temporary = Path(temporary_name)
         try:
-            temporary.write_text(self.crypto.encrypt(serialized), encoding="utf-8")
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(self.crypto.encrypt(serialized))
+                handle.flush()
+                os.fsync(handle.fileno())
             try:
                 temporary.chmod(0o600)
             except OSError:
