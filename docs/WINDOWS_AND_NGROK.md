@@ -2,7 +2,7 @@
 
 ## Standalone Windows package
 
-`AgendaRelay-Windows-x64.zip` contains a self-contained `AgendaRelay.exe`; the target Windows 11 computer does not need Python. Extract the archive to a durable folder, copy `.env.example` to `.env`, fill in the provider and security settings, then start `AgendaRelay.exe`. It runs the web application and due-job worker together and listens on loopback by default.
+`AgendaRelay-Windows-x64.zip` contains a self-contained `AgendaRelay.exe`; the target Windows 11 computer does not need Python. Extract the archive to a durable folder, copy `.env.example` to `.env`, fill in the provider and security settings, then start `AgendaRelay.exe`. The executable reads `.env` beside itself and resolves relative database, token, and Google OAuth client paths from that same folder, so shortcuts may use any **Start in** directory. It runs the web application and due-job worker together and listens on loopback by default.
 
 The source distribution also includes guided launchers:
 

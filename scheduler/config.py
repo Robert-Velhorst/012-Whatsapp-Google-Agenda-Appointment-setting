@@ -2,13 +2,34 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
-load_dotenv()
+
+def _runtime_root() -> Path:
+    """Return the stable config/data root for source and frozen executions."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[1]
+
+
+APP_ROOT = _runtime_root()
+
+
+def _load_runtime_environment(app_root: Path) -> None:
+    load_dotenv(app_root / ".env")
+
+
+def _resolve_app_path(value: str | Path) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else APP_ROOT / path
+
+
+_load_runtime_environment(APP_ROOT)
 
 
 def _bool(name: str, default: bool = False) -> bool:
@@ -157,8 +178,10 @@ class Settings:
         }
         if overrides:
             values.update(overrides)
-        if isinstance(values["database_path"], str):
-            values["database_path"] = Path(values["database_path"])
+        values["database_path"] = _resolve_app_path(values["database_path"])
+        values["google_token_file"] = str(_resolve_app_path(values["google_token_file"]))
+        if values["google_client_secrets_file"]:
+            values["google_client_secrets_file"] = str(_resolve_app_path(values["google_client_secrets_file"]))
         return cls(**values)
 
     @property
