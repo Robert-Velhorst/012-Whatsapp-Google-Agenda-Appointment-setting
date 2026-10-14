@@ -155,7 +155,7 @@
             <small>Up to 5,000 characters. Avoid pasting unrelated conversation or sensitive information.</small>
             <button class="primary-button" type="submit" {{ 'disabled' if not readiness.providers.google_calendar.ready }}>Check Google Calendar</button>
           </form>
-          {% if not readiness.providers.google_calendar.ready %}<p class="assist-warning">Google Calendar is not connected. Connect it in Settings before checking availability.</p>{% endif %}
+          {% if not readiness.providers.google_calendar.ready %}<p class="assist-warning">Google Calendar is not connected. <a href="{{ url_for('dashboard', view='settings') }}">Connect Google Calendar in Settings</a> before checking availability.</p>{% endif %}
         </div>
         <aside class="safety-note"><h2>Personal account safeguards</h2><p>This does not read your WhatsApp inbox or send messages. You choose the recipient and press send in WhatsApp. Agenda Relay cannot verify delivery from a personal account.</p><p>Detected dates and duration are a local English/Dutch rules-based estimate. Review the times and wording before sharing.</p></aside>
       </section>

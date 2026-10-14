@@ -17,8 +17,9 @@ def test_favicon_is_linked_and_served(app_bundle):
         assert b"<svg" in icon.data
 
 
-def test_personal_whatsapp_assisted_screen_is_in_operator_navigation(app_bundle):
-    app, _, _ = app_bundle
+def test_personal_whatsapp_assisted_screen_is_in_operator_navigation(app_bundle, monkeypatch):
+    app, calendar, _ = app_bundle
+    monkeypatch.setattr(calendar, "connected", lambda: False)
     client = app.test_client()
     with client.session_transaction() as current:
         current["operator_authenticated"] = True
@@ -31,6 +32,9 @@ def test_personal_whatsapp_assisted_screen_is_in_operator_navigation(app_bundle)
     assert b"Relevant WhatsApp text" in page.data
     assert b"does not read your WhatsApp inbox or send messages" in page.data
     assert b"Check Google Calendar" in page.data
+    assert b'href="/?view=settings">Connect Google Calendar in Settings</a>' in page.data
+
+
 def test_personal_only_empty_queue_points_to_assisted_workflow(app_bundle, monkeypatch):
     app, _, _ = app_bundle
     client = app.test_client()
