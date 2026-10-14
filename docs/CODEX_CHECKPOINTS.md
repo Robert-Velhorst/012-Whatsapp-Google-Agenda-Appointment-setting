@@ -8,6 +8,6 @@
 | Security/privacy | Complete for single-workspace scope | Preserve HMAC, CSRF, encryption, ownership filters, and production validation |
 | Operator UI | Complete locally | Desktop/mobile browser QA passed; preserve the tested application shell |
 | Worker/reminders | Complete locally | Keep approved-template/manual-required boundary |
-| Deployment | Local runtimes complete, live provider deployment blocked | Docker and Windows package passed; do not claim Meta/Google/ngrok acceptance without accounts |
+| Deployment | Hetzner runbook prepared, live cloud deployment not performed | Docker and Windows package evidence is local/CI only; verify DNS, firewall, TLS, backups, and Google/provider acceptance on an authorized Hetzner host |
 | Real provider proof | Blocked | Requires Meta/Google credentials, HTTPS, approvals, and consented accounts |
-| Final verification | Pending current commit CI | Windows 11 standalone package and launcher self-check passed locally; Python suite passed 112 tests. Push the documented current branch tip, confirm exact-SHA CI/package workflows, and retain the separate Google/HAI/ngrok live-acceptance gate |
+| Final verification | Pending current commit CI | Windows 11 standalone package and launcher self-check passed locally; refresh full tests and exact-SHA CI/package workflows for the current tip; retain separate Hetzner, Google/provider, and HAI acceptance gates |

@@ -2,6 +2,8 @@
 
 Date: 2026-08-09
 
+This report preserves evidence from its dated verification period; its ngrok experiments and account-specific limitation are historical, not current deployment instructions. Hetzner is now the target production host; use [the current deployment guide](HETZNER_DEPLOYMENT.md). No Hetzner deployment has been verified by this report.
+
 ## Passed locally
 
 - Python compilation and dependency consistency: passed.

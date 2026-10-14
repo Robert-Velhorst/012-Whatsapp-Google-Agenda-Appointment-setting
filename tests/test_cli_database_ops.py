@@ -45,6 +45,26 @@ def test_doctor_exits_nonzero_when_database_is_unhealthy(monkeypatch, tmp_path, 
     assert report["database"]["writable"] is False
 
 
+def test_support_bundle_does_not_overwrite_existing_output(monkeypatch, tmp_path, capsys):
+    output = tmp_path / "existing-support.zip"
+    original = b"preserve the earlier diagnostic bundle"
+    output.write_bytes(original)
+    app = SimpleNamespace(extensions={
+        "settings": SimpleNamespace(
+            app_env="test", timezone="Europe/Amsterdam", workspace_id="default", database_path=tmp_path / "agenda.sqlite3",
+        ),
+        "store": SimpleNamespace(recent_audit=lambda *_args: []),
+        "scheduling": SimpleNamespace(readiness=lambda: {"ready": False}),
+    })
+    monkeypatch.setattr("scheduler.cli.create_app", lambda: app)
+
+    exit_code = main(["support-bundle", "--output", str(output)])
+
+    assert exit_code == 2
+    assert output.read_bytes() == original
+    assert "already exists" in capsys.readouterr().err.lower()
+
+
 def test_online_backup_is_consistent_and_refuses_live_database_overwrite(app_bundle, tmp_path):
     app, _, _ = app_bundle
     database = app.extensions["settings"].database_path

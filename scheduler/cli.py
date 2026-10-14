@@ -83,6 +83,25 @@ def _online_backup(source_path: Path, destination: Path) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _write_support_bundle(output_path: Path, readiness: dict, audit: list[dict], runtime: dict) -> Path:
+    """Publish a redacted support bundle atomically without replacing an existing file."""
+    output = output_path.resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{output.name}.", suffix=".tmp", dir=output.parent)
+    os.close(fd)
+    temporary = Path(temporary_name)
+    try:
+        with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("readiness.json", json.dumps(readiness, indent=2))
+            archive.writestr("recent-actions.json", json.dumps(audit, indent=2))
+            archive.writestr("runtime.json", json.dumps(runtime, indent=2))
+        # Publish with a same-directory hard link to ensure an existing bundle is never replaced.
+        os.link(temporary, output)
+        return output
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def _restore_database(backup_path: Path, database_path: Path, store) -> Path | None:
     """Stage a validated restore, snapshot the current DB, then atomically replace it."""
     backup = backup_path.resolve()
@@ -195,14 +214,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "support-bundle":
         output = args.output or Path("support-bundles") / f"agenda-relay-support-{datetime.now(UTC):%Y%m%d-%H%M%S}.zip"
-        output.parent.mkdir(parents=True, exist_ok=True)
         readiness = service.readiness()
         audit = [{"action": row["action"], "entity_type": row["entity_type"], "created_at": row["created_at"]} for row in store.recent_audit(settings.workspace_id, 100)]
-        with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr("readiness.json", json.dumps(readiness, indent=2))
-            archive.writestr("recent-actions.json", json.dumps(audit, indent=2))
-            archive.writestr("runtime.json", json.dumps({"app_env": settings.app_env, "timezone": settings.timezone, "database_exists": settings.database_path.exists()}, indent=2))
-        print(output.resolve())
+        runtime = {"app_env": settings.app_env, "timezone": settings.timezone, "database_exists": settings.database_path.exists()}
+        try:
+            print(_write_support_bundle(output, readiness, audit, runtime))
+        except (OSError, ValueError) as exc:
+            print(f"Support bundle failed: {exc}", file=sys.stderr)
+            return 2
         return 0
     return 2
 

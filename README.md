@@ -46,7 +46,7 @@ python run.py
 
 The source setup command performs the same password and key initialization as the executable. `python run.py` runs only the web app: start the worker in another terminal using `python -m scheduler.cli worker`. Alternatively use the Windows start script below, which launches both processes.
 
-The included Windows launchers install, start, stop, package, and smoke-test the application. See [Windows 11 and ngrok](docs/WINDOWS_AND_NGROK.md).
+The included Windows launchers install, start, stop, package, and smoke-test the application. See [Windows 11 standalone setup](docs/WINDOWS.md). For cloud hosting, follow the [Hetzner deployment guide](docs/HETZNER_DEPLOYMENT.md).
 
 Development mode is visibly labelled and may start with incomplete provider settings. `APP_ENV=production` fails closed unless HTTPS, strong secrets, encryption, and Google client credentials are configured. Meta credentials are required only when `WHATSAPP_CLOUD_API_ENABLED=true`; the assisted personal workflow does not require them.
 
@@ -129,11 +129,11 @@ Operator APIs accept `Authorization: Bearer <ADMIN_API_TOKEN>`. Browser sessions
 
 ## Documentation
 
-Start with [critical path](docs/CRITICAL_PATH.md), [security](docs/SECURITY.md), [operator runbook](docs/OPERATOR_RUNBOOK.md), [Windows/ngrok](docs/WINDOWS_AND_NGROK.md), [acceptance tests](docs/ACCEPTANCE_TESTS.md), and the honest [goal completion matrix](docs/GOAL_COMPLETION_MATRIX.md).
+Start with [critical path](docs/CRITICAL_PATH.md), [security](docs/SECURITY.md), [operator runbook](docs/OPERATOR_RUNBOOK.md), [Windows setup](docs/WINDOWS.md), [Hetzner deployment](docs/HETZNER_DEPLOYMENT.md), [acceptance tests](docs/ACCEPTANCE_TESTS.md), and the honest [goal completion matrix](docs/GOAL_COMPLETION_MATRIX.md).
 
 ## Current external gates
 
-For the optional Business API path, real-provider verification requires Meta business/phone approval, WhatsApp credentials, public HTTPS webhook reachability, Google OAuth, a consented Google account, and an approved reminder template where required. Personal assisted mode does not require Meta; it still requires real Google Calendar OAuth and a publicly reachable HTTPS booking URL (ngrok in the documented Windows setup). Local tests use provider fakes confined to `tests/`; they are never selected by production configuration.
+For the optional Business API path, real-provider verification requires Meta business/phone approval, WhatsApp credentials, public HTTPS webhook reachability, Google OAuth, a consented Google account, and an approved reminder template where required. Personal assisted mode does not require Meta; it still requires real Google Calendar OAuth and a publicly reachable HTTPS booking URL from the Hetzner deployment. Local tests use provider fakes confined to `tests/`; they are never selected by production configuration.
 
 ## Who this tool is for
 
@@ -160,7 +160,7 @@ The frontend is server-rendered Flask/Jinja with local CSS and JavaScript assets
 | `scheduler/standalone.py` | Packaged server with embedded worker |
 | `scheduler/templates/`, `scheduler/static/` | Operator, assisted personal WhatsApp, and public booking interfaces |
 | `tests/` | Isolated regression and workflow tests with test-only provider adapters |
-| `windows/` | Source installation, start/stop, ngrok and package scripts |
+| `windows/` | Windows source installation, start/stop, package and smoke-test scripts |
 
 The database holds workspaces, contacts, inbound messages, scheduling requests, proposals, appointments, background jobs, audit events, rate events, system state and schema versions. Migrations run during application initialization; `python -m scheduler.cli migrate` explicitly initializes/applies them. Back up before upgrading. There are no automatic downgrade migrations.
 
@@ -204,16 +204,13 @@ Start from [.env.example](.env.example). Set values locally; do not commit `.env
 | `MAX_INBOUND_TOTAL_PER_HOUR` | Atomic inbound-message allowance across the workspace; default 60 |
 | `MAX_INBOUND_MESSAGES_PER_WEBHOOK` | Maximum text messages processed across one callback; 1–200, default 20 |
 | `MAX_INBOUND_MESSAGE_CHARS` | Maximum stored/analyzed text length; 1–20,000, default 5,000 |
-| `TRUSTED_PROXY_NETWORKS` | CIDRs allowed to supply `X-Forwarded-For` for login and contact-deletion rate limits; defaults to loopback for the local ngrok proxy. Set only addresses of proxies that cannot be bypassed; HAI access always uses the direct peer address. |
+| `TRUSTED_PROXY_NETWORKS` | CIDRs allowed to supply `X-Forwarded-For` for login and contact-deletion rate limits; defaults to loopback for a same-host reverse proxy. Set only addresses of proxies that cannot be bypassed; HAI access always uses the direct peer address. |
 | `HAI_CONNECTOR_ENABLED` | Enables the metadata feed; default false |
 | `HAI_ALLOWED_NETWORKS` | Allowed client CIDRs; defaults to IPv4/IPv6 loopback |
 | `HAI_FEED_PAGE_SIZE` | Recent HAI snapshot size, 1–500; default 100 |
 
 Inbound quotas apply only to the optional WhatsApp Business Cloud API webhook. Duplicate provider message IDs do not consume quota. Messages over the callback or text-size limits are acknowledged but ignored. `DATA_RETENTION_DAYS` controls inbound-message, rate-event, and provider-delivery receipt cleanup. Separately, `SCHEDULING_RETENTION_DAYS` defaults to 90 days and removes old cancelled/failed requests, expired booking proposals after their expiry plus the retention period, cancelled appointments, and booked appointments only after their scheduled end is older than the retention period. Linked request/proposal rows and appointment reminder jobs are removed together. Upcoming appointments and booking failures that still need operator recovery are retained. Google Calendar events and the general audit history are not deleted. Contact and conversation data follow their separate retention and contact-deletion controls.
 | `HAI_PROJECT_KEY` | HAI project mapping label |
-| `NGROK_DOMAIN` | Assigned hostname for the guarded public tunnel |
-| `NGROK_CONFIG_FILE` | Optional ngrok authentication-config path |
-| `NGROK_INSPECTOR_PORT` | Dedicated local inspector port; default 4042 |
 | `PORT` | Local web port; default 5000 |
 | `WORKER_INTERVAL_SECONDS` | Standalone/source-launcher polling interval; default 30 |
 | `WAITRESS_THREADS`, `WAITRESS_CONNECTION_LIMIT` | Packaged server limits; defaults 4 and 100 |
@@ -236,9 +233,7 @@ For backups use `python -m scheduler.cli backup --output C:\safe\agenda.sqlite3`
 
 ## Public access and HAI operation
 
-ngrok forwards public HTTPS requests to the application on your Windows computer. It does not move the application or database into hosted cloud infrastructure. The computer, network connection, web process, worker and tunnel must remain available. Match `PUBLIC_BASE_URL` to `https://<NGROK_DOMAIN>` and use the dedicated `windows/Start-Ngrok.ps1` script after production configuration is valid. The script refuses development exposure, checks protected public-ingress readiness locally, and verifies the assigned URL. Resolve any existing endpoint conflict without pooling traffic with another application.
-
-Google OAuth bootstrap requires the public callback to be reachable before Calendar can report connected. The ngrok launcher checks protected public-ingress readiness and requires valid production-mode configuration as a safety gate; signed WhatsApp webhook credentials are required only when `WHATSAPP_CLOUD_API_ENABLED=true`. Personal-only mode does not need Meta credentials. Keep automation paused during bootstrap, complete Google consent, run the real-provider acceptance checks, and only then resume automation. This Windows/ngrok path is for local testing and operator acceptance, not production hosting; Hetzner remains the production target. See [Windows/ngrok](docs/WINDOWS_AND_NGROK.md) and [operator runbook](docs/OPERATOR_RUNBOOK.md).
+Production runs on Hetzner behind a host-managed HTTPS reverse proxy; the application container binds only to loopback. Set `PUBLIC_BASE_URL` to the final HTTPS hostname and register `${PUBLIC_BASE_URL}/api/google/callback` in Google OAuth. Configure DNS, firewall, TLS, secrets, backups and monitoring before cutover; follow [Hetzner deployment](docs/HETZNER_DEPLOYMENT.md). Keep automation paused during Google OAuth bootstrap, run the real-provider acceptance checks, and resume only after operator review. The Windows package is a standalone/local deployment and does not expose itself publicly.
 
 For HAI, enable the feed and configure an owner-scoped `json-feed` source using `http://127.0.0.1:5000/api/integrations/hai/feed` for a same-host setup. The item shape matches HAI's generic-feed parser, but the current HAI HTTP reader performs a plain GET and does not persist or send the parsed cursor on later syncs. The initial GET returns a bounded snapshot of the most recently updated requests (100 items by default, up to 500); treat HAI ingestion as a repeatable snapshot, not incremental synchronization. HAI's safe fetcher rejects Docker Desktop's `host.docker.internal` private-network target, so the earlier Docker-to-host recipe is not supported. See [HAI integration](docs/HAI_INTEGRATION.md) for the current boundary and open HAI-side work. The feed contains request state, duration, timezone and timestamps, not contact names, messages, tokens or calendar URLs. Network allowlisting protects this endpoint; it has no separate bearer authentication. HAI must enforce source ownership and access control.
 

@@ -9,9 +9,9 @@
 - Meta webhook messages: valid app-secret HMAC plus exact match to the configured WhatsApp phone-number ID before message processing.
 - Container image and Compose services default to production configuration checks; missing or short data-encryption keys are rejected. Length validation does not establish key entropy: use the setup-generated cryptographically random key (or an equivalently random secret-manager value). Existing encrypted data is tied to the exact key; use the offline `rotate-encryption-key` migration command to create a verified replacement bundle before changing active paths or key configuration.
 - Unknown `APP_ENV` values are rejected unconditionally. Development and test launchers bind only to loopback; external binds require production configuration checks.
-- Login and contact-deletion rate limits use `X-Forwarded-For` only when the immediate peer belongs to `TRUSTED_PROXY_NETWORKS` (loopback by default for the local ngrok agent). Configure only proxy networks that cannot be bypassed. HAI network authorization continues to use the direct peer address and never trusts forwarded headers.
+- Login and contact-deletion rate limits use `X-Forwarded-For` only when the immediate peer belongs to `TRUSTED_PROXY_NETWORKS` (loopback by default for a same-host reverse proxy). Configure only proxy networks that cannot be bypassed. HAI network authorization continues to use the direct peer address and never trusts forwarded headers.
 - Public booking link: 256-bit random bearer token stored encrypted and indexed only by SHA-256 hash; configurable expiry and proposal state prevent stale or post-confirmation reuse.
-- HAI metadata feed: direct client IP allowlist; forwarded headers never grant access, and loopback requests carrying `X-Forwarded-For` are denied so the local public tunnel cannot inherit loopback access.
+- HAI metadata feed: direct client IP allowlist; forwarded headers never grant access, and loopback requests carrying `X-Forwarded-For` are denied so public reverse-proxy traffic cannot inherit loopback access.
 
 ## Sensitive storage
 

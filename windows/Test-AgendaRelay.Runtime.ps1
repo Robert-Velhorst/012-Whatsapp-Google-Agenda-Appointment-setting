@@ -16,11 +16,11 @@ $previousDotenv = @{}
 foreach ($name in $dotenvNames) { $previousDotenv[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
 New-Item -ItemType Directory -Path $dotenvRoot | Out-Null
 try {
-    $dotenvContent = [string][char]0xFEFF + "APP_ENV=`"production`"`nPUBLIC_BASE_URL=`"https://agenda.example.ngrok.app`"`nGOOGLE_CLIENT_SECRETS_FILE=`"C:\Secure Folder\Client #1.json`"`nADMIN_API_TOKEN=`"synthetic=token`"`n"
+    $dotenvContent = [string][char]0xFEFF + "APP_ENV=`"production`"`nPUBLIC_BASE_URL=`"https://agenda.example.com`"`nGOOGLE_CLIENT_SECRETS_FILE=`"C:\Secure Folder\Client #1.json`"`nADMIN_API_TOKEN=`"synthetic=token`"`n"
     [IO.File]::WriteAllText($dotenvFile, $dotenvContent, (New-Object System.Text.UTF8Encoding($false)))
     Import-AgendaRelayEnvironment -EnvironmentFile $dotenvFile -PythonExecutable $pythonExecutable
     Assert-Equal $env:APP_ENV 'production' 'UTF-8 BOM dotenv key'
-    Assert-Equal $env:PUBLIC_BASE_URL 'https://agenda.example.ngrok.app' 'Quoted dotenv URL'
+    Assert-Equal $env:PUBLIC_BASE_URL 'https://agenda.example.com' 'Quoted dotenv URL'
     Assert-Equal $env:GOOGLE_CLIENT_SECRETS_FILE 'C:\Secure Folder\Client #1.json' 'Quoted dotenv path with spaces and comment character'
     Assert-Equal $env:ADMIN_API_TOKEN 'synthetic=token' 'Quoted dotenv value containing equals'
 } finally {
@@ -57,31 +57,4 @@ Assert-Equal (Get-AgendaRelayRuntimeAction -WebOwned $true -WorkerOwned $true -H
 Assert-Equal (Get-AgendaRelayRuntimeAction -WebOwned $true -WorkerOwned $false -HealthOk $false) 'unhealthy' 'Unhealthy web handling'
 Assert-Equal (Get-AgendaRelayRuntimeAction -WebOwned $false -WorkerOwned $true -HealthOk $false) 'start' 'Stale or reused web PID handling'
 
-$ngrokRoot = [IO.Path]::GetFullPath((Join-Path $env:TEMP 'Agenda Relay ngrok identity test'))
-$ngrokExecutable = [IO.Path]::GetFullPath((Join-Path $ngrokRoot 'tools\ngrok.exe'))
-$ngrokConfig = [IO.Path]::GetFullPath((Join-Path $ngrokRoot 'private config\ngrok.yml'))
-$ngrokAgentConfig = [IO.Path]::GetFullPath((Join-Path $ngrokRoot 'data\runtime\ngrok-agent.yml'))
-$ngrokRuntime = [pscustomobject]@{
-    executablePath = $ngrokExecutable
-    configPath = $ngrokConfig
-    agentConfigPath = $ngrokAgentConfig
-    domain = 'agenda.example.ngrok.app'
-    port = 5000
-}
-$ngrokProcess = [pscustomobject]@{
-    ExecutablePath = $ngrokExecutable
-    CommandLine = '"ngrok.exe" "http" "--config=' + $ngrokConfig + '" "--config=' + $ngrokAgentConfig + '" "--url=agenda.example.ngrok.app" "http://127.0.0.1:5000" "--log=stdout" "--log-format=json"'
-}
-$wrongNgrokDomain = [pscustomobject]@{
-    ExecutablePath = $ngrokExecutable
-    CommandLine = '"ngrok.exe" "http" "--config=' + $ngrokConfig + '" "--config=' + $ngrokAgentConfig + '" "--url=another.example.ngrok.app" "http://127.0.0.1:5000"'
-}
-$unrelatedNgrok = [pscustomobject]@{
-    ExecutablePath = 'C:\Other\ngrok.exe'
-    CommandLine = '"ngrok.exe" "http" "--url=agenda.example.ngrok.app" "http://127.0.0.1:5000"'
-}
-Assert-Equal (Test-AgendaRelayNgrokProcessIdentity -Process $ngrokProcess -Runtime $ngrokRuntime -Root $ngrokRoot -Verbose) $true 'Owned ngrok process'
-Assert-Equal (Test-AgendaRelayNgrokProcessIdentity -Process $wrongNgrokDomain -Runtime $ngrokRuntime -Root $ngrokRoot) $false 'Other ngrok endpoint'
-Assert-Equal (Test-AgendaRelayNgrokProcessIdentity -Process $unrelatedNgrok -Runtime $ngrokRuntime -Root $ngrokRoot) $false 'Unrelated ngrok executable'
-
-Write-Host 'Agenda Relay source-launcher and ngrok process identity checks passed.'
+Write-Host 'Agenda Relay source-launcher identity and recovery checks passed.'

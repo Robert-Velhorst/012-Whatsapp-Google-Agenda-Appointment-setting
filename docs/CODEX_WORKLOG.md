@@ -1,5 +1,12 @@
 # Codex worklog
 
+## 2026-10-14 - Replace ngrok deployment assumptions with Hetzner
+
+- Removed the Windows ngrok start/stop scripts, process-identity helper, sample configuration, and active README/acceptance references. Historical test reports remain labeled as prior evidence, not a current supported deployment path.
+- Added `docs/HETZNER_DEPLOYMENT.md` for a single-host Docker Compose + host Caddy architecture, DNS/TLS, restrictive network exposure, secrets, local-to-cloud data migration, backups, upgrades, rollback, and explicit live-acceptance gates. Replaced the combined Windows/ngrok guide with `docs/WINDOWS.md` for local standalone use.
+- Made support-bundle publishing atomic and no-overwrite, with a regression test proving an existing archive remains unchanged.
+- Local verification: full Python suite 236 passed with warnings treated as errors; `compileall`, `pip check`, `git diff --check`, and the PowerShell source-launcher identity/recovery self-check passed. No Hetzner server, DNS, firewall, TLS, Google OAuth, WhatsApp, HAI, or production data was accessed or changed.
+
 ## 2026-10-14 - Stabilize standalone paths for personal WhatsApp setup
 
 - The personal WhatsApp workflow already provides local paste-and-review, Google availability, a manually shared booking link, consented slot choice, and a manual confirmation draft. It does not read a personal inbox or send personal messages.

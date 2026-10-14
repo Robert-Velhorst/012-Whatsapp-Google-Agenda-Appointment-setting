@@ -37,7 +37,7 @@
 - Windows source installer, web/worker launcher, health check, and exact-process stop passed.
 - Packaged `AgendaRelay.exe` returned health 200 and branded login 200, then shut down cleanly; idle working set was about 65 MiB.
 - Docker image built with a 45.28 KiB final context (after excluding 181 MiB of package artifacts), ran as uid/gid 10001 `agenda`, returned health 200, and refused unsafe production startup with exit code 1.
-- PowerShell launchers parse successfully; ngrok refuses development/non-ready exposure and uses an isolated inspector port. A live temporary endpoint was externally blocked by the account's already-online endpoint rather than pooled with an unrelated service.
+- Windows source launchers parse successfully and their process-ownership/recovery self-check passes. A previous local-tunnel experiment is historical evidence only; ngrok is not part of the supported deployment path.
 - `pip-audit` reported no known vulnerabilities; `pip check` reported no broken requirements.
 - The 1,000-record benchmark verified 601.5 writes/second and 12.036 ms dashboard p95 on the development host.
 
@@ -58,5 +58,5 @@ For Personal WhatsApp assisted mode, configure Google OAuth and a reachable HTTP
 9. Pause automation and repeat inbound; expected: message recorded, no outbound/calendar action.
 10. Export and delete the test contact; expected: personal records removed and minimal deletion audit remains.
 
-For the personal assisted flow, local provider-fake tests verify request analysis, privacy boundaries, the booking-link lifecycle, and manual-only WhatsApp safeguards. Real Google OAuth, public ngrok reachability, and an actual appointment remain operator acceptance steps; automated tests do not prove provider access or delivery.
+For the personal assisted flow, local provider-fake tests verify request analysis, privacy boundaries, the booking-link lifecycle, and manual-only WhatsApp safeguards. Real Google OAuth, public HTTPS reachability from the Hetzner deployment, and an actual appointment remain operator acceptance steps; automated tests do not prove provider access or delivery.
 

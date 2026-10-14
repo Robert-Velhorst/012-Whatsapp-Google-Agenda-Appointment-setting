@@ -71,7 +71,7 @@ def test_production_personal_assisted_mode_does_not_require_business_api(tmp_pat
     app = create_app({
         "app_env": "production",
         "database_path": tmp_path / "personal.sqlite3",
-        "public_base_url": "https://agenda.example.ngrok.app",
+        "public_base_url": "https://agenda.example.com",
         "flask_secret_key": "f" * 64,
         "admin_api_token": "a" * 64,
         "admin_password_hash": "configured-password-hash",

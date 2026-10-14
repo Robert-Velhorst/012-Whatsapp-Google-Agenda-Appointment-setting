@@ -116,7 +116,7 @@ def test_public_ingress_allows_google_oauth_bootstrap_only_while_automation_is_p
     app = create_app({
         "app_env": "production",
         "database_path": tmp_path / "ingress.sqlite3",
-        "public_base_url": "https://agenda.example.ngrok.app",
+        "public_base_url": "https://agenda.example.com",
         "flask_secret_key": "f" * 40,
         "admin_api_token": "a" * 40,
         "admin_password_hash": "configured-password-hash",
