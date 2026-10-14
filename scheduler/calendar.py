@@ -97,11 +97,19 @@ class GoogleCalendar:
         self._write_token(flow.credentials.to_json())
 
     def connected(self) -> bool:
+        return self.connection_status()["ready"] is True
+
+    def connection_status(self) -> dict[str, str | bool]:
         try:
             self._credentials()
-            return True
-        except Exception:  # noqa: BLE001 - Google auth/transport libraries expose several unrelated credential failure types.
-            return False
+            return {"ready": True, "detail": "Connected"}
+        except CalendarUnavailable as exc:
+            return {"ready": False, "detail": str(exc)}
+        except Exception:  # noqa: BLE001 - malformed encrypted token/config errors are intentionally sanitized.
+            return {
+                "ready": False,
+                "detail": "Google Calendar credentials could not be validated; reconnect it from the operator dashboard.",
+            }
 
     def free_slots(self, start_day, duration_minutes: int, count: int = 3, preferred_time: time | None = None) -> list[datetime]:
         if count <= 0:

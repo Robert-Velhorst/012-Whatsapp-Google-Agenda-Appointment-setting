@@ -705,11 +705,18 @@ class SchedulingService:
 
     def readiness(self) -> dict[str, Any]:
         errors, warnings = self.settings.validation()
-        google_connected = bool(getattr(self.calendar, "connected", lambda: False)())
+        connection_status = getattr(self.calendar, "connection_status", None)
+        google_status = connection_status() if callable(connection_status) else None
+        if isinstance(google_status, dict) and isinstance(google_status.get("ready"), bool):
+            google_connected = google_status["ready"]
+            google_detail = str(google_status.get("detail") or "Google Calendar connection required")
+        else:
+            google_connected = bool(getattr(self.calendar, "connected", lambda: False)())
+            google_detail = "Connected" if google_connected else "OAuth connection required"
         whatsapp_configured = bool(getattr(self.whatsapp, "configured", lambda: False)())
         whatsapp_ready = not self.settings.whatsapp_cloud_api_enabled or whatsapp_configured
         providers = {
-            "google_calendar": {"ready": google_connected, "detail": "Connected" if google_connected else "OAuth connection required"},
+            "google_calendar": {"ready": google_connected, "detail": google_detail},
             "whatsapp": {
                 "ready": whatsapp_ready,
                 "enabled": self.settings.whatsapp_cloud_api_enabled,

@@ -1,5 +1,10 @@
 # Codex worklog
 
+## 2026-10-14 - Preserve Google token failure distinctions in readiness
+
+- Coverage-driven regression tests reproduced that both transient Google token-refresh transport failures and revoked credentials were collapsed into the misleading readiness state `OAuth connection required`. Google Calendar now returns sanitized connection-status detail, and provider readiness retains the distinction between retrying connectivity and reconnecting authorization. Unexpected token/config failures are generic and do not expose provider content.
+- The two specific readiness cases first failed, then passed after the fix; an additional secret-detail sanitization test passes. Calendar safety tests: 39 passed; full suite: 281 passed in 69.48 seconds. `compileall`, `pip check`, and `git diff --check` passed. Commit `bb42458` passed the exact-head Windows packaging, vulnerability audit, full hosted test suite, and package smoke workflow. The readiness refinement requires its own fresh exact-head CI run; no live Google or Hetzner environment was contacted.
+
 ## 2026-10-14 - Sanitize assisted Calendar failure details
 
 - A red-capable assisted-flow route test reproduced that an unexpected Google Calendar exception string appeared in the operator page and was persisted verbatim in the request audit. The flow now records only the provider and exception class, returns a sanitized `CalendarUnavailable` message for failed availability checks, and uses a generic page message for unexpected analysis failures. Known user-correctable validation errors remain actionable through a dedicated `AssistedRequestError` type.

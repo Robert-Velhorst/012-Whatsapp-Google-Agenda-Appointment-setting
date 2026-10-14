@@ -306,6 +306,53 @@ def test_expired_google_token_refresh_failures_are_actionable_and_do_not_leak_pr
     assert list(token_path.parent.glob("*.tmp")) == []
 
 
+@pytest.mark.parametrize(
+    ("failure_message", "expected_readiness_detail"),
+    [
+        (
+            "Google Calendar token refresh could not reach Google; retry after connectivity is restored.",
+            "Google Calendar token refresh could not reach Google; retry after connectivity is restored.",
+        ),
+        (
+            "Google Calendar authorization could not be refreshed; reconnect it from the operator dashboard.",
+            "Google Calendar authorization could not be refreshed; reconnect it from the operator dashboard.",
+        ),
+    ],
+)
+def test_provider_readiness_distinguishes_google_retry_from_reconnect(app_bundle, monkeypatch, failure_message, expected_readiness_detail):
+    app, _, _ = app_bundle
+    calendar = GoogleCalendar(app.extensions["settings"])
+
+    def fail_credentials():
+        raise CalendarUnavailable(failure_message)
+
+    monkeypatch.setattr(calendar, "_credentials", fail_credentials)
+    app.extensions["scheduling"].calendar = calendar
+
+    provider = app.extensions["scheduling"].readiness()["providers"]["google_calendar"]
+
+    assert provider["ready"] is False
+    assert provider["detail"] == expected_readiness_detail
+
+
+def test_provider_readiness_sanitizes_unexpected_calendar_credential_errors(app_bundle, monkeypatch):
+    app, _, _ = app_bundle
+    calendar = GoogleCalendar(app.extensions["settings"])
+    secret_detail = "PRIVATE_GOOGLE_TOKEN_RESPONSE"
+
+    def fail_credentials():
+        raise RuntimeError(secret_detail)
+
+    monkeypatch.setattr(calendar, "_credentials", fail_credentials)
+    app.extensions["scheduling"].calendar = calendar
+
+    provider = app.extensions["scheduling"].readiness()["providers"]["google_calendar"]
+
+    assert provider["ready"] is False
+    assert provider["detail"] == "Google Calendar credentials could not be validated; reconnect it from the operator dashboard."
+    assert secret_detail not in provider["detail"]
+
+
 def test_concurrent_expired_token_reads_refresh_once_and_return_current_credentials(app_bundle, tmp_path, monkeypatch):
     app, _, _ = app_bundle
     token_path = tmp_path / "credentials" / "google-token.json"

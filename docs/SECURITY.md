@@ -33,6 +33,7 @@ Responses include CSP, frame denial, MIME sniff prevention, no-referrer, restric
 - Login return URLs and post-action referrers are restricted to local paths or validated same-host URLs whose paths cannot be interpreted as protocol-relative redirects. External, backslash, and control-character redirect candidates fall back to the dashboard.
 - Public booking responses map expected validation errors to fixed text and never reflect raw calendar/provider exceptions to bearer-link holders; provider exception details remain restricted to operator-side recovery records.
 - Personal assisted-time analysis does not display raw unexpected exception messages or persist them in audit details; failed Calendar checks retain only the provider name and exception class.
+- Google Calendar readiness distinguishes retryable token-refresh connectivity failures from authorization failures that require reconnection; unexpected credential-read exceptions are reduced to a generic reconnect instruction.
 
 ## Authorization and ownership
 
