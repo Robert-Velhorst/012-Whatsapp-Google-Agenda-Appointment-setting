@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Iterator
 from zoneinfo import ZoneInfo
 
+from google.auth.exceptions import RefreshError, TransportError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
@@ -311,7 +312,16 @@ class GoogleCalendar:
             with _token_refresh_guard(token_path):
                 credentials = self._read_credentials(token_path)
                 if credentials.expired and credentials.refresh_token:
-                    credentials.refresh(Request())
+                    try:
+                        credentials.refresh(Request())
+                    except RefreshError as exc:
+                        raise CalendarUnavailable(
+                            "Google Calendar authorization could not be refreshed; reconnect it from the operator dashboard."
+                        ) from exc
+                    except TransportError as exc:
+                        raise CalendarUnavailable(
+                            "Google Calendar token refresh could not reach Google; retry after connectivity is restored."
+                        ) from exc
                     self._write_token(credentials.to_json())
         if not credentials.valid:
             raise CalendarUnavailable("Google Calendar authorization has expired; reconnect it.")

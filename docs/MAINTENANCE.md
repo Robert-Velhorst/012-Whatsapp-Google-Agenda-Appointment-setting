@@ -16,6 +16,6 @@
 
 ## Roadmap
 
-P1: real-provider rehearsal, token expiry, reschedule provider rehearsal, re-authenticated privacy UI.
+P1: real-provider rehearsal (including a revoked/expired Google refresh token), reschedule provider rehearsal, re-authenticated privacy UI. Locally, expired-token refresh failures are handled as actionable reconnect or retry errors and covered by provider-fake tests; live Google token expiry/revocation remains unverified.
 P2: Postgres, durable distributed queue/rate limits, organization SSO/RBAC, per-workspace provider vault.
 P3: optional privacy-reviewed AI intent provider, travel-time provider, analytics and localization beyond EN/NL.

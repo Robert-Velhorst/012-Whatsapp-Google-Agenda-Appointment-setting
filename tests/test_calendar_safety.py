@@ -255,6 +255,57 @@ def test_google_token_write_is_atomic_and_encrypted(app_bundle, tmp_path):
     assert list(token_path.parent.glob("*.tmp")) == []
 
 
+@pytest.mark.parametrize(
+    ("refresh_error", "expected_message"),
+    [
+        ("refresh", "authorization could not be refreshed; reconnect it"),
+        ("transport", "token refresh could not reach Google; retry"),
+    ],
+)
+def test_expired_google_token_refresh_failures_are_actionable_and_do_not_leak_provider_details(
+    app_bundle, tmp_path, monkeypatch, refresh_error, expected_message
+):
+    app, _, _ = app_bundle
+    token_path = tmp_path / "credentials" / "google-token.json"
+    settings = replace(app.extensions["settings"], google_token_file=str(token_path))
+    crypto = CryptoBox("test-encryption-key")
+    calendar = GoogleCalendar(settings, crypto)
+    original_token = '{"token":"expired","refresh_token":"private-refresh-token"}'
+    token_path.parent.mkdir(parents=True)
+    token_path.write_text(crypto.encrypt(original_token), encoding="utf-8")
+
+    class FakeCredentials:
+        expired = True
+        valid = False
+        refresh_token = "private-refresh-token"
+
+        @classmethod
+        def from_authorized_user_info(cls, info, scopes):
+            return cls()
+
+        def refresh(self, request):
+            if refresh_error == "refresh":
+                from google.auth.exceptions import RefreshError
+
+                raise RefreshError("private provider response: invalid_grant with secret detail")
+            from google.auth.exceptions import TransportError
+
+            raise TransportError("private network response detail")
+
+        def to_json(self):
+            raise AssertionError("a failed refresh must not be persisted")
+
+    monkeypatch.setattr("scheduler.calendar.Credentials", FakeCredentials)
+    monkeypatch.setattr("scheduler.calendar.Request", lambda: object())
+
+    with pytest.raises(CalendarUnavailable, match=expected_message) as error:
+        calendar._credentials()
+
+    assert "private" not in str(error.value)
+    assert crypto.decrypt(token_path.read_text(encoding="utf-8")) == original_token
+    assert list(token_path.parent.glob("*.tmp")) == []
+
+
 def test_concurrent_expired_token_reads_refresh_once_and_return_current_credentials(app_bundle, tmp_path, monkeypatch):
     app, _, _ = app_bundle
     token_path = tmp_path / "credentials" / "google-token.json"

@@ -1,5 +1,10 @@
 # Codex worklog
 
+## 2026-10-14 - Handle Google Calendar token refresh failures safely
+
+- Normalized Google OAuth refresh failures into non-sensitive operator-facing errors: revoked/invalid refresh credentials direct the operator to reconnect, while transport failures direct them to retry. Failed refreshes do not replace the encrypted token file.
+- Added regression coverage for both failure classes, including checks that provider/network details are not exposed and persisted credentials remain unchanged. Calendar safety tests: 37 passed; full Python suite: 277 passed in 44.07 seconds. Google-auth official documentation confirms refresh failures use `RefreshError` and OAuth `invalid_grant` requires re-authentication. This is local fake-provider evidence only; no Google account/token or Hetzner host was accessed, and a live revoked-token rehearsal remains in the P1 acceptance list.
+
 ## 2026-10-14 - Add reviewed Calendar rescheduling
 
 - Added a persistent two-step reschedule proposal for already-booked appointments. Preparation checks FreeBusy and leaves the original booking authoritative; explicit confirmation patches only the event's time, reads it back, then updates local state and queued reminders. Provider ambiguity/stale claims move to an operator reconciliation state that accepts only the original or proposed interval. The browser actions are CSRF-protected; personal WhatsApp remains manual and receives no automatic message from rescheduling.
