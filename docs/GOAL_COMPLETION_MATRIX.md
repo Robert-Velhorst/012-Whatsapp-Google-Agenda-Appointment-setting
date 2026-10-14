@@ -55,7 +55,7 @@ Status is evidence-based as of 2026-10-14. `Implemented` means locally wired and
 | 048 | Provider failure simulation | Implemented | Verified rejection versus ambiguous delivery states; malformed, timezone-free, zero-length, or reversed Calendar busy intervals fail closed before proposing or booking; ambiguous retries prohibited |
 | 049 | Accessibility | Partial | Semantic labels/responsive/reduced motion; primary-navigation keyboard focus has a 2px blue outline (5.34:1 against focus background) with regression coverage; full WCAG audit remains pending |
 | 050 | Responsive/browser compatibility | Implemented | Desktop and mobile browser QA passed with zero console warnings/errors |
-| 051 | Performance/indexing | Implemented | WAL/persistent connections/indexes plus repeatable 1,000-record benchmark |
+| 051 | Performance/indexing | Implemented | WAL/persistent connections/indexes, bounded 1,000/10,000-record benchmarks, and one-transaction contact/request/audit writes; throughput remains host-variable |
 | 052 | Large dataset/pagination | Implemented | 1,000-record dashboard/feed benchmark and bounded pagination verified |
 | 053 | Backup/restore | Implemented | SQLite online backup, integrity check, pre-restore safety copy; default destination follows `DATABASE_PATH` into the persistent Docker data mount; encrypted off-host scheduling remains operator-configured |
 | 054 | Reconciliation/repair | Partial | Integrity/doctor/retention supplied; advanced repair commands absent |
@@ -81,7 +81,7 @@ Status is evidence-based as of 2026-10-14. `Implemented` means locally wired and
 | 074 | API usage audit | Implemented | Public/operator/provider surfaces mapped |
 | 075 | Documentation truthfulness | Implemented | Partial/blocked status stated throughout |
 | 076 | Debt register | Implemented | `docs/MAINTENANCE.md` |
-| 077 | Bug hunt log | Implemented | Worklog records template, security, provider ambiguity, concurrency, and timezone fixes |
+| 077 | Bug hunt log | Implemented | Worklog records template, security, provider ambiguity, concurrency, timezone, corrupt-restore, and contact-language/transaction fixes |
 | 078 | Red-team loop one | Partial | Automated auth/signature/CSRF/size/state review; independent review absent |
 | 079 | Red-team loop two | Partial | Privacy/isolation/encryption review; independent review absent |
 | 080 | Red-team loop three | Partial | Provider ambiguity/idempotency review; real-provider chaos test blocked |

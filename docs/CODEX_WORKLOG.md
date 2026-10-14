@@ -1,5 +1,11 @@
 # Codex worklog
 
+## 2026-10-14 - Combine contact and scheduling-request writes
+
+- Profiling showed transaction commits dominate the synthetic write workload. The automatic webhook path still persists a contact before intent classification; once scheduling intent is known, it now updates detected language/profile details and creates the request plus `request.detected` audit in one transaction, eliminating a separate contact-update commit. The personal-assisted path and synthetic benchmark create the contact, request, and audit in one transaction. Contact upserts without a newly detected language now preserve the existing EN/NL setting instead of silently resetting it to English.
+- Added success, audit-failure rollback, retained-language, and exact webhook commit-count regressions. Interleaved baseline/variant throughput ranges overlap (baseline 66.7–120.3; combined 34.1–138.5 records/sec on this noisy host); no speedup is claimed. Structural commit count is reduced from two to one for the benchmark/assisted contact-request pair, and the automatic request path combines its contact update with request/audit.
+- Full suite: 255 passed with warnings treated as errors; `compileall`, `pip check`, and `git diff --check` passed. Fresh Windows 11 x64 package smoke passed migration, encryption rotation, default backup, health, and branded login (67.1 MiB working set); ZIP SHA-256 `B1DFBD0FCE8BC3B991CE1AD76EF95954696F54BB75F0E4722770DF561611A701`. Exact-head hosted checks are pending.
+
 ## 2026-10-14 - Make SQLite restore recover corrupt databases safely
 
 - Reproduced two restore failure modes: the CLI booted the app before dispatching restore, so an unreadable live database failed during app startup; and a zero-byte WAL held by an idle SQLite connection bypassed the old non-empty-WAL check, reaching Windows `os.replace` and failing with `PermissionError`.

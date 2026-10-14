@@ -100,17 +100,39 @@ class Store:
             row = db.execute("SELECT value FROM system_state WHERE workspace_id=? AND key=?", (workspace_id, key)).fetchone()
         return row[0] if row else default
 
-    def upsert_contact(self, workspace_id: str, sender: str, timezone_name: str, language: str = "en", display_name: str | None = None) -> int:
+    def _upsert_contact_in_transaction(
+        self,
+        db: sqlite3.Connection,
+        workspace_id: str,
+        sender: str,
+        timezone_name: str,
+        language: str | None,
+        display_name: str | None,
+    ) -> int:
+        if language not in {None, "en", "nl"}:
+            raise ValueError("Language must be en or nl")
         now = utc_now().isoformat()
-        with self.connect() as db:
-            db.execute(
-                "INSERT INTO contacts(workspace_id,sender,display_name,timezone,language,created_at,updated_at) VALUES(?,?,?,?,?,?,?) "
-                "ON CONFLICT(workspace_id,sender) DO UPDATE SET display_name=COALESCE(excluded.display_name,contacts.display_name), "
-                "language=excluded.language,updated_at=excluded.updated_at",
-                (workspace_id, sender, display_name, timezone_name, language, now, now),
-            )
-            row = db.execute("SELECT id FROM contacts WHERE workspace_id=? AND sender=?", (workspace_id, sender)).fetchone()
+        db.execute(
+            "INSERT INTO contacts(workspace_id,sender,display_name,timezone,language,created_at,updated_at) VALUES(?,?,?,?,?,?,?) "
+            "ON CONFLICT(workspace_id,sender) DO UPDATE SET display_name=COALESCE(excluded.display_name,contacts.display_name), "
+            "language=COALESCE(?,contacts.language),updated_at=excluded.updated_at",
+            (workspace_id, sender, display_name, timezone_name, language or "en", now, now, language),
+        )
+        row = db.execute("SELECT id FROM contacts WHERE workspace_id=? AND sender=?", (workspace_id, sender)).fetchone()
         return int(row[0])
+
+    def upsert_contact(
+        self,
+        workspace_id: str,
+        sender: str,
+        timezone_name: str,
+        language: str | None = None,
+        display_name: str | None = None,
+    ) -> int:
+        with self.connect() as db:
+            return self._upsert_contact_in_transaction(
+                db, workspace_id, sender, timezone_name, language, display_name,
+            )
 
     def update_contact(self, workspace_id: str, contact_id: int, *, display_name: str | None, email: str | None, timezone_name: str, language: str, consent_status: str) -> bool:
         if consent_status not in {"implicit_inbound", "confirmed", "revoked"}:
@@ -196,24 +218,94 @@ class Store:
             ).fetchall()
         return [{"external_id": row["external_id"], "body": self.crypto.decrypt(row["body_ciphertext"]), "received_at": row["received_at"]} for row in reversed(rows)]
 
-    def create_request(self, workspace_id: str, contact_id: int, source_message_id: str, title: str, duration: int, timezone_name: str, requested_start: str, confidence: float) -> int:
+    def _create_request_in_transaction(
+        self,
+        db: sqlite3.Connection,
+        workspace_id: str,
+        contact_id: int,
+        source_message_id: str,
+        title: str,
+        duration: int,
+        timezone_name: str,
+        requested_start: str,
+        confidence: float,
+    ) -> int:
         now = utc_now().isoformat()
+        cursor = db.execute(
+            "INSERT INTO scheduling_requests(workspace_id,contact_id,source_message_id,title,duration_minutes,timezone,requested_start,status,confidence,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (workspace_id, contact_id, source_message_id, title, duration, timezone_name, requested_start, "detected", confidence, now, now),
+        )
+        request_id = int(cursor.lastrowid)
+        self._audit_in_transaction(
+            db,
+            workspace_id,
+            "scheduler",
+            "request.detected",
+            "request",
+            request_id,
+            {"confidence": confidence, "duration_minutes": duration},
+        )
+        return request_id
+
+    def create_request(self, workspace_id: str, contact_id: int, source_message_id: str, title: str, duration: int, timezone_name: str, requested_start: str, confidence: float) -> int:
+        with self.connect() as db:
+            return self._create_request_in_transaction(
+                db, workspace_id, contact_id, source_message_id, title, duration,
+                timezone_name, requested_start, confidence,
+            )
+
+    def update_contact_and_create_request(
+        self,
+        workspace_id: str,
+        contact_id: int,
+        language: str,
+        display_name: str | None,
+        source_message_id: str,
+        title: str,
+        duration: int,
+        timezone_name: str,
+        requested_start: str,
+        confidence: float,
+    ) -> int:
+        """Update detected contact details and create its request/audit atomically."""
+        if language not in {"en", "nl"}:
+            raise ValueError("Language must be en or nl")
         with self.connect() as db:
             cursor = db.execute(
-                "INSERT INTO scheduling_requests(workspace_id,contact_id,source_message_id,title,duration_minutes,timezone,requested_start,status,confidence,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                (workspace_id, contact_id, source_message_id, title, duration, timezone_name, requested_start, "detected", confidence, now, now),
+                "UPDATE contacts SET display_name=COALESCE(?,display_name),language=?,updated_at=? "
+                "WHERE workspace_id=? AND id=?",
+                (display_name, language, utc_now().isoformat(), workspace_id, contact_id),
             )
-            request_id = int(cursor.lastrowid)
-            self._audit_in_transaction(
-                db,
-                workspace_id,
-                "scheduler",
-                "request.detected",
-                "request",
-                request_id,
-                {"confidence": confidence, "duration_minutes": duration},
+            if cursor.rowcount != 1:
+                raise KeyError("Contact not found")
+            return self._create_request_in_transaction(
+                db, workspace_id, contact_id, source_message_id, title, duration,
+                timezone_name, requested_start, confidence,
             )
-        return request_id
+
+    def create_contact_request(
+        self,
+        workspace_id: str,
+        sender: str,
+        timezone_name: str,
+        language: str,
+        display_name: str | None,
+        source_message_id: str,
+        title: str,
+        duration: int,
+        requested_start: str,
+        confidence: float,
+    ) -> tuple[int, int]:
+        """Create/update the contact and detected request with one atomic commit."""
+        with self.connect() as db:
+            contact_id = self._upsert_contact_in_transaction(
+                db, workspace_id, sender, timezone_name, language, display_name,
+            )
+            request_id = self._create_request_in_transaction(
+                db, workspace_id, contact_id, source_message_id, title, duration,
+                timezone_name, requested_start, confidence,
+            )
+        return contact_id, request_id
 
     def _transition_request_in_transaction(
         self,

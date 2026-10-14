@@ -64,6 +64,140 @@ def test_request_creation_rolls_back_when_audit_insert_fails(app_bundle):
         ).fetchone()[0] == 0
 
 
+def test_contact_request_creation_is_atomic_and_records_the_expected_state(app_bundle):
+    app, _, _ = app_bundle
+    store = app.extensions["store"]
+
+    contact_id, request_id = store.create_contact_request(
+        "default", "31612345679", "Europe/Amsterdam", "nl", "Synthetic contact",
+        "wamid.atomic-contact-request", "Afspraak", 45, "2030-01-08T09:00:00+01:00", 0.91,
+    )
+
+    contact = store.get_contact("default", contact_id)
+    request = store.request_detail("default", request_id)
+    assert contact["sender"] == "31612345679"
+    assert contact["language"] == "nl"
+    assert contact["display_name"] == "Synthetic contact"
+    assert request["contact_id"] == contact_id
+    assert request["status"] == "detected"
+    assert store.recent_audit("default", 1)[0]["action"] == "request.detected"
+
+
+def test_contact_request_creation_rolls_back_contact_when_request_audit_fails(app_bundle):
+    app, _, _ = app_bundle
+    store = app.extensions["store"]
+    with store.connect() as db:
+        db.execute(
+            "CREATE TRIGGER reject_request_audit BEFORE INSERT ON audit_events "
+            "WHEN NEW.action='request.detected' BEGIN "
+            "SELECT RAISE(ABORT, 'request audit unavailable'); END"
+        )
+
+    with pytest.raises(sqlite3.IntegrityError, match="request audit unavailable"):
+        store.create_contact_request(
+            "default", "31612345680", "Europe/Amsterdam", "nl", None,
+            "wamid.atomic-contact-request-fail", "Afspraak", 45,
+            "2030-01-08T09:00:00+01:00", 0.91,
+        )
+
+    with store.connect() as db:
+        assert db.execute(
+            "SELECT COUNT(*) FROM contacts WHERE workspace_id='default' AND sender='31612345680'"
+        ).fetchone()[0] == 0
+        assert db.execute(
+            "SELECT COUNT(*) FROM scheduling_requests WHERE source_message_id='wamid.atomic-contact-request-fail'"
+        ).fetchone()[0] == 0
+        assert db.execute(
+            "SELECT COUNT(*) FROM audit_events WHERE action='request.detected'"
+        ).fetchone()[0] == 0
+
+
+def test_contact_language_update_and_request_creation_are_atomic(app_bundle):
+    app, _, _ = app_bundle
+    store = app.extensions["store"]
+    contact_id = store.upsert_contact(
+        "default", "31612345682", "Europe/Amsterdam", display_name="Previous name",
+    )
+
+    request_id = store.update_contact_and_create_request(
+        "default", contact_id, "nl", "Updated name", "wamid.contact-update-request",
+        "Afspraak", 45, "Europe/Amsterdam", "2030-01-08T09:00:00+01:00", 0.91,
+    )
+
+    contact = store.get_contact("default", contact_id)
+    assert contact["language"] == "nl"
+    assert contact["display_name"] == "Updated name"
+    assert store.request_detail("default", request_id)["contact_id"] == contact_id
+    assert store.recent_audit("default", 1)[0]["action"] == "request.detected"
+
+
+def test_contact_language_update_rolls_back_when_request_audit_fails(app_bundle):
+    app, _, _ = app_bundle
+    store = app.extensions["store"]
+    contact_id = store.upsert_contact(
+        "default", "31612345683", "Europe/Amsterdam", "en", "Previous name",
+    )
+    with store.connect() as db:
+        db.execute(
+            "CREATE TRIGGER reject_request_audit BEFORE INSERT ON audit_events "
+            "WHEN NEW.action='request.detected' BEGIN "
+            "SELECT RAISE(ABORT, 'request audit unavailable'); END"
+        )
+
+    with pytest.raises(sqlite3.IntegrityError, match="request audit unavailable"):
+        store.update_contact_and_create_request(
+            "default", contact_id, "nl", "Updated name", "wamid.contact-update-request-fail",
+            "Afspraak", 45, "Europe/Amsterdam", "2030-01-08T09:00:00+01:00", 0.91,
+        )
+
+    contact = store.get_contact("default", contact_id)
+    assert contact["language"] == "en"
+    assert contact["display_name"] == "Previous name"
+    with store.connect() as db:
+        assert db.execute(
+            "SELECT COUNT(*) FROM scheduling_requests WHERE source_message_id='wamid.contact-update-request-fail'"
+        ).fetchone()[0] == 0
+
+
+def test_contact_upsert_without_new_language_preserves_existing_language(app_bundle):
+    app, _, _ = app_bundle
+    store = app.extensions["store"]
+    contact_id = store.upsert_contact("default", "31612345681", "Europe/Amsterdam", "nl")
+
+    updated_id = store.upsert_contact(
+        "default", "31612345681", "Europe/Amsterdam", display_name="Synthetic contact",
+    )
+
+    assert updated_id == contact_id
+    assert store.get_contact("default", contact_id)["language"] == "nl"
+
+
+def test_scheduling_webhook_batches_contact_language_request_and_audit_write(app_bundle):
+    app, _, _ = app_bundle
+    store = app.extensions["store"]
+    statements = []
+    store._local.connection.set_trace_callback(statements.append)
+    try:
+        response = post_webhook(app.test_client(), webhook())
+    finally:
+        store._local.connection.set_trace_callback(None)
+
+    assert response.status_code == 200
+    assert response.get_json()["proposals"] == 1
+    assert sum(statement.strip().upper() == "COMMIT" for statement in statements) == 4
+
+
+def test_non_scheduling_webhook_does_not_reset_existing_contact_language(app_bundle):
+    app, _, _ = app_bundle
+    store = app.extensions["store"]
+    contact_id = store.upsert_contact("default", "31612345678", "Europe/Amsterdam", "nl")
+
+    result = post_webhook(app.test_client(), webhook("wamid.non-scheduling", body="Hello there"))
+
+    assert result.status_code == 200
+    assert store.get_contact("default", contact_id)["language"] == "nl"
+
+
 def test_booking_does_not_create_event_if_selected_slot_is_now_busy(app_bundle):
     app, calendar, _ = app_bundle
     client = app.test_client()

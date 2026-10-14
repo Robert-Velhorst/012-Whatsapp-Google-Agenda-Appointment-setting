@@ -84,6 +84,10 @@ Calendar availability uses one Google FreeBusy query for the full 21-day search 
 
 The executable's larger idle footprint comes from bundled Python and provider libraries. For horizontal scaling, multiple operators, or sustained write concurrency, move persistence and rate/job coordination to PostgreSQL rather than sharing the SQLite file across machines.
 
+## Atomic contact/request write — 2026-10-14
+
+For automatic webhooks, the contact is still committed before intent classification to preserve the existing failure boundary. Once a scheduling intent is known, the subsequent contact-language update, request insert, and `request.detected` audit now commit atomically instead of using two transactions. The personal-assisted path and 1,000-record synthetic benchmark atomically create contact/request/audit together. The benchmark's logical data and correctness gate are unchanged. An interleaved A/B comparison measured the prior two-transaction contact/request path at 66.7–120.3 records/second and the combined path at 34.1–138.5 records/second. Those ranges overlap widely, so this host sample does not establish a throughput improvement. The deterministic structural result is one commit per contact/request pair instead of two; a webhook regression asserts four total commits for inbound persistence, initial contact, contact-language/request/audit, and proposal creation. Keep this as a write-count and atomicity improvement, not a latency guarantee, and repeat measurements on a quiet representative host before capacity claims.
+
 ## Atomic request/audit write follow-up — 2026-10-14
 
 Profiling found that request creation committed its scheduling row and its `request.detected` audit row separately. Request creation now inserts both in one transaction; an injected audit failure proves both rows roll back together. This also removes one SQLite commit per request.

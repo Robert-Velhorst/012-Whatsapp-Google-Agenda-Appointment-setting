@@ -141,7 +141,10 @@ class SchedulingService:
                     if self.is_paused():
                         self.store.audit(self.settings.workspace_id, "scheduler", "automation.skipped_paused", "message", external_id, {})
                         continue
-                    contact_id = self.store.upsert_contact(self.settings.workspace_id, sender, self.settings.timezone, display_name=names.get(sender))
+                    contact_id = self.store.upsert_contact(
+                        self.settings.workspace_id, sender, self.settings.timezone,
+                        display_name=names.get(sender),
+                    )
                     proposal_cutoff = (utc_now() - timedelta(hours=self.settings.booking_link_ttl_hours)).isoformat()
                     active = self.store.latest_sent_proposal(self.settings.workspace_id, sender, proposal_cutoff)
                     if active:
@@ -157,12 +160,12 @@ class SchedulingService:
                     if not intent.is_scheduling:
                         result["ignored"] += 1
                         continue
-                    contact_id = self.store.upsert_contact(self.settings.workspace_id, sender, self.settings.timezone, intent.language, names.get(sender))
-                    contact = self.store.get_contact(self.settings.workspace_id, contact_id) or {}
-                    request_id = self.store.create_request(
-                        self.settings.workspace_id, contact_id, external_id, intent.title, intent.duration_minutes,
-                        self.settings.timezone, intent.requested_start.isoformat(), intent.confidence,
+                    request_id = self.store.update_contact_and_create_request(
+                        self.settings.workspace_id, contact_id, intent.language, names.get(sender),
+                        external_id, intent.title, intent.duration_minutes, self.settings.timezone,
+                        intent.requested_start.isoformat(), intent.confidence,
                     )
+                    contact = self.store.get_contact(self.settings.workspace_id, contact_id) or {}
                     try:
                         slots = self.calendar.free_slots(
                             intent.requested_start, intent.duration_minutes, preferred_time=intent.preferred_time,
@@ -195,14 +198,11 @@ class SchedulingService:
         # The identifier is deliberately synthetic: there is no personal WhatsApp API
         # identity or phone number available, and neither is needed for the booking link.
         sender = f"assisted:{secrets.token_urlsafe(18)}"
-        contact_id = self.store.upsert_contact(
-            self.settings.workspace_id, sender, self.settings.timezone, intent.language,
-            display_name="Personal WhatsApp (manual)",
-        )
         source_id = f"assisted:{secrets.token_urlsafe(18)}"
-        request_id = self.store.create_request(
-            self.settings.workspace_id, contact_id, source_id, intent.title,
-            intent.duration_minutes, self.settings.timezone, intent.requested_start.isoformat(), intent.confidence,
+        _, request_id = self.store.create_contact_request(
+            self.settings.workspace_id, sender, self.settings.timezone, intent.language,
+            "Personal WhatsApp (manual)", source_id, intent.title, intent.duration_minutes,
+            intent.requested_start.isoformat(), intent.confidence,
         )
         try:
             slots = self.calendar.free_slots(
