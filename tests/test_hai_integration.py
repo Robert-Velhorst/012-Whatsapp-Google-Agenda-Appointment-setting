@@ -22,7 +22,7 @@ def test_hai_feed_is_local_cursor_based_and_pii_minimized(tmp_path):
     app.config["TESTING"] = True
     client = app.test_client()
     post_webhook(client, webhook(body="Private message from Emma about a confidential appointment"))
-    post_webhook(client, webhook(message_id="wamid.2", body="Another private request from Emma"))
+    post_webhook(client, webhook(message_id="wamid.2", body="Could we schedule a second 30 minute call tomorrow?"))
 
     denied = client.get("/api/integrations/hai/feed", headers={"X-Forwarded-For": "203.0.113.10"})
     assert denied.status_code == 403
@@ -50,7 +50,7 @@ def test_hai_feed_is_local_cursor_based_and_pii_minimized(tmp_path):
     unchanged = client.get("/api/integrations/hai/feed", query_string={"cursor": payload["nextCursor"]})
     assert unchanged.status_code == 200
     assert unchanged.get_json()["items"] == []
-    post_webhook(client, webhook(message_id="wamid.3", body="Follow-up scheduling request"))
+    post_webhook(client, webhook(message_id="wamid.3", body="Could we schedule another 30 minute call next week?"))
     second = client.get("/api/integrations/hai/feed", query_string={"cursor": payload["nextCursor"]})
     second_payload = second.get_json()
     assert [item["metadata"]["requestId"] for item in second_payload["items"]] == [3]

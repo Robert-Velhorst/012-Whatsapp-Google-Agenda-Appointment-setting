@@ -42,17 +42,20 @@ Every domain table carries `workspace_id`; store queries require it. The shipped
 - Unique inbound message ID per workspace.
 - Unique request source, proposal/request, appointment/request, booking token hash, job dedupe key, and Google event ID.
 - Atomic per-contact outbound WhatsApp reservations per hour, including concurrent requests.
-- Emergency pause blocks outbound messages, calendar changes, and workers while preserving signed inbound records.
+- Atomic inbound per-sender and workspace-wide quotas, a per-callback message cap, and a text-length cap for the optional Business API webhook.
+- Emergency pause prevents new automatic scheduling/provider actions while preserving signed inbound records. The worker continues stale-claim recovery, proposal expiry, and retention housekeeping before it skips normal job execution.
 - A proposal is atomically claimed before provider delivery, so simultaneous send actions cannot call WhatsApp twice.
 - Provider timeouts and process interruption during external actions become visible manual exceptions instead of blind retries.
 - Expired booking proposals are rejected equally through the private link and WhatsApp reply path.
+
+`DATA_RETENTION_DAYS` purges inbound message bodies, rate events, and delivery receipts. `SCHEDULING_RETENTION_DAYS` (default 90) removes aged cancelled/failed requests and their proposals, plus aged expired proposals without an appointment. It never deletes appointment records, Google Calendar events, unresolved scheduling records, or general audit history.
 
 ## Privacy controls
 
 - Contact JSON export: `GET /api/contacts/<id>/export`.
 - Contact deletion: `DELETE /api/contacts/<id>` removes messages, requests, proposals, appointments, and queued jobs, then retains a minimal deletion audit event.
 - Personal WhatsApp assisted mode analyzes operator-pasted text in-process and does not store it in the message table or transmit it to Meta/AI. The structured request and booking proposal are retained to provide the booking-link workflow; avoid pasting unrelated or sensitive chat content.
-- Scheduled retention purge removes expired message bodies and rate events.
+- Scheduled retention purges inbound message bodies, rate events, delivery receipts, aged cancelled/failed requests, and unattached expired proposals according to their separate retention settings; appointment records and general audit history are preserved.
 - Booking page requires explicit scheduling consent; contact consent can be revoked in the dashboard.
 
 ## Threat-model residual risks

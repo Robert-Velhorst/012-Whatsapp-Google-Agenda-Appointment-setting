@@ -21,7 +21,7 @@ Run the worker continuously or on a schedule. A queued reminder without `WHATSAP
 
 ## Emergency pause
 
-Choose **Pause automation** when credentials may be compromised, provider responses are inconsistent, the calendar is wrong, or duplicate-action risk exists. Pause stops proposal sends, event changes, and worker execution. Signed inbound messages remain stored. Investigate the audit trail, rotate credentials if necessary, run `doctor`, then resume.
+Choose **Pause automation** when credentials may be compromised, provider responses are inconsistent, the calendar is wrong, or duplicate-action risk exists. Pause stops new automatic scheduling/provider actions; signed inbound messages remain stored. The worker still performs stale-claim recovery, proposal expiry, and configured retention housekeeping (including the 90-day scheduling-record purge), but skips normal due-job execution. Appointment records, Calendar events, and general audit history are retained by that purge. Investigate the audit trail, rotate credentials if necessary, run `doctor`, then resume.
 
 ## Backup and restore
 

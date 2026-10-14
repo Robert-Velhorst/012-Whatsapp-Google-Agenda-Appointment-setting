@@ -196,13 +196,20 @@ Start from [.env.example](.env.example). Set values locally; do not commit `.env
 | `SLOT_INTERVAL_MINUTES` | Candidate spacing: 5, 10, 15, 20, 30 or 60; default 30 |
 | `DEFAULT_DURATION_MINUTES` | Fallback meeting duration; default 30 |
 | `REMINDER_MINUTES_BEFORE` | Reminder offset; default 1440 (one day) |
-| `DATA_RETENTION_DAYS` | Worker purge age for inbound messages and rate-event history; default 30 |
+| `DATA_RETENTION_DAYS` | Worker purge age for inbound messages, rate-event history, and delivery receipts; default 30 |
+| `SCHEDULING_RETENTION_DAYS` | Worker purge age for cancelled/failed requests and unattached expired proposals; default 90 days |
 | `BOOKING_LINK_TTL_HOURS` | Proposal lifetime after sending; default 168 (seven days) |
 | `MAX_OUTBOUND_PER_CONTACT_PER_HOUR` | Atomic per-contact send-attempt allowance; default 10 |
+| `MAX_INBOUND_PER_CONTACT_PER_HOUR` | Atomic inbound-message allowance per sender; default 10 |
+| `MAX_INBOUND_TOTAL_PER_HOUR` | Atomic inbound-message allowance across the workspace; default 60 |
+| `MAX_INBOUND_MESSAGES_PER_WEBHOOK` | Maximum text messages processed across one callback; 1–200, default 20 |
+| `MAX_INBOUND_MESSAGE_CHARS` | Maximum stored/analyzed text length; 1–20,000, default 5,000 |
 | `TRUSTED_PROXY_NETWORKS` | CIDRs allowed to supply `X-Forwarded-For` for login and contact-deletion rate limits; defaults to loopback for the local ngrok proxy. Set only addresses of proxies that cannot be bypassed; HAI access always uses the direct peer address. |
 | `HAI_CONNECTOR_ENABLED` | Enables the metadata feed; default false |
 | `HAI_ALLOWED_NETWORKS` | Allowed client CIDRs; defaults to IPv4/IPv6 loopback |
 | `HAI_FEED_PAGE_SIZE` | Recent HAI snapshot size, 1–500; default 100 |
+
+Inbound quotas apply only to the optional WhatsApp Business Cloud API webhook. Duplicate provider message IDs do not consume quota. Messages over the callback or text-size limits are acknowledged but ignored. `DATA_RETENTION_DAYS` controls inbound-message, rate-event, and provider-delivery receipt cleanup. Separately, `SCHEDULING_RETENTION_DAYS` defaults to 90 and removes only old cancelled/failed requests (and their proposals) and old expired proposals that have no appointment. Appointment records, Google Calendar events, and general audit history are never removed by this scheduled cleanup. Other unresolved requests and proposals remain available for operator review; export or delete contact data through the operator controls when appropriate.
 | `HAI_PROJECT_KEY` | HAI project mapping label |
 | `NGROK_DOMAIN` | Assigned hostname for the guarded public tunnel |
 | `NGROK_CONFIG_FILE` | Optional ngrok authentication-config path |

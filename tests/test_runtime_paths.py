@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -49,6 +50,23 @@ def test_absolute_provider_paths_remain_absolute(monkeypatch, tmp_path):
     assert settings.database_path == database
     assert settings.google_token_file == str(token)
     assert settings.google_client_secrets_file == str(client_secrets)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("max_inbound_per_contact_per_hour", 0, "MAX_INBOUND_PER_CONTACT_PER_HOUR"),
+        ("max_inbound_total_per_hour", 100_001, "MAX_INBOUND_TOTAL_PER_HOUR"),
+        ("max_inbound_messages_per_webhook", 201, "MAX_INBOUND_MESSAGES_PER_WEBHOOK"),
+        ("max_inbound_message_chars", 0, "MAX_INBOUND_MESSAGE_CHARS"),
+    ],
+)
+def test_inbound_limit_settings_are_validated(field, value, message):
+    settings = config.Settings.from_env()
+
+    errors, _ = replace(settings, **{field: value}).validation()
+
+    assert any(message in error for error in errors)
 
 
 def test_dotenv_loader_reads_explicit_application_root(monkeypatch, tmp_path):

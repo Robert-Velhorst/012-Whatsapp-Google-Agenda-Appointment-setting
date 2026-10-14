@@ -119,8 +119,13 @@ class Settings:
     default_duration_minutes: int
     reminder_minutes_before: int
     data_retention_days: int
+    scheduling_retention_days: int
     booking_link_ttl_hours: int
     max_outbound_per_contact_per_hour: int
+    max_inbound_per_contact_per_hour: int
+    max_inbound_total_per_hour: int
+    max_inbound_messages_per_webhook: int
+    max_inbound_message_chars: int
     hai_connector_enabled: bool
     hai_allowed_networks: str
     trusted_proxy_networks: str
@@ -168,8 +173,13 @@ class Settings:
             "default_duration_minutes": int(os.getenv("DEFAULT_DURATION_MINUTES", "30")),
             "reminder_minutes_before": int(os.getenv("REMINDER_MINUTES_BEFORE", "1440")),
             "data_retention_days": int(os.getenv("DATA_RETENTION_DAYS", "30")),
+            "scheduling_retention_days": int(os.getenv("SCHEDULING_RETENTION_DAYS", "90")),
             "booking_link_ttl_hours": int(os.getenv("BOOKING_LINK_TTL_HOURS", "168")),
             "max_outbound_per_contact_per_hour": int(os.getenv("MAX_OUTBOUND_PER_CONTACT_PER_HOUR", "10")),
+            "max_inbound_per_contact_per_hour": int(os.getenv("MAX_INBOUND_PER_CONTACT_PER_HOUR", "10")),
+            "max_inbound_total_per_hour": int(os.getenv("MAX_INBOUND_TOTAL_PER_HOUR", "60")),
+            "max_inbound_messages_per_webhook": int(os.getenv("MAX_INBOUND_MESSAGES_PER_WEBHOOK", "20")),
+            "max_inbound_message_chars": int(os.getenv("MAX_INBOUND_MESSAGE_CHARS", "5000")),
             "hai_connector_enabled": _bool("HAI_CONNECTOR_ENABLED"),
             "hai_allowed_networks": os.getenv("HAI_ALLOWED_NETWORKS", "127.0.0.1/32,::1/128"),
             "trusted_proxy_networks": os.getenv("TRUSTED_PROXY_NETWORKS", "127.0.0.1/32,::1/128"),
@@ -205,6 +215,16 @@ class Settings:
             errors.append("DEFAULT_DURATION_MINUTES must be between 15 and 480")
         if self.booking_link_ttl_hours < 1 or self.booking_link_ttl_hours > 720:
             errors.append("BOOKING_LINK_TTL_HOURS must be between 1 and 720")
+        if self.scheduling_retention_days < 1 or self.scheduling_retention_days > 3650:
+            errors.append("SCHEDULING_RETENTION_DAYS must be between 1 and 3650")
+        if self.max_inbound_per_contact_per_hour < 1 or self.max_inbound_per_contact_per_hour > 10_000:
+            errors.append("MAX_INBOUND_PER_CONTACT_PER_HOUR must be between 1 and 10000")
+        if self.max_inbound_total_per_hour < 1 or self.max_inbound_total_per_hour > 100_000:
+            errors.append("MAX_INBOUND_TOTAL_PER_HOUR must be between 1 and 100000")
+        if self.max_inbound_messages_per_webhook < 1 or self.max_inbound_messages_per_webhook > 200:
+            errors.append("MAX_INBOUND_MESSAGES_PER_WEBHOOK must be between 1 and 200")
+        if self.max_inbound_message_chars < 1 or self.max_inbound_message_chars > 20_000:
+            errors.append("MAX_INBOUND_MESSAGE_CHARS must be between 1 and 20000")
         if self.hai_feed_page_size < 1 or self.hai_feed_page_size > 500:
             errors.append("HAI_FEED_PAGE_SIZE must be between 1 and 500")
         try:

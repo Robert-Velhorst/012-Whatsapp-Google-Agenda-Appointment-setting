@@ -204,7 +204,8 @@ def test_expired_whatsapp_proposal_cannot_be_confirmed(app_bundle):
     proposal_id = store.dashboard("default")["items"][0]["proposal_id"]
     app.extensions["scheduling"].send_proposal(proposal_id)
     with store.connect() as db:
-        db.execute("UPDATE proposals SET sent_at='2020-01-01T00:00:00+00:00' WHERE id=?", (proposal_id,))
+        sent_at = (utc_now() - timedelta(days=8)).isoformat()
+        db.execute("UPDATE proposals SET sent_at=? WHERE id=?", (sent_at, proposal_id))
 
     result = post_webhook(client, webhook("wamid.expired", body="1")).get_json()
     assert result["confirmations"] == 0

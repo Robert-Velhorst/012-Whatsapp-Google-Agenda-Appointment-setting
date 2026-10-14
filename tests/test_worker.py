@@ -175,8 +175,14 @@ def test_retention_purge_runs_while_automation_is_paused(app_bundle):
     settings = app.extensions["settings"]
     sender = "31612345678"
     received_at = (utc_now() - timedelta(days=settings.data_retention_days + 1)).isoformat()
-    store.record_inbound("default", "wamid.expired", sender, "old scheduling message", received_at)
-    store.record_inbound("default", "wamid.current", sender, "current scheduling message", utc_now().isoformat())
+    assert store.accept_inbound_message(
+        "default", "wamid.expired", sender, "old scheduling message", received_at,
+        max_per_sender=10, max_total=10,
+    ) == "accepted"
+    assert store.accept_inbound_message(
+        "default", "wamid.current", sender, "current scheduling message", utc_now().isoformat(),
+        max_per_sender=10, max_total=10,
+    ) == "accepted"
     with store.connect() as db:
         db.execute(
             "INSERT INTO whatsapp_delivery_events(workspace_id,provider_message_id,status,provider_timestamp,error_code,received_at) "
@@ -221,6 +227,55 @@ def test_retention_purge_runs_while_automation_is_paused(app_bundle):
         ).fetchone()[0]
     assert first_purge_audits == 1
     assert second_purge_audits == first_purge_audits
+
+
+def test_scheduling_retention_removes_only_old_terminal_records_and_expired_proposals(app_bundle):
+    app, _, _ = app_bundle
+    store = app.extensions["store"]
+    client = app.test_client()
+    for index in range(3):
+        assert post_webhook(
+            client,
+            webhook(f"wamid.retention.{index}", body="Could we schedule a 30 minute call tomorrow?"),
+        ).status_code == 200
+    items = sorted(store.dashboard("default")["items"], key=lambda item: item["id"])
+    failed, expired_proposal, booked = items
+    old = (utc_now() - timedelta(days=100)).isoformat()
+    with store.connect() as db:
+        db.execute(
+            "UPDATE scheduling_requests SET status='failed',updated_at=? WHERE id=?",
+            (old, failed["id"]),
+        )
+        db.execute("UPDATE proposals SET created_at=? WHERE id=?", (old, failed["proposal_id"]))
+        db.execute(
+            "UPDATE proposals SET status='expired',created_at=? WHERE id=?",
+            (old, expired_proposal["proposal_id"]),
+        )
+        db.execute(
+            "INSERT INTO appointments(workspace_id,request_id,proposal_id,start_at,end_at,timezone,status,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,'booked',?,?)",
+            (
+                "default", booked["id"], booked["proposal_id"], "2030-01-01T10:00:00+00:00",
+                "2030-01-01T10:30:00+00:00", "Europe/Amsterdam", old, old,
+            ),
+        )
+
+    result = app.extensions["scheduling"].run_due_jobs()
+
+    assert result["scheduling_records_deleted"] == 3
+    with store.connect() as db:
+        assert db.execute("SELECT COUNT(*) FROM scheduling_requests WHERE id=?", (failed["id"],)).fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM proposals WHERE id=?", (failed["proposal_id"],)).fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM scheduling_requests WHERE id=?", (expired_proposal["id"],)).fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM proposals WHERE id=?", (expired_proposal["proposal_id"],)).fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM scheduling_requests WHERE id=?", (booked["id"],)).fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM proposals WHERE id=?", (booked["proposal_id"],)).fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM appointments WHERE request_id=?", (booked["id"],)).fetchone()[0] == 1
+        purge = db.execute(
+            "SELECT detail_json FROM audit_events WHERE action='privacy.scheduling_retention_purge'",
+        ).fetchone()
+    assert json.loads(purge[0])["appointments_deleted"] == 0
+    assert json.loads(purge[0])["audit_history_deleted"] == 0
 
 
 def test_v4_database_migration_adds_retention_indexes(tmp_path):

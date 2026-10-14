@@ -24,8 +24,10 @@ class SchedulingService:
     def process_payload(self, payload: Any) -> dict[str, int]:
         result = {
             "accepted": 0, "duplicates": 0, "proposals": 0, "confirmations": 0, "ignored": 0,
-            "delivery_statuses": 0, "duplicate_statuses": 0,
+            "delivery_statuses": 0, "duplicate_statuses": 0, "rate_limited": 0,
         }
+        remaining_message_budget = self.settings.max_inbound_messages_per_webhook
+        remaining_status_budget = 200
         if not isinstance(payload, dict):
             result["ignored"] += 1
             return result
@@ -68,9 +70,11 @@ class SchedulingService:
                 ):
                     result["ignored"] += len(messages) + len(statuses)
                     continue
-                # Bound database work per signed provider callback while allowing
-                # Meta to batch statuses and inbound messages in the same value.
-                for status_event in statuses[:200]:
+                # Bound database work across the entire signed provider callback,
+                # even when Meta batches multiple entries or changes together.
+                statuses_to_process = statuses[:remaining_status_budget]
+                remaining_status_budget -= len(statuses_to_process)
+                for status_event in statuses_to_process:
                     parsed = self._parse_delivery_status(status_event)
                     if parsed is None:
                         result["ignored"] += 1
@@ -80,19 +84,21 @@ class SchedulingService:
                         self.settings.workspace_id, message_id, status, provider_timestamp, error_code,
                     )
                     result["delivery_statuses" if inserted else "duplicate_statuses"] += 1
-                if len(statuses) > 200:
-                    result["ignored"] += len(statuses) - 200
+                result["ignored"] += len(statuses) - len(statuses_to_process)
                 contacts = value.get("contacts", [])
                 names = {}
                 if isinstance(contacts, list):
-                    for item in contacts:
+                    for item in contacts[:200]:
                         if not isinstance(item, dict):
                             continue
                         profile = item.get("profile", {})
                         if isinstance(profile, dict) and isinstance(item.get("wa_id"), str):
                             name = profile.get("name")
                             names[item["wa_id"]] = name if isinstance(name, str) else None
-                for message in messages:
+                messages_to_process = messages[:remaining_message_budget]
+                remaining_message_budget -= len(messages_to_process)
+                result["ignored"] += len(messages) - len(messages_to_process)
+                for message in messages_to_process:
                     if not isinstance(message, dict):
                         result["ignored"] += 1
                         continue
@@ -106,13 +112,30 @@ class SchedulingService:
                         not isinstance(external_id, str) or not external_id.strip()
                         or not isinstance(sender, str) or not sender.strip()
                         or not isinstance(body, str) or not body.strip()
+                        or len(external_id) > 256
+                        or len(sender) > 64
                     ):
                         result["ignored"] += 1
                         continue
                     body = body.strip()
+                    if len(body) > self.settings.max_inbound_message_chars:
+                        result["ignored"] += 1
+                        continue
                     received_at = self._message_time(message)
-                    if not self.store.record_inbound(self.settings.workspace_id, external_id, sender, body, received_at):
+                    ingest_status = self.store.accept_inbound_message(
+                        self.settings.workspace_id,
+                        external_id,
+                        sender,
+                        body,
+                        received_at,
+                        max_per_sender=self.settings.max_inbound_per_contact_per_hour,
+                        max_total=self.settings.max_inbound_total_per_hour,
+                    )
+                    if ingest_status == "duplicate":
                         result["duplicates"] += 1
+                        continue
+                    if ingest_status == "rate_limited":
+                        result["rate_limited"] += 1
                         continue
                     result["accepted"] += 1
                     if self.is_paused():
@@ -129,9 +152,8 @@ class SchedulingService:
                             if self.settings.auto_book_confirmed:
                                 self.book_appointment(appointment_id, actor="automation")
                             continue
-                    history = "\n".join(item["body"] for item in self.store.recent_messages(self.settings.workspace_id, sender))
                     local_today = datetime.now(ZoneInfo(self.settings.timezone)).date()
-                    intent = self.intent_provider.analyse(history, local_today, self.settings.default_duration_minutes)
+                    intent = self.intent_provider.analyse(body, local_today, self.settings.default_duration_minutes)
                     if not intent.is_scheduling:
                         result["ignored"] += 1
                         continue
@@ -381,6 +403,12 @@ class SchedulingService:
             self.settings.workspace_id, (utc_now() - timedelta(hours=self.settings.booking_link_ttl_hours)).isoformat()
         )
         self.store.purge_expired(self.settings.workspace_id, self.settings.data_retention_days)
+        totals["scheduling_records_deleted"] = sum(
+            self.store.purge_terminal_scheduling_records(
+                self.settings.workspace_id, self.settings.scheduling_retention_days,
+                self.settings.booking_link_ttl_hours,
+            ).values()
+        )
         if self.is_paused():
             return totals
         for job in self.store.claim_due_jobs(self.settings.workspace_id, utc_now().isoformat(), limit):

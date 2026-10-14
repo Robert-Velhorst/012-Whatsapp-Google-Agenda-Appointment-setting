@@ -1,4 +1,7 @@
 
+from dataclasses import replace
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 
 from .conftest import post_webhook, signed, webhook
@@ -93,6 +96,99 @@ def test_webhook_is_idempotent_and_creates_reviewable_proposal(app_bundle, auth_
     assert requests["items"][0]["status"] == "proposal_pending"
     assert requests["items"][0]["proposal_status"] == "pending_approval"
     assert whatsapp.sent == []
+
+
+def test_new_unrelated_message_does_not_reuse_old_scheduling_intent(app_bundle):
+    app, calendar, _ = app_bundle
+    client = app.test_client()
+
+    first = post_webhook(client, webhook(message_id="wamid.schedule"))
+    follow_up = post_webhook(client, webhook(message_id="wamid.thanks", body="Thanks, see you later!"))
+
+    assert first.get_json()["proposals"] == 1
+    assert follow_up.get_json()["ignored"] == 1
+    assert app.extensions["store"].dashboard("default")["total"] == 1
+    assert len(calendar.preferred_times) == 1
+
+
+def test_inbound_limits_deduplicate_before_reserving_contact_and_global_capacity(app_bundle):
+    app, calendar, _ = app_bundle
+    scheduling = app.extensions["scheduling"]
+    scheduling.settings = replace(
+        scheduling.settings,
+        max_inbound_per_contact_per_hour=1,
+        max_inbound_total_per_hour=1,
+    )
+    client = app.test_client()
+
+    first = post_webhook(client, webhook(message_id="wamid.first"))
+    duplicate = post_webhook(client, webhook(message_id="wamid.first"))
+    contact_limited = post_webhook(client, webhook(message_id="wamid.second"))
+    global_limited = post_webhook(
+        client,
+        webhook(message_id="wamid.third", sender="31698765432"),
+    )
+
+    assert first.get_json()["accepted"] == 1
+    assert duplicate.get_json()["duplicates"] == 1
+    assert contact_limited.get_json()["rate_limited"] == 1
+    assert global_limited.get_json()["rate_limited"] == 1
+    assert app.extensions["store"].dashboard("default")["total"] == 1
+    with app.extensions["store"].connect() as db:
+        assert db.execute("SELECT COUNT(*) FROM inbound_messages").fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM rate_events WHERE action='whatsapp.inbound'").fetchone()[0] == 2
+    assert len(calendar.preferred_times) == 1
+
+
+def test_concurrent_inbound_callbacks_cannot_oversubscribe_limits(app_bundle):
+    app, calendar, _ = app_bundle
+    scheduling = app.extensions["scheduling"]
+    scheduling.settings = replace(
+        scheduling.settings,
+        max_inbound_per_contact_per_hour=1,
+        max_inbound_total_per_hour=1,
+    )
+
+    def process(index):
+        try:
+            return scheduling.process_payload(webhook(message_id=f"wamid.concurrent-{index}"))
+        finally:
+            app.extensions["store"].close()
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(process, range(8)))
+
+    assert sum(result["accepted"] for result in results) == 1
+    assert sum(result["rate_limited"] for result in results) == 7
+    assert app.extensions["store"].dashboard("default")["total"] == 1
+    assert len(calendar.preferred_times) == 1
+
+
+def test_message_count_and_body_length_are_bounded(app_bundle):
+    app, calendar, _ = app_bundle
+    scheduling = app.extensions["scheduling"]
+    scheduling.settings = replace(
+        scheduling.settings,
+        max_inbound_messages_per_webhook=1,
+        max_inbound_message_chars=60,
+    )
+    payload = webhook(message_id="wamid.batch-one")
+    second = webhook(message_id="wamid.batch-two")["entry"][0]["changes"][0]["value"]["messages"][0]
+    payload["entry"][0]["changes"][0]["value"]["messages"].append(second)
+
+    batched = post_webhook(app.test_client(), payload)
+    oversized = post_webhook(
+        app.test_client(),
+        webhook(message_id="wamid.too-long", body="x" * 61),
+    )
+
+    assert batched.get_json()["accepted"] == 1
+    assert batched.get_json()["ignored"] == 1
+    assert oversized.get_json()["ignored"] == 1
+    assert app.extensions["store"].dashboard("default")["total"] == 1
+    with app.extensions["store"].connect() as db:
+        assert db.execute("SELECT COUNT(*) FROM inbound_messages").fetchone()[0] == 1
+    assert len(calendar.preferred_times) == 1
 
 
 def test_signed_status_webhooks_store_latest_provider_receipt_idempotently(app_bundle):

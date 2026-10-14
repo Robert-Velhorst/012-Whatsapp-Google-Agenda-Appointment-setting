@@ -137,17 +137,56 @@ class Store:
             row = db.execute("SELECT * FROM contacts WHERE workspace_id=? AND id=?", (workspace_id, contact_id)).fetchone()
         return dict(row) if row else None
 
-    def record_inbound(self, workspace_id: str, external_id: str, sender: str, body: str, received_at: str) -> bool:
+    def accept_inbound_message(
+        self,
+        workspace_id: str,
+        external_id: str,
+        sender: str,
+        body: str,
+        received_at: str,
+        *,
+        max_per_sender: int,
+        max_total: int,
+        window_minutes: int = 60,
+    ) -> str:
+        """Deduplicate, rate-limit, and persist an inbound message atomically."""
+        now = utc_now()
+        now_text = now.isoformat()
+        cutoff = (now - timedelta(minutes=window_minutes)).isoformat()
+        sender_bucket = "sender:" + hashlib.sha256(sender.encode("utf-8")).hexdigest()
         with self.connect() as db:
-            try:
-                db.execute(
-                    "INSERT INTO inbound_messages(workspace_id,external_id,sender,body_ciphertext,received_at) VALUES(?,?,?,?,?)",
-                    (workspace_id, external_id, sender, self.crypto.encrypt(body), received_at),
-                )
-            except sqlite3.IntegrityError:
-                return False
-        self.audit(workspace_id, "whatsapp", "message.received", "message", external_id, {"sender_suffix": sender[-4:]})
-        return True
+            # Serialize the duplicate check, both quota checks, and reservation
+            # so concurrent callbacks cannot oversubscribe either allowance.
+            db.execute("BEGIN IMMEDIATE")
+            duplicate = db.execute(
+                "SELECT 1 FROM inbound_messages WHERE workspace_id=? AND external_id=?",
+                (workspace_id, external_id),
+            ).fetchone()
+            if duplicate:
+                return "duplicate"
+            sender_count = int(db.execute(
+                "SELECT COUNT(*) FROM rate_events WHERE workspace_id=? AND subject=? AND action='whatsapp.inbound' AND created_at>=?",
+                (workspace_id, sender_bucket, cutoff),
+            ).fetchone()[0])
+            total_count = int(db.execute(
+                "SELECT COUNT(*) FROM rate_events WHERE workspace_id=? AND subject='__whatsapp_global__' AND action='whatsapp.inbound' AND created_at>=?",
+                (workspace_id, cutoff),
+            ).fetchone()[0])
+            if sender_count >= max_per_sender or total_count >= max_total:
+                return "rate_limited"
+            db.execute(
+                "INSERT INTO inbound_messages(workspace_id,external_id,sender,body_ciphertext,received_at) VALUES(?,?,?,?,?)",
+                (workspace_id, external_id, sender, self.crypto.encrypt(body), received_at),
+            )
+            db.executemany(
+                "INSERT INTO rate_events(workspace_id,subject,action,created_at) VALUES(?,?,'whatsapp.inbound',?)",
+                ((workspace_id, sender_bucket, now_text), (workspace_id, "__whatsapp_global__", now_text)),
+            )
+            self._audit_in_transaction(
+                db, workspace_id, "whatsapp", "message.received", "message", external_id,
+                {"sender_suffix": sender[-4:]},
+            )
+        return "accepted"
 
     def recent_messages(self, workspace_id: str, sender: str, limit: int = 12) -> list[dict[str, str]]:
         with self.connect() as db:
@@ -1011,6 +1050,53 @@ class Store:
                 },
             )
         return count
+
+    def purge_terminal_scheduling_records(
+        self, workspace_id: str, retention_days: int, proposal_ttl_hours: int,
+    ) -> dict[str, int]:
+        """Purge aged terminal request/proposal data without touching appointment records."""
+        now = utc_now()
+        cutoff = (now - timedelta(days=retention_days)).isoformat()
+        expired_proposal_cutoff = (
+            now - timedelta(days=retention_days, hours=proposal_ttl_hours)
+        ).isoformat()
+        with self.connect() as db:
+            terminal_predicate = (
+                "workspace_id=? AND status IN ('cancelled','failed') AND updated_at<? "
+                "AND NOT EXISTS (SELECT 1 FROM appointments a WHERE a.workspace_id=scheduling_requests.workspace_id "
+                "AND a.request_id=scheduling_requests.id)"
+            )
+            requests_deleted = int(db.execute(
+                f"SELECT COUNT(*) FROM scheduling_requests WHERE {terminal_predicate}", (workspace_id, cutoff),
+            ).fetchone()[0])
+            request_proposals_deleted = db.execute(
+                "DELETE FROM proposals WHERE workspace_id=? AND request_id IN ("
+                f"SELECT id FROM scheduling_requests WHERE {terminal_predicate})",
+                (workspace_id, workspace_id, cutoff),
+            ).rowcount
+            db.execute(
+                f"DELETE FROM scheduling_requests WHERE {terminal_predicate}", (workspace_id, cutoff),
+            )
+
+            expired_proposals_deleted = db.execute(
+                "DELETE FROM proposals WHERE workspace_id=? AND status='expired' "
+                "AND COALESCE(sent_at,created_at)<? "
+                "AND NOT EXISTS (SELECT 1 FROM appointments a WHERE a.workspace_id=proposals.workspace_id "
+                "AND a.proposal_id=proposals.id)",
+                (workspace_id, expired_proposal_cutoff),
+            ).rowcount
+
+        counts = {
+            "requests_deleted": requests_deleted,
+            "request_proposals_deleted": request_proposals_deleted,
+            "expired_proposals_deleted": expired_proposals_deleted,
+        }
+        if any(counts.values()):
+            self.audit(
+                workspace_id, "worker", "privacy.scheduling_retention_purge", "workspace", workspace_id,
+                {**counts, "cutoff": cutoff, "appointments_deleted": 0, "audit_history_deleted": 0},
+            )
+        return counts
 
     @staticmethod
     def _request_row(row: sqlite3.Row) -> dict[str, Any]:

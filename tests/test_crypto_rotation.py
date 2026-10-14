@@ -20,7 +20,10 @@ def _seed_sensitive_rows(app):
     store = app.extensions["store"]
     store.ensure_workspace("default", "Test", "Europe/Amsterdam")
     contact_id = store.upsert_contact("default", "31612345678", "Europe/Amsterdam", display_name="Test")
-    store.record_inbound("default", "wamid.rotate", "31612345678", "private message", "2026-10-14T10:00:00+00:00")
+    assert store.accept_inbound_message(
+        "default", "wamid.rotate", "31612345678", "private message", "2026-10-14T10:00:00+00:00",
+        max_per_sender=10, max_total=10,
+    ) == "accepted"
     request_id = store.create_request(
         "default", contact_id, "wamid.rotate", "Appointment", 30,
         "Europe/Amsterdam", "2026-10-20T10:00:00+02:00", 0.95,
