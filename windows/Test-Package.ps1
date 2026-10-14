@@ -72,6 +72,7 @@ try {
     }
 }
 try {
+    $succeeded = $false
     $health = $null
     for ($attempt = 1; $attempt -le 60; $attempt++) {
         try {
@@ -91,11 +92,31 @@ try {
         loginContainsBrand = $login.Content.Contains("Agenda Relay")
         encryptionRotation = $rotation.encrypted_database_values_rotated
         workingSetMiB = [Math]::Round($running.WorkingSet64 / 1MB, 1)
-        logs = $LogDirectory
+        logs = $null
     } | ConvertTo-Json
+    $succeeded = $true
 } finally {
     if ($process -and -not $process.HasExited) {
         Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-        $process.WaitForExit()
+        [void]$process.WaitForExit(10000)
+    }
+
+    $processStopped = $true
+    if ($process) {
+        $processStopped = $process.HasExited -or -not (Get-Process -Id $process.Id -ErrorAction SilentlyContinue)
+    }
+    if ($succeeded -and $processStopped) {
+        $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+        $testRootPath = [IO.Path]::GetFullPath($TestRoot)
+        $testRootParent = Split-Path -Parent $testRootPath
+        $testRootName = Split-Path -Leaf $testRootPath
+        $ownsTestRoot = [string]::Equals($testRootParent, $temporaryRoot, [StringComparison]::OrdinalIgnoreCase) -and $testRootName -match '^AgendaRelay-package-test-[0-9a-f]{32}$'
+        if ($ownsTestRoot -and (Test-Path -LiteralPath $testRootPath)) {
+            Remove-Item -LiteralPath $testRootPath -Recurse -Force
+        } elseif (-not $ownsTestRoot) {
+            Write-Warning "Smoke-test artifacts were not removed because the temporary directory could not be verified: $testRootPath"
+        }
+    } elseif ($succeeded) {
+        Write-Warning "The package smoke test passed, but its process exit was not confirmed. Diagnostic artifacts were retained at $TestRoot."
     }
 }
