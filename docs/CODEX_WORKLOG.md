@@ -1,5 +1,10 @@
 # Codex worklog
 
+## 2026-10-14 - Sanitize assisted Calendar failure details
+
+- A red-capable assisted-flow route test reproduced that an unexpected Google Calendar exception string appeared in the operator page and was persisted verbatim in the request audit. The flow now records only the provider and exception class, returns a sanitized `CalendarUnavailable` message for failed availability checks, and uses a generic page message for unexpected analysis failures. Known user-correctable validation errors remain actionable through a dedicated `AssistedRequestError` type.
+- The reproduction now passes, along with all 9 assisted-flow tests and the full suite (278 passed in 30.77 seconds); `compileall`, `pip check`, and `git diff --check` passed. These are local test-fake checks. The prior commit `61cedf3` Windows package workflow passed; these new unpushed changes require fresh exact-head CI. No Google account, WhatsApp, or Hetzner environment was accessed.
+
 ## 2026-10-14 - Handle Google Calendar token refresh failures safely
 
 - Normalized Google OAuth refresh failures into non-sensitive operator-facing errors: revoked/invalid refresh credentials direct the operator to reconnect, while transport failures direct them to retry. Failed refreshes do not replace the encrypted token file.

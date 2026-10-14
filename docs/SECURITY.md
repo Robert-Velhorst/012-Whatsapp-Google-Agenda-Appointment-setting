@@ -32,6 +32,7 @@ Provider-token rotation and recovery:
 Responses include CSP, frame denial, MIME sniff prevention, no-referrer, restricted browser permissions, no-store, and production HSTS. Production requires HTTPS and strong non-default secrets. OAuth uses a session-bound random state.
 - Login return URLs and post-action referrers are restricted to local paths or validated same-host URLs whose paths cannot be interpreted as protocol-relative redirects. External, backslash, and control-character redirect candidates fall back to the dashboard.
 - Public booking responses map expected validation errors to fixed text and never reflect raw calendar/provider exceptions to bearer-link holders; provider exception details remain restricted to operator-side recovery records.
+- Personal assisted-time analysis does not display raw unexpected exception messages or persist them in audit details; failed Calendar checks retain only the provider name and exception class.
 
 ## Authorization and ownership
 

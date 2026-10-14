@@ -28,7 +28,7 @@ from werkzeug.security import check_password_hash
 from .calendar import CalendarUnavailable, GoogleCalendar
 from .config import Settings, rate_limit_client_ip
 from .crypto import CryptoBox
-from .service import SchedulingService
+from .service import AssistedRequestError, SchedulingService
 from .store import Store
 from .whatsapp import WhatsAppClient, signature_is_valid
 
@@ -246,9 +246,12 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             proposal_id = scheduling.create_assisted_proposal(request.form.get("message", ""))
             flash("Times checked. The pasted message was not retained; review the draft before sharing it.", "success")
             return redirect(url_for("dashboard", view="assisted", proposal=proposal_id))
-        except Exception as exc:  # noqa: BLE001 - convert provider/config failures into an operator-visible safe error.
+        except (AssistedRequestError, CalendarUnavailable) as exc:
             flash(f"No proposal was prepared: {exc}", "error")
-            return redirect(url_for("dashboard", view="assisted"))
+        except Exception as exc:  # noqa: BLE001 - convert provider/config failures into an operator-visible safe error.
+            app.logger.warning("Assisted request analysis failed (%s)", type(exc).__name__)
+            flash("No proposal was prepared because the message could not be analyzed. Review it and retry.", "error")
+        return redirect(url_for("dashboard", view="assisted"))
 
     @app.post("/actions/assisted/<int:proposal_id>/shared")
     @operator_required

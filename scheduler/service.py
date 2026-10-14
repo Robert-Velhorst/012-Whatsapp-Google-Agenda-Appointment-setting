@@ -13,6 +13,10 @@ from .store import Store, utc_now
 from .whatsapp import WhatsAppUnavailable
 
 
+class AssistedRequestError(ValueError):
+    """A safe, operator-correctable error while preparing personal-mode times."""
+
+
 class SchedulingService:
     def __init__(self, settings: Settings, store: Store, calendar, whatsapp, intent_provider: IntentProvider | None = None):
         self.settings = settings
@@ -219,13 +223,13 @@ class SchedulingService:
         """Create a manual-only personal WhatsApp proposal without retaining pasted text."""
         text = message_text.strip()
         if not text or len(text) > 5000:
-            raise ValueError("Paste a message between 1 and 5,000 characters.")
+            raise AssistedRequestError("Paste a message between 1 and 5,000 characters.")
         local_today = datetime.now(ZoneInfo(self.settings.timezone)).date()
         intent = self.intent_provider.analyse(text, local_today, self.settings.default_duration_minutes)
         if not intent.is_scheduling:
-            raise ValueError("I could not identify a scheduling request. Review the message and try again.")
+            raise AssistedRequestError("I could not identify a scheduling request. Review the message and try again.")
         if not self.calendar.connected():
-            raise RuntimeError("Google Calendar is not connected. Connect it before checking availability.")
+            raise CalendarUnavailable("Google Calendar is not connected. Connect it before checking availability.")
         # The identifier is deliberately synthetic: there is no personal WhatsApp API
         # identity or phone number available, and neither is needed for the booking link.
         sender = f"assisted:{secrets.token_urlsafe(18)}"
@@ -242,15 +246,17 @@ class SchedulingService:
         except Exception as exc:  # Calendar transport/auth failures vary by provider library; persist the request failure.
             self.store.transition_request(
                 self.settings.workspace_id, request_id, "failed", "assisted_personal",
-                {"provider": "google_calendar", "error": str(exc)[:200]},
+                {"provider": "google_calendar", "error_class": type(exc).__name__},
             )
-            raise
+            raise CalendarUnavailable(
+                "Google Calendar availability could not be checked; no proposal was prepared. Reconnect it if needed, then retry."
+            ) from exc
         if not slots:
             self.store.transition_request(
                 self.settings.workspace_id, request_id, "needs_clarification", "assisted_personal",
                 {"reason": "no_slots_in_search_window"},
             )
-            raise ValueError("No suitable times were found in the next three weeks. Try a broader date or check your calendar settings.")
+            raise AssistedRequestError("No suitable times were found in the next three weeks. Try a broader date or check your calendar settings.")
         token = secrets.token_urlsafe(32)
         reply = self._assisted_proposal_reply(intent.language, slots, token, self.settings.timezone)
         proposal_id, _ = self.store.create_proposal(

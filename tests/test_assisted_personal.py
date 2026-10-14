@@ -163,6 +163,38 @@ def test_assisted_path_rejects_non_scheduling_and_missing_calendar_without_creat
     assert app.extensions["store"].dashboard("default")["total"] == 0
 
 
+def test_assisted_calendar_failure_is_recorded_without_leaking_provider_details(app_bundle, monkeypatch):
+    app, calendar, _ = app_bundle
+    client = signed_in_client(app)
+    secret_provider_detail = "PRIVATE_CALENDAR_PROVIDER_SECRET"
+
+    def fail_free_slots(*args, **kwargs):
+        raise RuntimeError(secret_provider_detail)
+
+    monkeypatch.setattr(calendar, "free_slots", fail_free_slots)
+    response = client.post(
+        "/actions/assisted/analyze",
+        data={
+            "csrf_token": "assisted-test-csrf",
+            "message": "Schedule a 30 minute meeting next week",
+        },
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert secret_provider_detail.encode() not in response.data
+    store = app.extensions["store"]
+    with store.connect() as db:
+        request_row = db.execute("SELECT id,status FROM scheduling_requests").fetchone()
+    assert request_row["status"] == "failed"
+    failed_transition = next(
+        event for event in store.recent_audit("default")
+        if event["action"] == "request.transition" and event["detail"].get("to") == "failed"
+    )
+    assert failed_transition["detail"]["error_class"] == "RuntimeError"
+    assert "error" not in failed_transition["detail"]
+
+
 def test_assisted_posts_require_operator_session_and_csrf(app_bundle):
     app, _, _ = app_bundle
     client = app.test_client()
