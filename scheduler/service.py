@@ -425,10 +425,57 @@ class SchedulingService:
         appointment = self.store.get_appointment(self.settings.workspace_id, appointment_id)
         if not appointment:
             raise KeyError("Appointment not found")
-        if appointment.get("google_event_id"):
-            self.calendar.cancel_event(appointment["google_event_id"])
-        changed = self.store.cancel_appointment(self.settings.workspace_id, appointment_id, actor)
-        return {"status": "cancelled", "changed": changed}
+        if appointment["status"] == "cancelled":
+            return {"status": "cancelled", "changed": False}
+        if appointment["status"] in {"pending_approval", "failed"} and not appointment.get("google_event_id"):
+            changed = self.store.cancel_appointment(self.settings.workspace_id, appointment_id, actor)
+            return {"status": "cancelled", "changed": changed}
+        if appointment["status"] != "booked" or not appointment.get("google_event_id"):
+            raise ValueError("Appointment is not safely cancellable; reconcile its current provider state first")
+
+        claimed = self.store.claim_cancellation(self.settings.workspace_id, appointment_id, actor)
+        if not claimed:
+            current = self.store.get_appointment(self.settings.workspace_id, appointment_id)
+            if current and current["status"] == "cancelled":
+                return {"status": "cancelled", "changed": False}
+            raise ValueError("Appointment changed or is already being cancelled; refresh its state before retrying")
+        try:
+            self.calendar.cancel_event(claimed["google_event_id"])
+        except Exception as exc:  # Provider timeouts can occur after the event was deleted.
+            self.store.mark_cancellation_manual_required(self.settings.workspace_id, appointment_id, actor)
+            raise CalendarUnavailable(
+                "Google Calendar may have cancelled this event. Verify its state before retrying cancellation."
+            ) from exc
+
+        try:
+            self.store.finish_cancellation(self.settings.workspace_id, appointment_id, actor)
+        except Exception as exc:
+            # Leave the durable claim for stale-operation recovery. Never repeat a provider delete blindly.
+            raise CalendarUnavailable(
+                "Google Calendar accepted the cancellation, but local state needs reconciliation before retrying."
+            ) from exc
+        return {"status": "cancelled", "changed": True}
+
+    def reconcile_cancellation(self, appointment_id: int, actor: str = "operator") -> dict[str, Any]:
+        appointment = self.store.get_appointment(self.settings.workspace_id, appointment_id)
+        if not appointment:
+            raise KeyError("Appointment not found")
+        if appointment["status"] != "cancel_manual_required":
+            raise ValueError("Appointment is not awaiting cancellation reconciliation")
+
+        event = self.calendar.find_appointment_event(appointment)
+        if event is None:
+            self.store.finish_cancellation(self.settings.workspace_id, appointment_id, actor)
+            return {
+                "status": "cancelled",
+                "warning": "Google Calendar confirms the event is absent; the appointment and reminders are cancelled.",
+            }
+
+        self.store.restore_booked_after_cancellation_check(self.settings.workspace_id, appointment_id, actor)
+        return {
+            "status": "retryable",
+            "warning": "Google Calendar still has the appointment. It remains booked; choose Cancel appointment to explicitly retry.",
+        }
 
     def reconcile_stale_booking(self, appointment_id: int, actor: str = "operator") -> dict[str, Any]:
         appointment = self.store.get_appointment(self.settings.workspace_id, appointment_id)
@@ -459,7 +506,7 @@ class SchedulingService:
         }
 
     def run_due_jobs(self, limit: int = 20) -> dict[str, int]:
-        totals = {"claimed": 0, "sent": 0, "manual_required": 0, "failed": 0, "recovered": 0, "recovered_sends": 0, "recovered_bookings": 0, "expired": 0}
+        totals = {"claimed": 0, "sent": 0, "manual_required": 0, "failed": 0, "recovered": 0, "recovered_sends": 0, "recovered_bookings": 0, "recovered_cancellations": 0, "expired": 0}
         totals["recovered"] = self.store.recover_stale_jobs(
             self.settings.workspace_id, (utc_now() - timedelta(minutes=15)).isoformat()
         )
@@ -467,6 +514,9 @@ class SchedulingService:
             self.settings.workspace_id, (utc_now() - timedelta(minutes=15)).isoformat()
         )
         totals["recovered_bookings"] = self.store.recover_stale_bookings(
+            self.settings.workspace_id, (utc_now() - timedelta(minutes=15)).isoformat()
+        )
+        totals["recovered_cancellations"] = self.store.recover_stale_cancellations(
             self.settings.workspace_id, (utc_now() - timedelta(minutes=15)).isoformat()
         )
         totals["expired"] = self.store.expire_stale_proposals(

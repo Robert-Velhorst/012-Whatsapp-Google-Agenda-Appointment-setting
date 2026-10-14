@@ -779,13 +779,18 @@ class Store:
     def cancel_appointment(self, workspace_id: str, appointment_id: int, actor: str) -> bool:
         now = utc_now().isoformat()
         with self.connect() as db:
-            row = db.execute("SELECT request_id,status FROM appointments WHERE workspace_id=? AND id=?", (workspace_id, appointment_id)).fetchone()
+            row = db.execute(
+                "SELECT request_id,status,google_event_id FROM appointments WHERE workspace_id=? AND id=?",
+                (workspace_id, appointment_id),
+            ).fetchone()
             if not row or row["status"] == "cancelled":
                 return False
             if row["status"] == "booking":
                 raise ValueError("Appointment booking is in progress; wait for it to finish before cancelling")
+            if row["status"] not in {"pending_approval", "failed"} or row["google_event_id"]:
+                raise ValueError("Calendar-backed or ambiguous appointments require provider reconciliation before cancellation")
             cursor = db.execute(
-                "UPDATE appointments SET status='cancelled',updated_at=? WHERE workspace_id=? AND id=? AND status!='booking' AND status!='cancelled'",
+                "UPDATE appointments SET status='cancelled',updated_at=? WHERE workspace_id=? AND id=? AND status IN ('pending_approval','failed') AND google_event_id IS NULL",
                 (now, workspace_id, appointment_id),
             )
             if cursor.rowcount != 1:
@@ -799,6 +804,107 @@ class Store:
             )
             self._transition_request_in_transaction(db, workspace_id, int(row["request_id"]), "cancelled", actor, {"appointment_id": appointment_id})
         return True
+
+    def claim_cancellation(self, workspace_id: str, appointment_id: int, actor: str) -> dict[str, Any] | None:
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            cursor = db.execute(
+                "UPDATE appointments SET status='cancelling',error_text=NULL,updated_at=? "
+                "WHERE workspace_id=? AND id=? AND status='booked' AND google_event_id IS NOT NULL",
+                (now, workspace_id, appointment_id),
+            )
+            if cursor.rowcount != 1:
+                return None
+            self._audit_in_transaction(
+                db, workspace_id, actor, "appointment.cancellation_started", "appointment", appointment_id,
+                {"provider": "google_calendar"},
+            )
+        return self.get_appointment(workspace_id, appointment_id)
+
+    def mark_cancellation_manual_required(self, workspace_id: str, appointment_id: int, actor: str) -> None:
+        now = utc_now().isoformat()
+        message = "Google Calendar cancellation outcome is unknown; verify the event before retrying"
+        with self.connect() as db:
+            cursor = db.execute(
+                "UPDATE appointments SET status='cancel_manual_required',error_text=?,updated_at=? "
+                "WHERE workspace_id=? AND id=? AND status='cancelling'",
+                (message, now, workspace_id, appointment_id),
+            )
+            if cursor.rowcount:
+                self._audit_in_transaction(
+                    db, workspace_id, actor, "appointment.cancellation_manual_required", "appointment", appointment_id,
+                    {"provider": "google_calendar"},
+                )
+
+    def finish_cancellation(self, workspace_id: str, appointment_id: int, actor: str) -> bool:
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT request_id,status FROM appointments WHERE workspace_id=? AND id=?",
+                (workspace_id, appointment_id),
+            ).fetchone()
+            if not row:
+                raise KeyError("Appointment not found")
+            if row["status"] == "cancelled":
+                return False
+            if row["status"] not in {"cancelling", "cancel_manual_required"}:
+                raise ValueError("Appointment is not awaiting cancellation completion")
+            cursor = db.execute(
+                "UPDATE appointments SET status='cancelled',error_text=NULL,updated_at=? "
+                "WHERE workspace_id=? AND id=? AND status IN ('cancelling','cancel_manual_required')",
+                (now, workspace_id, appointment_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Appointment changed during cancellation reconciliation")
+            reminder_job_ids = self._background_job_ids_for_appointment(
+                db, workspace_id, appointment_id, job_type="appointment_reminder", active_only=True
+            )
+            db.executemany(
+                "UPDATE background_jobs SET status='cancelled',updated_at=? "
+                "WHERE workspace_id=? AND id=? AND status IN ('queued','manual_required','failed')",
+                [(now, workspace_id, job_id) for job_id in reminder_job_ids],
+            )
+            self._transition_request_in_transaction(
+                db, workspace_id, int(row["request_id"]), "cancelled", actor,
+                {"appointment_id": appointment_id, "provider_event_absent": True},
+            )
+            self._audit_in_transaction(
+                db, workspace_id, actor, "appointment.cancelled", "appointment", appointment_id,
+                {"provider": "google_calendar"},
+            )
+        return True
+
+    def restore_booked_after_cancellation_check(self, workspace_id: str, appointment_id: int, actor: str) -> None:
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            cursor = db.execute(
+                "UPDATE appointments SET status='booked',error_text=NULL,updated_at=? "
+                "WHERE workspace_id=? AND id=? AND status='cancel_manual_required'",
+                (now, workspace_id, appointment_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Appointment changed during cancellation reconciliation")
+            self._audit_in_transaction(
+                db, workspace_id, actor, "appointment.cancellation_reconciled", "appointment", appointment_id,
+                {"outcome": "event_still_active", "retry_requires_explicit_action": True},
+            )
+
+    def recover_stale_cancellations(self, workspace_id: str, cutoff_iso: str) -> int:
+        now = utc_now().isoformat()
+        message = "The process stopped during Calendar cancellation; verify the event before retrying"
+        with self.connect() as db:
+            cursor = db.execute(
+                "UPDATE appointments SET status='cancel_manual_required',error_text=?,updated_at=? "
+                "WHERE workspace_id=? AND status='cancelling' AND updated_at<?",
+                (message, now, workspace_id, cutoff_iso),
+            )
+            count = cursor.rowcount
+            if count:
+                self._audit_in_transaction(
+                    db, workspace_id, "worker", "appointments.stale_cancellations_recovered", "workspace", workspace_id,
+                    {"count": count, "cutoff": cutoff_iso},
+                )
+        return count
 
     def schedule_job(self, workspace_id: str, job_type: str, dedupe_key: str, run_at: str, payload: dict) -> int | None:
         now = utc_now().isoformat()

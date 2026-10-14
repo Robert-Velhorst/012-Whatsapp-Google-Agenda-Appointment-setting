@@ -419,6 +419,125 @@ def test_cancelling_appointment_does_not_cancel_prefix_matching_reminder(app_bun
     assert statuses == {"cancel-target": "cancelled", "cancel-other": "queued", "cancel-unrelated-type": "queued"}
 
 
+def _book_calendar_appointment(app):
+    client = app.test_client()
+    post_webhook(client, webhook())
+    store = app.extensions["store"]
+    item = store.dashboard("default")["items"][0]
+    service = app.extensions["scheduling"]
+    service.send_proposal(item["proposal_id"])
+    post_webhook(client, webhook("wamid.2", body="The second one works for me"))
+    appointment_id = store.dashboard("default")["items"][0]["appointment_id"]
+    service.book_appointment(appointment_id)
+    return appointment_id
+
+
+def test_calendar_cancellation_timeout_is_reconciled_without_losing_state(app_bundle, auth_headers):
+    app, calendar, _ = app_bundle
+    appointment_id = _book_calendar_appointment(app)
+    store = app.extensions["store"]
+    assert not app.extensions["scheduling"].is_paused()
+
+    def delete_then_timeout(event_id):
+        calendar.cancelled.append(event_id)
+        calendar.events.pop(appointment_id, None)
+        raise TimeoutError("synthetic response lost after provider deletion")
+
+    calendar.cancel_event = delete_then_timeout
+    client = app.test_client()
+    cancelled = client.post(f"/api/appointments/{appointment_id}/cancel", headers=auth_headers)
+
+    assert cancelled.status_code == 502, cancelled.get_json()
+    assert cancelled.get_json()["error"]["code"] == "calendar_cancellation_unverified"
+    assert "synthetic response lost" not in cancelled.get_data(as_text=True)
+    assert store.get_appointment("default", appointment_id)["status"] == "cancel_manual_required"
+    assert store.request_detail("default", 1)["status"] == "booked"
+
+    browser = app.test_client()
+    with browser.session_transaction() as session:
+        session["operator_authenticated"] = True
+        session["csrf_token"] = "cancel-reconcile-csrf"
+    dashboard = browser.get("/?request=1")
+    assert dashboard.status_code == 200
+    assert b"Calendar cancellation needs verification" in dashboard.data
+    assert b"Check cancellation in Google Calendar" in dashboard.data
+    assert b"/reconcile-cancel" in dashboard.data
+
+    reconciled = browser.post(
+        f"/actions/appointments/{appointment_id}/reconcile-cancel",
+        data={"csrf_token": "cancel-reconcile-csrf"},
+    )
+
+    assert reconciled.status_code == 302
+    assert store.get_appointment("default", appointment_id)["status"] == "cancelled"
+    assert store.request_detail("default", 1)["status"] == "cancelled"
+
+
+def test_calendar_cancellation_timeout_keeps_live_event_booked_for_explicit_retry(app_bundle, auth_headers):
+    app, calendar, _ = app_bundle
+    appointment_id = _book_calendar_appointment(app)
+    store = app.extensions["store"]
+    original_cancel_event = calendar.cancel_event
+    calendar.cancel_event = lambda _event_id: (_ for _ in ()).throw(TimeoutError("synthetic timeout before delete"))
+    client = app.test_client()
+
+    cancelled = client.post(f"/api/appointments/{appointment_id}/cancel", headers=auth_headers)
+    assert cancelled.status_code == 502, cancelled.get_json()
+    assert store.get_appointment("default", appointment_id)["status"] == "cancel_manual_required"
+
+    reconciled = client.post(f"/api/appointments/{appointment_id}/reconcile-cancel", headers=auth_headers)
+
+    assert reconciled.status_code == 200
+    assert reconciled.get_json()["status"] == "retryable"
+    assert store.get_appointment("default", appointment_id)["status"] == "booked"
+    assert store.request_detail("default", 1)["status"] == "booked"
+
+    calendar.cancel_event = original_cancel_event
+    cancelled = client.post(f"/api/appointments/{appointment_id}/cancel", headers=auth_headers)
+    assert cancelled.status_code == 200
+    assert store.get_appointment("default", appointment_id)["status"] == "cancelled"
+
+
+def test_worker_recovers_stale_calendar_cancellation_for_manual_check(app_bundle):
+    app, calendar, _ = app_bundle
+    appointment_id = _book_calendar_appointment(app)
+    store = app.extensions["store"]
+    assert store.claim_cancellation("default", appointment_id, "operator") is not None
+    with store.connect() as db:
+        db.execute(
+            "UPDATE appointments SET updated_at='2000-01-01T00:00:00+00:00' WHERE id=?",
+            (appointment_id,),
+        )
+
+    result = app.extensions["scheduling"].run_due_jobs()
+
+    assert result["recovered_cancellations"] == 1
+    assert store.get_appointment("default", appointment_id)["status"] == "cancel_manual_required"
+    assert store.request_detail("default", 1)["status"] == "booked"
+    assert calendar.cancelled == []
+
+
+def test_ambiguous_booking_cannot_be_cancelled_without_reconciliation(app_bundle, auth_headers):
+    app, calendar, _ = app_bundle
+    appointment_id = _book_calendar_appointment(app)
+    store = app.extensions["store"]
+    with store.connect() as db:
+        db.execute(
+            "UPDATE appointments SET status='manual_required' WHERE id=?",
+            (appointment_id,),
+        )
+
+    response = app.test_client().post(
+        f"/api/appointments/{appointment_id}/cancel",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 409
+    assert response.get_json()["error"]["code"] == "appointment_not_cancellable"
+    assert store.get_appointment("default", appointment_id)["status"] == "manual_required"
+    assert calendar.cancelled == []
+
+
 def test_booking_cannot_be_cancelled_midflight_and_completion_is_atomic(app_bundle, auth_headers):
     app, _, _ = app_bundle
     client = app.test_client()

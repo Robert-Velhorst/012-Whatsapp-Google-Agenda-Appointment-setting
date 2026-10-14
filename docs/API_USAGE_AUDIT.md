@@ -23,7 +23,8 @@ All operator endpoints require bearer token or authenticated session. Session st
 | `POST /api/proposals/<id>/send` | Dashboard/API users | Rate-limited official WhatsApp send |
 | `POST /api/appointments/<id>/book` | Dashboard/API users | Idempotent Google event creation |
 | `POST /api/appointments/<id>/reconcile` | Dashboard/API users | Read-only verification of the current booking-attempt Calendar event; restores booked state only for a verified matching event, or enables an explicit retry when absent; never sends WhatsApp |
-| `POST /api/appointments/<id>/cancel` | Dashboard/API users | Calendar cancellation and job stop |
+| `POST /api/appointments/<id>/cancel` | Dashboard/API users | Claims a booked appointment, cancels the Google event, then atomically stops reminders and marks local state cancelled; ambiguous provider outcomes return `502 calendar_cancellation_unverified` |
+| `POST /api/appointments/<id>/reconcile-cancel` | Dashboard/API users | Read-only event verification after an ambiguous cancellation; absent event completes cancellation, present event restores booked state for a separate explicit retry |
 | `GET /api/audit` | Audit view/API users | Workspace-scoped event history, clamped to 1–500 rows |
 | `GET /api/contacts/<id>/export` | Privacy workflow | Downloadable contact JSON export containing contact, decrypted messages, scheduling requests, proposal drafts/slots, linked provider delivery receipts, and appointments; excludes recipient IDs and booking tokens and records successful exports in the audit trail |
 | `DELETE /api/contacts/<id>` | Privacy workflow | Deletes contact/domain data only after related appointments are cancelled; returns `409 contact_has_unresolved_appointments` otherwise |
@@ -34,6 +35,8 @@ The personal WhatsApp screen is session-only (not bearer API): `POST /actions/as
 Browser contact deletion is handled by `POST /actions/contacts/<id>/delete`, not the bearer API: it requires the authenticated operator session, CSRF, a fresh current-password check, and an IP-scoped attempt limit. It refuses contacts with unresolved appointments; the operator must cancel or resolve those appointments separately first.
 
 Stale booking reconciliation is available through the session-protected, CSRF-checked `POST /actions/appointments/<id>/reconcile` route or the bearer-authenticated API route above. Provider lookup errors are sanitized and leave the `manual_required` state unchanged. A verified event restores the appointment and request to `booked` atomically. If no event exists, the appointment becomes `failed` and the operator may separately choose **Retry booking**. First attempts preserve the original deterministic event ID; an explicit retry advances a persisted attempt counter and uses a distinct deterministic ID, so a cancelled/tombstoned ID cannot make the retry fail forever. Recovery does not send WhatsApp confirmation; follow-up remains manual.
+
+Calendar cancellation uses the same fail-closed principle. The app first claims the local appointment as `cancelling`, then deletes the Calendar event, and only after success atomically cancels the appointment, request, and reminder jobs. A provider timeout or process interruption can leave the provider outcome unknown; the worker moves stale `cancelling` records to `cancel_manual_required` without making another provider call. Use `POST /actions/appointments/<id>/reconcile-cancel` (session + CSRF) or the API route above to perform a read-only event lookup. An absent event completes local cancellation; a still-active event restores `booked`, after which a separate explicit cancellation may be attempted. Do not repeat cancellation while its state is unresolved.
 
 ## External provider calls
 

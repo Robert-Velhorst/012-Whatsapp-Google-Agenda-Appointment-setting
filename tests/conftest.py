@@ -49,6 +49,11 @@ class FakeCalendar:
 
     def cancel_event(self, event_id):
         self.cancelled.append(event_id)
+        try:
+            appointment_id = int(event_id.rsplit("-", 1)[1])
+        except (AttributeError, IndexError, ValueError):
+            return
+        self.events.pop(appointment_id, None)
 
 
 class FakeWhatsApp:

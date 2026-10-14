@@ -15,6 +15,10 @@ Read the conversation excerpt, requested date, duration, timezone, confidence, a
 
 Confirm the selected time and consent state. Add a verified email under Contacts only when the contact supplied it. Choose **Book confirmed slot** once. A successful result includes a Google Calendar link. If the UI says the event was booked but confirmation failed, do not book again; send/resolve the confirmation manually.
 
+## Cancel or reconcile an appointment
+
+Choose **Cancel appointment** only for a confirmed booking that should be removed from Google Calendar. The application marks the operation in progress before contacting Calendar and cancels local reminders only after the provider delete succeeds. If the UI reports an unverified cancellation, do not press Cancel again: the provider may already have deleted the event. Choose **Verify Calendar cancellation** to perform a read-only lookup. If the event is absent, local cancellation is completed. If it is still present, the appointment is restored to booked and a new explicit Cancel action is available. If verification itself fails, leave the appointment unresolved and inspect Google Calendar manually before taking further action. The worker moves an interrupted/stale cancellation to the verification state without repeating the provider delete.
+
 ## Reminders
 
 Run the worker continuously or on a schedule. A queued reminder without `WHATSAPP_REMINDER_TEMPLATE` becomes `manual_required`. Do not reinterpret that as delivery. Configure only a Meta-approved utility template whose parameter order matches title and local date/time.

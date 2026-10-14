@@ -1,5 +1,10 @@
 # Codex worklog
 
+## 2026-10-14 - Make Calendar cancellation recoverable
+
+- Booked appointment cancellation now claims the local state before the Google Calendar delete and commits appointment/request/reminder cancellation only after provider success. Ambiguous timeouts and stale process claims are surfaced for read-only operator reconciliation; a still-active event restores the booking and requires a separate explicit retry. Unbooked pending/failed appointments can still be cancelled locally, while calendar-backed or ambiguous records fail closed.
+- Regression coverage exercises provider timeout both before/after delete, browser CSRF reconciliation, explicit retry, stale-worker recovery, and refusal to cancel an ambiguous booking. Focused tests: 7 passed. Full suite and static checks are pending. Hetzner remains the supported production target; no ngrok or live provider/infrastructure action was used.
+
 ## 2026-10-14 - Validate Hetzner Compose without printing secrets
 
 - Production-readiness review found that the Docker CI built the image but never parsed the two-service Compose deployment model, and the README's bare `docker compose config` could print interpolated secrets to the terminal. CI now validates Compose structure with `docker compose config --no-env-resolution --quiet`; the operator command and Hetzner runbook use `docker compose config --quiet` so the real local environment is checked without rendering values.

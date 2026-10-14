@@ -83,7 +83,7 @@
               {% for item in data['items'] %}
                 <tr class="{{ 'selected' if selected and selected.id == item.id }}">
                   <td><a class="contact-link" href="{{ url_for('dashboard', view='scheduling', request=item.id, q=query, status=status) }}"><strong>{{ item.display_name or 'WhatsApp contact' }}</strong><small>•••• {{ item.sender[-4:] }}</small></a></td>
-                  <td>{% if item.proposal_status == 'manual_required' %}Verify WhatsApp delivery{% elif item.appointment_status == 'manual_required' %}Verify Google Calendar booking{% elif item.status == 'proposal_pending' %}Review proposal{% elif item.status in ['slot_confirmed','booking_pending'] %}Book confirmed slot{% elif item.status == 'awaiting_confirmation' %}Awaiting contact reply{% elif item.status == 'failed' %}Provider attention{% else %}View details{% endif %}</td>
+                  <td>{% if item.proposal_status == 'manual_required' %}Verify WhatsApp delivery{% elif item.appointment_status == 'manual_required' %}Verify Google Calendar booking{% elif item.appointment_status == 'cancel_manual_required' %}Verify Calendar cancellation{% elif item.appointment_status == 'cancelling' %}Calendar cancellation in progress{% elif item.status == 'proposal_pending' %}Review proposal{% elif item.status in ['slot_confirmed','booking_pending'] %}Book confirmed slot{% elif item.status == 'awaiting_confirmation' %}Awaiting contact reply{% elif item.status == 'failed' %}Provider attention{% else %}View details{% endif %}</td>
                   <td>{{ item.requested_start }}<small>{{ item.duration_minutes }} minutes · {{ item.timezone }}</small></td>
                   <td><span class="state {{ item.status }}">{{ item.status.replace('_',' ') }}</span></td>
                   <td>{{ (item.confidence * 100)|round|int }}%</td>
@@ -131,6 +131,13 @@
           <section class="detail-section assist-warning"><h3>Calendar booking needs verification</h3><p>A process stopped during event creation. Check the deterministic event in Google Calendar; if it exists, Agenda Relay will restore the booked state. If it does not, an explicit retry becomes available. This check does not send a WhatsApp message.</p>
             <form method="post" action="{{ url_for('action_reconcile_booking', appointment_id=selected.appointment_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="secondary-button" type="submit">Check Google Calendar</button></form>
           </section>
+          {% endif %}
+          {% if selected.appointment_id and selected.appointment_status == 'cancel_manual_required' %}
+          <section class="detail-section assist-warning"><h3>Calendar cancellation needs verification</h3><p>A cancellation response was interrupted or ambiguous. Check whether the event still exists. Agenda Relay will mark it cancelled only when Calendar confirms it is absent; if it remains active, the appointment stays booked and a separate cancellation retry is available.</p>
+            <form method="post" action="{{ url_for('action_reconcile_cancellation', appointment_id=selected.appointment_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="secondary-button" type="submit">Check cancellation in Google Calendar</button></form>
+          </section>
+          {% elif selected.appointment_id and selected.appointment_status == 'cancelling' %}
+          <section class="detail-section assist-warning"><h3>Calendar cancellation is in progress</h3><p>Agenda Relay is recording an external Calendar change. Do not retry until it completes or the worker marks the result for review.</p></section>
           {% endif %}
           {% if selected.appointment_id and selected.appointment_status == 'booked' %}<form method="post" action="{{ url_for('action_cancel', appointment_id=selected.appointment_id) }}" class="danger-zone"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="danger-button" type="submit">Cancel appointment</button></form>{% endif %}
           {% else %}<div class="empty-detail"><strong>No request selected</strong><span>Select a scheduling request to review its conversation, time slots, consent, and audit trail.</span></div>{% endif %}

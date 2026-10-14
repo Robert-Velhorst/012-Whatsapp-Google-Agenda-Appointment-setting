@@ -337,6 +337,21 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             flash("Google Calendar could not verify this booking. No booking state was changed; try again or inspect the calendar manually.", "error")
         return redirect(url_for("dashboard"))
 
+    @app.post("/actions/appointments/<int:appointment_id>/reconcile-cancel")
+    @operator_required
+    def action_reconcile_cancellation(appointment_id: int):
+        if not valid_csrf():
+            abort(403)
+        try:
+            result = scheduling.reconcile_cancellation(appointment_id, settings.operator_name)
+            flash(result["warning"], "success" if result["status"] == "cancelled" else "error")
+        except (KeyError, ValueError) as exc:
+            flash(f"Calendar cancellation could not be reconciled: {exc}", "error")
+        except Exception as exc:  # noqa: BLE001 - provider errors must not be reflected to the operator page.
+            app.logger.warning("Calendar cancellation reconciliation failed (%s)", type(exc).__name__)
+            flash("Google Calendar could not verify the cancellation. No local booking state was changed; try again or inspect the calendar manually.", "error")
+        return redirect(url_for("dashboard"))
+
     @app.post("/actions/appointments/<int:appointment_id>/cancel")
     @operator_required
     def action_cancel(appointment_id: int):
@@ -577,7 +592,27 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
         except KeyError:
             return _error("not_found", "Appointment not found", 404)
         except ValueError:
-            return _error("appointment_not_cancellable", "The appointment cannot be cancelled while booking is in progress.", 409)
+            return _error("appointment_not_cancellable", "The appointment is not safely cancellable in its current state.", 409)
+        except CalendarUnavailable:
+            return _error("calendar_cancellation_unverified", "Google Calendar cancellation could not be confirmed. Reconcile the event before retrying.", 502)
+        except RuntimeError:
+            return _error("automation_paused", "Calendar changes are disabled while automation is paused.", 409)
+        except Exception as exc:  # noqa: BLE001 - provider errors may include private Calendar details.
+            app.logger.warning("Calendar cancellation failed (%s)", type(exc).__name__)
+            return _error("calendar_cancellation_unverified", "Google Calendar cancellation could not be confirmed. Reconcile the event before retrying.", 502)
+
+    @app.post("/api/appointments/<int:appointment_id>/reconcile-cancel")
+    @admin_required
+    def api_reconcile_cancellation(appointment_id: int):
+        try:
+            return jsonify(scheduling.reconcile_cancellation(appointment_id, settings.operator_name))
+        except KeyError:
+            return _error("not_found", "Appointment not found", 404)
+        except ValueError:
+            return _error("appointment_not_reconcilable", "The appointment is not awaiting cancellation reconciliation.", 409)
+        except Exception as exc:  # noqa: BLE001 - provider errors may include private Calendar details.
+            app.logger.warning("Calendar cancellation reconciliation API failed (%s)", type(exc).__name__)
+            return _error("calendar_verification_failed", "Google Calendar could not verify the cancellation. No local state was changed.", 502)
 
     @app.post("/api/appointments/<int:appointment_id>/reconcile")
     @admin_required

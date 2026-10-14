@@ -30,6 +30,8 @@ Confirmation atomically closes the proposal and creates exactly one pending appo
 
 The operator chooses **Book confirmed slot**. Agenda Relay claims the appointment atomically and inserts a deterministic Google event ID for that booking attempt. A same-attempt retry after a provider 409 fetches the existing event instead of duplicating it. If stale-booking reconciliation verifies that no event exists, an explicit operator retry advances the persisted attempt number and gets a new deterministic ID; this avoids reusing a cancelled/tombstoned event ID. Only a stored, verified email is sent as a Calendar attendee; a WhatsApp display name is never treated as an email.
 
+Cancellation is also a recoverable provider operation. The app first claims a booked appointment as `cancelling`, deletes the Calendar event, and only then commits local appointment/request cancellation and reminder-job cancellation together. If the provider result or local completion is interrupted, the record is not treated as safely cancelled: the worker surfaces stale claims as `cancel_manual_required`, and the operator must perform a read-only Calendar reconciliation before an explicit retry. Reconciliation completes cancellation when the event is absent or restores the appointment to `booked` when it remains active. It never repeats a provider delete itself.
+
 If event creation succeeds but a Business API WhatsApp confirmation fails, the appointment remains truthfully booked and the dashboard/audit trail flags communication attention. In assisted personal mode, no API send is attempted; the audit records `confirmation.manual_required` and the dashboard provides a draft for the operator to send.
 
 ## 6. Confirmation and reminders
