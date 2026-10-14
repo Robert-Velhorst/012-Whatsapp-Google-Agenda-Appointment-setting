@@ -10,6 +10,7 @@ import time
 import zipfile
 from contextlib import closing
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path
 
 from werkzeug.security import generate_password_hash
@@ -17,7 +18,7 @@ from werkzeug.security import generate_password_hash
 from .app import create_app
 from .config import Settings
 from .crypto_rotation import rotate_encryption_bundle
-from .migrations import MIGRATIONS
+from .migrations import MIGRATIONS, migrate
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -57,7 +58,12 @@ def _database_is_healthy_and_writable(path: Path) -> bool:
 
 
 def _validate_app_database(connection: sqlite3.Connection) -> bool:
-    if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
+    try:
+        if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
+            return False
+        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            return False
+    except sqlite3.Error:
         return False
     try:
         versions = {
@@ -66,7 +72,48 @@ def _validate_app_database(connection: sqlite3.Connection) -> bool:
         }
     except sqlite3.Error:
         return False
-    return bool(versions) and max(versions) == max(version for version, _ in MIGRATIONS)
+    expected_versions = {version for version, _ in MIGRATIONS}
+    if versions != expected_versions:
+        return False
+
+    expected_schema = _expected_schema()
+    try:
+        actual_tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            ).fetchall()
+        }
+        if not set(expected_schema).issubset(actual_tables):
+            return False
+        for table, expected_columns in expected_schema.items():
+            quoted_table = table.replace('"', '""')
+            actual_columns = {
+                row[1]: (row[2].upper(), row[3], row[5])
+                for row in connection.execute(f'PRAGMA table_info("{quoted_table}")').fetchall()
+            }
+            if any(actual_columns.get(column) != signature for column, signature in expected_columns.items()):
+                return False
+    except sqlite3.Error:
+        return False
+    return True
+
+
+@lru_cache(maxsize=1)
+def _expected_schema() -> dict[str, dict[str, tuple[str, int, int]]]:
+    """Derive required table columns from the same migrations used by the application."""
+    with closing(sqlite3.connect(":memory:")) as reference:
+        migrate(reference, "1970-01-01T00:00:00+00:00")
+        tables = reference.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+        return {
+            table[0]: {
+                row[1]: (row[2].upper(), row[3], row[5])
+                for row in reference.execute(f'PRAGMA table_info("{table[0]}")').fetchall()
+            }
+            for table in tables
+        }
 
 
 def _online_backup(source_path: Path, destination: Path) -> None:
