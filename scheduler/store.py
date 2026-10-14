@@ -605,10 +605,31 @@ class Store:
                 (workspace_id, now_iso, limit),
             ).fetchall()
             for row in rows:
-                cursor = db.execute("UPDATE background_jobs SET status='running',attempts=attempts+1,updated_at=? WHERE id=? AND status='queued'", (utc_now().isoformat(), row["id"]))
+                data = dict(row)
+                try:
+                    payload = json.loads(data.pop("payload_json"))
+                    if not isinstance(payload, dict):
+                        raise ValueError("Job payload must be a JSON object")
+                except (TypeError, ValueError):
+                    now = utc_now().isoformat()
+                    cursor = db.execute(
+                        "UPDATE background_jobs SET status='failed',last_error=?,updated_at=? "
+                        "WHERE workspace_id=? AND id=? AND status='queued'",
+                        ("Malformed job payload; job was not executed", now, workspace_id, row["id"]),
+                    )
+                    if cursor.rowcount:
+                        self._audit_in_transaction(
+                            db, workspace_id, "worker", "job.failed", "job", row["id"],
+                            {"error": "Malformed job payload"},
+                        )
+                    continue
+                cursor = db.execute(
+                    "UPDATE background_jobs SET status='running',attempts=attempts+1,updated_at=? "
+                    "WHERE workspace_id=? AND id=? AND status='queued'",
+                    (utc_now().isoformat(), workspace_id, row["id"]),
+                )
                 if cursor.rowcount:
-                    data = dict(row)
-                    data["payload"] = json.loads(data.pop("payload_json"))
+                    data["payload"] = payload
                     claimed.append(data)
         return claimed
 

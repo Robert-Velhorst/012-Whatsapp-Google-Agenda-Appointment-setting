@@ -2,6 +2,8 @@ import json
 import sqlite3
 from datetime import datetime, timedelta
 
+import pytest
+
 from scheduler.migrations import MIGRATIONS
 from scheduler.calendar import GoogleCalendar
 from scheduler.store import Store, utc_now
@@ -44,6 +46,39 @@ def test_unknown_job_fails_truthfully(app_bundle):
     store.schedule_job("default", "unknown", "unknown-test", (utc_now() - timedelta(minutes=1)).isoformat(), {})
     result = app.extensions["scheduling"].run_due_jobs()
     assert result["failed"] == 1
+
+
+@pytest.mark.parametrize("payload_json", ["{", "[]", '"not-an-object"'])
+def test_malformed_due_job_does_not_block_later_jobs(app_bundle, payload_json):
+    app, _, _ = app_bundle
+    store = app.extensions["store"]
+    now = utc_now()
+    malformed_id = store.schedule_job(
+        "default", "appointment_reminder", "malformed-payload",
+        (now - timedelta(minutes=2)).isoformat(), {"appointment_id": 1},
+    )
+    valid_id = store.schedule_job(
+        "default", "unknown", "valid-payload-after-malformed",
+        (now - timedelta(minutes=1)).isoformat(), {},
+    )
+    with store.connect() as db:
+        db.execute("UPDATE background_jobs SET payload_json=? WHERE id=?", (payload_json, malformed_id))
+
+    claimed = store.claim_due_jobs("default", now.isoformat())
+
+    assert [job["id"] for job in claimed] == [valid_id]
+    with store.connect() as db:
+        malformed = db.execute(
+            "SELECT status,last_error FROM background_jobs WHERE id=?", (malformed_id,),
+        ).fetchone()
+        audit = db.execute(
+            "SELECT action,detail_json FROM audit_events WHERE entity_id=? ORDER BY id DESC LIMIT 1",
+            (str(malformed_id),),
+        ).fetchone()
+    assert malformed["status"] == "failed"
+    assert "payload" in malformed["last_error"].lower()
+    assert audit["action"] == "job.failed"
+    assert json.loads(audit["detail_json"])["error"] == "Malformed job payload"
 
 
 def test_worker_recovers_stale_booking_and_request_state_atomically(app_bundle):
