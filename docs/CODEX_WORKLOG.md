@@ -1,5 +1,11 @@
 # Codex worklog
 
+## 2026-10-14 - Close same-origin protocol-relative redirect bypass
+
+- Confirmed a same-host absolute `next` URL could carry a `//attacker.example` path and become an external protocol-relative redirect. The same shared helper protected login and action `Referer` redirects.
+- Validate absolute-URL paths before returning them; reject protocol-relative paths, backslashes, and controls while preserving a safe same-origin redirect. Added login and authenticated action regression coverage and updated the acceptance/security docs.
+- Pre-fix regression reproduced `Location: //attacker.example/steal`; focused security/privacy suite passed after the fix (38 tests). Full suite and CI are pending.
+
 ## 2026-10-14 - Ship offline encryption-key rotation for standalone installs
 
 - Added a non-overwriting rotation bundle command for the encrypted SQLite fields and Google OAuth token file. It validates the source schema, SQLite integrity/foreign keys, every migrated value under the new key, and the token JSON before atomically publishing a new output directory; the source files stay unchanged.

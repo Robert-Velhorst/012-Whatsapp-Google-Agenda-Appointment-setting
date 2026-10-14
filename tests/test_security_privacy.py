@@ -164,6 +164,26 @@ def test_automation_cannot_resume_before_providers_are_ready(app_bundle):
     assert b"Automation cannot resume until setup issues are resolved" in client.get("/").data
 
 
+def test_automation_action_rejects_protocol_relative_referrer(app_bundle):
+    app, _, _ = app_bundle
+    client = app.test_client()
+    app.extensions["calendar"].connected = lambda: False
+    app.extensions["whatsapp"].configured = lambda: False
+    app.extensions["store"].set_state("default", "automation_paused", "true", "test")
+    with client.session_transaction() as current:
+        current["operator_authenticated"] = True
+        current["csrf_token"] = "valid-test-csrf"
+
+    response = client.post(
+        "/actions/automation/toggle",
+        data={"csrf_token": "valid-test-csrf"},
+        headers={"Referer": "http://localhost//attacker.example/steal"},
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == "/"
+
+
 def test_browser_login_rejects_external_next_redirect(app_bundle):
     app, _, _ = app_bundle
     client = app.test_client()
@@ -171,6 +191,57 @@ def test_browser_login_rejects_external_next_redirect(app_bundle):
     with client.session_transaction() as current:
         csrf = current["csrf_token"]
     response = client.post("/login?next=https://evil.example/steal", data={"csrf_token": csrf, "password": "correct horse battery staple"})
+    assert response.status_code == 302
+    assert response.headers["Location"] == "/"
+
+
+def test_browser_login_allows_safe_same_origin_absolute_redirect(app_bundle):
+    app, _, _ = app_bundle
+    client = app.test_client()
+    client.get("/login")
+    with client.session_transaction() as current:
+        csrf = current["csrf_token"]
+
+    response = client.post(
+        "/login",
+        query_string={"next": "http://localhost/scheduling?view=assisted"},
+        data={"csrf_token": csrf, "password": "correct horse battery staple"},
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == "/scheduling?view=assisted"
+
+
+def test_browser_login_rejects_protocol_relative_path_in_same_origin_absolute_redirect(app_bundle):
+    app, _, _ = app_bundle
+    client = app.test_client()
+    client.get("/login")
+    with client.session_transaction() as current:
+        csrf = current["csrf_token"]
+
+    response = client.post(
+        "/login",
+        query_string={"next": "http://localhost//attacker.example/steal"},
+        data={"csrf_token": csrf, "password": "correct horse battery staple"},
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == "/"
+
+
+def test_browser_login_rejects_backslash_in_same_origin_absolute_redirect(app_bundle):
+    app, _, _ = app_bundle
+    client = app.test_client()
+    client.get("/login")
+    with client.session_transaction() as current:
+        csrf = current["csrf_token"]
+
+    response = client.post(
+        "/login",
+        query_string={"next": "http://localhost/\\\\attacker.example/steal"},
+        data={"csrf_token": csrf, "password": "correct horse battery staple"},
+    )
+
     assert response.status_code == 302
     assert response.headers["Location"] == "/"
 
