@@ -197,7 +197,7 @@ Start from [.env.example](.env.example). Set values locally; do not commit `.env
 | `DEFAULT_DURATION_MINUTES` | Fallback meeting duration; default 30 |
 | `REMINDER_MINUTES_BEFORE` | Reminder offset; default 1440 (one day) |
 | `DATA_RETENTION_DAYS` | Worker purge age for inbound messages, rate-event history, and delivery receipts; default 30 |
-| `SCHEDULING_RETENTION_DAYS` | Worker purge age for cancelled/failed requests and unattached expired proposals; default 90 days |
+| `SCHEDULING_RETENTION_DAYS` | Worker purge age for terminal scheduling records, expired proposals, completed bookings, and old cancellations; default 90 days |
 | `BOOKING_LINK_TTL_HOURS` | Proposal lifetime after sending; default 168 (seven days) |
 | `MAX_OUTBOUND_PER_CONTACT_PER_HOUR` | Atomic per-contact send-attempt allowance; default 10 |
 | `MAX_INBOUND_PER_CONTACT_PER_HOUR` | Atomic inbound-message allowance per sender; default 10 |
@@ -209,7 +209,7 @@ Start from [.env.example](.env.example). Set values locally; do not commit `.env
 | `HAI_ALLOWED_NETWORKS` | Allowed client CIDRs; defaults to IPv4/IPv6 loopback |
 | `HAI_FEED_PAGE_SIZE` | Recent HAI snapshot size, 1–500; default 100 |
 
-Inbound quotas apply only to the optional WhatsApp Business Cloud API webhook. Duplicate provider message IDs do not consume quota. Messages over the callback or text-size limits are acknowledged but ignored. `DATA_RETENTION_DAYS` controls inbound-message, rate-event, and provider-delivery receipt cleanup. Separately, `SCHEDULING_RETENTION_DAYS` defaults to 90 and removes only old cancelled/failed requests (and their proposals) and old expired proposals that have no appointment. Appointment records, Google Calendar events, and general audit history are never removed by this scheduled cleanup. Other unresolved requests and proposals remain available for operator review; export or delete contact data through the operator controls when appropriate.
+Inbound quotas apply only to the optional WhatsApp Business Cloud API webhook. Duplicate provider message IDs do not consume quota. Messages over the callback or text-size limits are acknowledged but ignored. `DATA_RETENTION_DAYS` controls inbound-message, rate-event, and provider-delivery receipt cleanup. Separately, `SCHEDULING_RETENTION_DAYS` defaults to 90 days and removes old cancelled/failed requests, expired booking proposals after their expiry plus the retention period, cancelled appointments, and booked appointments only after their scheduled end is older than the retention period. Linked request/proposal rows and appointment reminder jobs are removed together. Upcoming appointments and booking failures that still need operator recovery are retained. Google Calendar events and the general audit history are not deleted. Contact and conversation data follow their separate retention and contact-deletion controls.
 | `HAI_PROJECT_KEY` | HAI project mapping label |
 | `NGROK_DOMAIN` | Assigned hostname for the guarded public tunnel |
 | `NGROK_CONFIG_FILE` | Optional ngrok authentication-config path |

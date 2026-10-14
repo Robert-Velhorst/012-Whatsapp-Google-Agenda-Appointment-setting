@@ -229,18 +229,22 @@ def test_retention_purge_runs_while_automation_is_paused(app_bundle):
     assert second_purge_audits == first_purge_audits
 
 
-def test_scheduling_retention_removes_only_old_terminal_records_and_expired_proposals(app_bundle):
+def test_scheduling_retention_removes_aged_resolved_records_but_preserves_future_and_recovery_work(app_bundle):
     app, _, _ = app_bundle
     store = app.extensions["store"]
     client = app.test_client()
-    for index in range(3):
+    for index in range(6):
         assert post_webhook(
             client,
             webhook(f"wamid.retention.{index}", body="Could we schedule a 30 minute call tomorrow?"),
         ).status_code == 200
     items = sorted(store.dashboard("default")["items"], key=lambda item: item["id"])
-    failed, expired_proposal, booked = items
+    failed, expired_proposal, future_booked, completed_booked, cancelled, failed_appointment = items
     old = (utc_now() - timedelta(days=100)).isoformat()
+    past_start = (utc_now() - timedelta(days=100)).isoformat()
+    past_end = (utc_now() - timedelta(days=100) + timedelta(minutes=30)).isoformat()
+    future_start = (utc_now() + timedelta(days=30)).isoformat()
+    future_end = (utc_now() + timedelta(days=30, minutes=30)).isoformat()
     with store.connect() as db:
         db.execute(
             "UPDATE scheduling_requests SET status='failed',updated_at=? WHERE id=?",
@@ -248,33 +252,107 @@ def test_scheduling_retention_removes_only_old_terminal_records_and_expired_prop
         )
         db.execute("UPDATE proposals SET created_at=? WHERE id=?", (old, failed["proposal_id"]))
         db.execute(
-            "UPDATE proposals SET status='expired',created_at=? WHERE id=?",
+            "UPDATE scheduling_requests SET status='needs_clarification',updated_at=? WHERE id=?",
+            (old, expired_proposal["id"]),
+        )
+        db.execute(
+            "UPDATE proposals SET status='expired',sent_at=? WHERE id=?",
             (old, expired_proposal["proposal_id"]),
         )
         db.execute(
+            "UPDATE scheduling_requests SET status='booked',updated_at=? WHERE id=?",
+            (old, future_booked["id"]),
+        )
+        db.execute("UPDATE proposals SET status='confirmed' WHERE id=?", (future_booked["proposal_id"],))
+        future_cursor = db.execute(
             "INSERT INTO appointments(workspace_id,request_id,proposal_id,start_at,end_at,timezone,status,created_at,updated_at) "
             "VALUES(?,?,?,?,?,?,'booked',?,?)",
             (
-                "default", booked["id"], booked["proposal_id"], "2030-01-01T10:00:00+00:00",
-                "2030-01-01T10:30:00+00:00", "Europe/Amsterdam", old, old,
+                "default", future_booked["id"], future_booked["proposal_id"], future_start,
+                future_end, "Europe/Amsterdam", old, old,
+            ),
+        )
+        db.execute(
+            "UPDATE scheduling_requests SET status='booked',updated_at=? WHERE id=?",
+            (old, completed_booked["id"]),
+        )
+        db.execute("UPDATE proposals SET status='confirmed' WHERE id=?", (completed_booked["proposal_id"],))
+        completed_cursor = db.execute(
+            "INSERT INTO appointments(workspace_id,request_id,proposal_id,start_at,end_at,timezone,status,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,'booked',?,?)",
+            (
+                "default", completed_booked["id"], completed_booked["proposal_id"], past_start,
+                past_end, "Europe/Amsterdam", old, old,
+            ),
+        )
+        db.execute(
+            "UPDATE scheduling_requests SET status='cancelled',updated_at=? WHERE id=?",
+            (old, cancelled["id"]),
+        )
+        cancelled_cursor = db.execute(
+            "INSERT INTO appointments(workspace_id,request_id,proposal_id,start_at,end_at,timezone,status,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,'cancelled',?,?)",
+            (
+                "default", cancelled["id"], cancelled["proposal_id"], past_start,
+                past_end, "Europe/Amsterdam", old, old,
+            ),
+        )
+        db.execute(
+            "UPDATE scheduling_requests SET status='failed',updated_at=? WHERE id=?",
+            (old, failed_appointment["id"]),
+        )
+        db.execute(
+            "INSERT INTO appointments(workspace_id,request_id,proposal_id,start_at,end_at,timezone,status,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,'failed',?,?)",
+            (
+                "default", failed_appointment["id"], failed_appointment["proposal_id"], past_start,
+                past_end, "Europe/Amsterdam", old, old,
             ),
         )
 
+    store.schedule_job(
+        "default", "appointment_reminder", "retention-completed-booking",
+        (utc_now() + timedelta(days=1)).isoformat(),
+        {"appointment_id": int(completed_cursor.lastrowid)},
+    )
+    store.schedule_job(
+        "default", "appointment_reminder", "retention-future-booking",
+        (utc_now() + timedelta(days=1)).isoformat(),
+        {"appointment_id": int(future_cursor.lastrowid)},
+    )
+    store.audit(
+        "default", "test", "appointment.booked", "appointment", int(completed_cursor.lastrowid),
+        {"synthetic_record": True},
+    )
+
     result = app.extensions["scheduling"].run_due_jobs()
 
-    assert result["scheduling_records_deleted"] == 3
+    assert result["scheduling_records_deleted"] == 11
     with store.connect() as db:
         assert db.execute("SELECT COUNT(*) FROM scheduling_requests WHERE id=?", (failed["id"],)).fetchone()[0] == 0
         assert db.execute("SELECT COUNT(*) FROM proposals WHERE id=?", (failed["proposal_id"],)).fetchone()[0] == 0
-        assert db.execute("SELECT COUNT(*) FROM scheduling_requests WHERE id=?", (expired_proposal["id"],)).fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM scheduling_requests WHERE id=?", (expired_proposal["id"],)).fetchone()[0] == 0
         assert db.execute("SELECT COUNT(*) FROM proposals WHERE id=?", (expired_proposal["proposal_id"],)).fetchone()[0] == 0
-        assert db.execute("SELECT COUNT(*) FROM scheduling_requests WHERE id=?", (booked["id"],)).fetchone()[0] == 1
-        assert db.execute("SELECT COUNT(*) FROM proposals WHERE id=?", (booked["proposal_id"],)).fetchone()[0] == 1
-        assert db.execute("SELECT COUNT(*) FROM appointments WHERE request_id=?", (booked["id"],)).fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM appointments WHERE request_id=?", (future_booked["id"],)).fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM scheduling_requests WHERE id=?", (future_booked["id"],)).fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM appointments WHERE request_id=?", (completed_booked["id"],)).fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM scheduling_requests WHERE id=?", (completed_booked["id"],)).fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM proposals WHERE id=?", (completed_booked["proposal_id"],)).fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM appointments WHERE request_id=?", (cancelled["id"],)).fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM appointments WHERE request_id=?", (failed_appointment["id"],)).fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM scheduling_requests WHERE id=?", (failed_appointment["id"],)).fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM proposals WHERE id=?", (failed_appointment["proposal_id"],)).fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM background_jobs WHERE dedupe_key='retention-completed-booking'").fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM background_jobs WHERE dedupe_key='retention-future-booking'").fetchone()[0] == 1
+        assert db.execute(
+            "SELECT COUNT(*) FROM audit_events WHERE action='appointment.booked' AND entity_id=?",
+            (str(completed_cursor.lastrowid),),
+        ).fetchone()[0] == 1
         purge = db.execute(
             "SELECT detail_json FROM audit_events WHERE action='privacy.scheduling_retention_purge'",
         ).fetchone()
-    assert json.loads(purge[0])["appointments_deleted"] == 0
+    assert json.loads(purge[0])["appointments_deleted"] == 2
+    assert json.loads(purge[0])["google_events_deleted"] == 0
     assert json.loads(purge[0])["audit_history_deleted"] == 0
 
 

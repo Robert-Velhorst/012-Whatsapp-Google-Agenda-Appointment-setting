@@ -106,7 +106,7 @@ Status is evidence-based as of 2026-10-14. `Implemented` means locally wired and
 | 099 | Roadmap/blocked items | Implemented | Maintenance roadmap and explicit external gates |
 | 100 | Real-provider cleanup/account safety | Blocked | Requires authorized Meta/Google accounts and test data cleanup |
 | 101 | Support bundle | Implemented | Redacted CLI bundle excludes PII/secrets |
-| 102 | Retention/archive policy | Implemented | Configured purge, backup policy, privacy docs |
+| 102 | Retention/archive policy | Implemented | 90-day purge of old resolved/cancelled appointments and expired records; retains future/recovery work, Google Calendar events, and audit history |
 | 103 | Prototype-to-production | Partial | Guards/Docker/ops complete; real deployment/security validation blocked |
 
 | 104 | Emergency controls | Implemented | Persistent pause and inbound record-only behavior; resume is blocked until required integrations are ready |

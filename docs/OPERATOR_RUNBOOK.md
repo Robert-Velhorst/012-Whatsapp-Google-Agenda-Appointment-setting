@@ -21,7 +21,7 @@ Run the worker continuously or on a schedule. A queued reminder without `WHATSAP
 
 ## Emergency pause
 
-Choose **Pause automation** when credentials may be compromised, provider responses are inconsistent, the calendar is wrong, or duplicate-action risk exists. Pause stops new automatic scheduling/provider actions; signed inbound messages remain stored. The worker still performs stale-claim recovery, proposal expiry, and configured retention housekeeping (including the 90-day scheduling-record purge), but skips normal due-job execution. Appointment records, Calendar events, and general audit history are retained by that purge. Investigate the audit trail, rotate credentials if necessary, run `doctor`, then resume.
+Choose **Pause automation** when credentials may be compromised, provider responses are inconsistent, the calendar is wrong, or duplicate-action risk exists. Pause stops new automatic scheduling/provider actions; signed inbound messages remain stored. The worker still performs stale-claim recovery, proposal expiry, and configured retention housekeeping (including the 90-day scheduling-record purge), but skips normal due-job execution. That purge removes old cancellations and appointments whose scheduled end is at least the retention period in the past, plus linked request/proposal rows and reminder jobs. Upcoming appointments and failed/in-flight/manual-required bookings remain for operator recovery. Google Calendar events and general audit history are retained. Investigate the audit trail, rotate credentials if necessary, run `doctor`, then resume.
 
 ## Backup and restore
 

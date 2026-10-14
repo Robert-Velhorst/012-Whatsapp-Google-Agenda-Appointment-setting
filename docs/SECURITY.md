@@ -48,14 +48,14 @@ Every domain table carries `workspace_id`; store queries require it. The shipped
 - Provider timeouts and process interruption during external actions become visible manual exceptions instead of blind retries.
 - Expired booking proposals are rejected equally through the private link and WhatsApp reply path.
 
-`DATA_RETENTION_DAYS` purges inbound message bodies, rate events, and delivery receipts. `SCHEDULING_RETENTION_DAYS` (default 90) removes aged cancelled/failed requests and their proposals, plus aged expired proposals without an appointment. It never deletes appointment records, Google Calendar events, unresolved scheduling records, or general audit history.
+`DATA_RETENTION_DAYS` purges inbound message bodies, rate events, and delivery receipts. `SCHEDULING_RETENTION_DAYS` (default 90) removes aged cancelled/failed requests, expired proposals after expiry plus the retention period, old cancelled appointments, and booked appointments only after their scheduled end is older than the retention period. Linked requests, proposals, and appointment reminder jobs are deleted with eligible appointments. Future appointments and failed/in-flight/manual-required bookings remain for operator recovery. This cleanup does not delete Google Calendar events, unrelated unresolved scheduling records, or general audit history; use contact export/deletion controls for contact-associated personal data.
 
 ## Privacy controls
 
 - Contact JSON export: `GET /api/contacts/<id>/export`.
 - Contact deletion: `DELETE /api/contacts/<id>` removes messages, requests, proposals, appointments, and queued jobs, then retains a minimal deletion audit event.
 - Personal WhatsApp assisted mode analyzes operator-pasted text in-process and does not store it in the message table or transmit it to Meta/AI. The structured request and booking proposal are retained to provide the booking-link workflow; avoid pasting unrelated or sensitive chat content.
-- Scheduled retention purges inbound message bodies, rate events, delivery receipts, aged cancelled/failed requests, and unattached expired proposals according to their separate retention settings; appointment records and general audit history are preserved.
+- Scheduled retention purges inbound message bodies, rate events, delivery receipts, aged terminal scheduling records, expired proposals, completed bookings, and old cancellations according to their separate retention settings; future/recovery appointments, Google Calendar events, and general audit history are preserved.
 - Booking page requires explicit scheduling consent; contact consent can be revoked in the dashboard.
 
 ## Threat-model residual risks

@@ -1054,47 +1054,133 @@ class Store:
     def purge_terminal_scheduling_records(
         self, workspace_id: str, retention_days: int, proposal_ttl_hours: int,
     ) -> dict[str, int]:
-        """Purge aged terminal request/proposal data without touching appointment records."""
+        """Purge aged resolved scheduling records while preserving recovery work and audit history."""
         now = utc_now()
-        cutoff = (now - timedelta(days=retention_days)).isoformat()
+        cutoff_at = now - timedelta(days=retention_days)
+        cutoff = cutoff_at.isoformat()
         expired_proposal_cutoff = (
             now - timedelta(days=retention_days, hours=proposal_ttl_hours)
         ).isoformat()
-        with self.connect() as db:
-            terminal_predicate = (
-                "workspace_id=? AND status IN ('cancelled','failed') AND updated_at<? "
-                "AND NOT EXISTS (SELECT 1 FROM appointments a WHERE a.workspace_id=scheduling_requests.workspace_id "
-                "AND a.request_id=scheduling_requests.id)"
-            )
-            requests_deleted = int(db.execute(
-                f"SELECT COUNT(*) FROM scheduling_requests WHERE {terminal_predicate}", (workspace_id, cutoff),
-            ).fetchone()[0])
-            request_proposals_deleted = db.execute(
-                "DELETE FROM proposals WHERE workspace_id=? AND request_id IN ("
-                f"SELECT id FROM scheduling_requests WHERE {terminal_predicate})",
-                (workspace_id, workspace_id, cutoff),
-            ).rowcount
-            db.execute(
-                f"DELETE FROM scheduling_requests WHERE {terminal_predicate}", (workspace_id, cutoff),
-            )
-
-            expired_proposals_deleted = db.execute(
-                "DELETE FROM proposals WHERE workspace_id=? AND status='expired' "
-                "AND COALESCE(sent_at,created_at)<? "
-                "AND NOT EXISTS (SELECT 1 FROM appointments a WHERE a.workspace_id=proposals.workspace_id "
-                "AND a.proposal_id=proposals.id)",
-                (workspace_id, expired_proposal_cutoff),
-            ).rowcount
-
+        purge_batch_limit = 500
         counts = {
-            "requests_deleted": requests_deleted,
-            "request_proposals_deleted": request_proposals_deleted,
-            "expired_proposals_deleted": expired_proposals_deleted,
+            "requests_deleted": 0,
+            "request_proposals_deleted": 0,
+            "expired_proposals_deleted": 0,
+            "expired_requests_deleted": 0,
+            "appointments_deleted": 0,
+            "appointment_proposals_deleted": 0,
+            "appointment_requests_deleted": 0,
+            "background_jobs_deleted": 0,
         }
+        with self.connect() as db:
+            terminal_requests = db.execute(
+                "SELECT r.id FROM scheduling_requests r WHERE r.workspace_id=? "
+                "AND r.status IN ('cancelled','failed') AND r.updated_at<? "
+                "AND NOT EXISTS (SELECT 1 FROM appointments a WHERE a.workspace_id=r.workspace_id "
+                "AND a.request_id=r.id) ORDER BY r.id LIMIT ?",
+                (workspace_id, cutoff, purge_batch_limit),
+            ).fetchall()
+            terminal_request_ids = [int(row["id"]) for row in terminal_requests]
+            if terminal_request_ids:
+                placeholders = ",".join("?" for _ in terminal_request_ids)
+                counts["request_proposals_deleted"] = db.execute(
+                    f"DELETE FROM proposals WHERE workspace_id=? AND request_id IN ({placeholders})",
+                    (workspace_id, *terminal_request_ids),
+                ).rowcount
+                counts["requests_deleted"] = db.execute(
+                    f"DELETE FROM scheduling_requests WHERE workspace_id=? AND id IN ({placeholders})",
+                    (workspace_id, *terminal_request_ids),
+                ).rowcount
+
+            expired_proposals = db.execute(
+                "SELECT p.id,p.request_id FROM proposals p JOIN scheduling_requests r "
+                "ON r.workspace_id=p.workspace_id AND r.id=p.request_id "
+                "WHERE p.workspace_id=? AND p.status='expired' "
+                "AND COALESCE(p.sent_at,p.created_at)<? "
+                "AND r.status IN ('needs_clarification','cancelled','failed') "
+                "AND NOT EXISTS (SELECT 1 FROM appointments a WHERE a.workspace_id=p.workspace_id "
+                "AND a.proposal_id=p.id) ORDER BY p.id LIMIT ?",
+                (workspace_id, expired_proposal_cutoff, purge_batch_limit),
+            ).fetchall()
+            for row in expired_proposals:
+                cursor = db.execute(
+                    "DELETE FROM proposals WHERE workspace_id=? AND id=? AND status='expired'",
+                    (workspace_id, int(row["id"])),
+                )
+                counts["expired_proposals_deleted"] += cursor.rowcount
+                if cursor.rowcount and not db.execute(
+                    "SELECT 1 FROM proposals WHERE workspace_id=? AND request_id=? LIMIT 1",
+                    (workspace_id, int(row["request_id"])),
+                ).fetchone() and not db.execute(
+                    "SELECT 1 FROM appointments WHERE workspace_id=? AND request_id=? LIMIT 1",
+                    (workspace_id, int(row["request_id"])),
+                ).fetchone():
+                    counts["expired_requests_deleted"] += db.execute(
+                        "DELETE FROM scheduling_requests WHERE workspace_id=? AND id=? "
+                        "AND status IN ('needs_clarification','cancelled','failed')",
+                        (workspace_id, int(row["request_id"])),
+                    ).rowcount
+
+            # A booking is resolved only after its scheduled end has passed the
+            # retention window. Failed/in-flight/manual-required bookings remain
+            # available for operator recovery; upcoming appointments are retained.
+            # SQLite's julianday normalizes ISO offsets, and Python validates the
+            # persisted timestamp before deletion to fail-close malformed values.
+            appointment_rows = db.execute(
+                "SELECT id,request_id,status,end_at,updated_at FROM appointments "
+                "WHERE workspace_id=? AND ("
+                "(status='cancelled' AND updated_at<?) OR "
+                "(status='booked' AND julianday(end_at)<julianday(?))"
+                ") ORDER BY id LIMIT ?",
+                (workspace_id, cutoff, cutoff, purge_batch_limit),
+            ).fetchall()
+            for row in appointment_rows:
+                try:
+                    age_reference = datetime.fromisoformat(
+                        row["end_at"] if row["status"] == "booked" else row["updated_at"]
+                    )
+                    if age_reference.tzinfo is None or age_reference.astimezone(UTC) >= cutoff_at:
+                        continue
+                except (TypeError, ValueError, OverflowError):
+                    # Malformed timestamps fail closed: never purge uncertain records.
+                    continue
+
+                expected_request_status = "booked" if row["status"] == "booked" else "cancelled"
+                request = db.execute(
+                    "SELECT status FROM scheduling_requests WHERE workspace_id=? AND id=?",
+                    (workspace_id, int(row["request_id"])),
+                ).fetchone()
+                if not request or request["status"] != expected_request_status:
+                    continue
+
+                job_ids = self._background_job_ids_for_appointment(db, workspace_id, int(row["id"]))
+                for job_id in job_ids:
+                    counts["background_jobs_deleted"] += db.execute(
+                        "DELETE FROM background_jobs WHERE workspace_id=? AND id=?",
+                        (workspace_id, job_id),
+                    ).rowcount
+                appointment_deleted = db.execute(
+                    "DELETE FROM appointments WHERE workspace_id=? AND id=? AND status=?",
+                    (workspace_id, int(row["id"]), row["status"]),
+                ).rowcount
+                counts["appointments_deleted"] += appointment_deleted
+                if appointment_deleted and not db.execute(
+                    "SELECT 1 FROM appointments WHERE workspace_id=? AND request_id=? LIMIT 1",
+                    (workspace_id, int(row["request_id"])),
+                ).fetchone():
+                    counts["appointment_proposals_deleted"] += db.execute(
+                        "DELETE FROM proposals WHERE workspace_id=? AND request_id=?",
+                        (workspace_id, int(row["request_id"])),
+                    ).rowcount
+                    counts["appointment_requests_deleted"] += db.execute(
+                        "DELETE FROM scheduling_requests WHERE workspace_id=? AND id=? AND status=?",
+                        (workspace_id, int(row["request_id"]), expected_request_status),
+                    ).rowcount
+
         if any(counts.values()):
             self.audit(
                 workspace_id, "worker", "privacy.scheduling_retention_purge", "workspace", workspace_id,
-                {**counts, "cutoff": cutoff, "appointments_deleted": 0, "audit_history_deleted": 0},
+                {**counts, "cutoff": cutoff, "google_events_deleted": 0, "audit_history_deleted": 0},
             )
         return counts
 
