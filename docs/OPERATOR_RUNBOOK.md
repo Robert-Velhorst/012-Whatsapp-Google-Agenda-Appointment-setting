@@ -25,7 +25,7 @@ Choose **Pause automation** when credentials may be compromised, provider respon
 
 ## Backup and restore
 
-Create a consistent backup with `python -m scheduler.cli backup --output C:\secure\agenda.sqlite3`. Store it encrypted. To restore, stop web and worker processes, validate the exact file, then run `python -m scheduler.cli restore <path> --confirm RESTORE`. The command preserves the previous database beside the active file with `.pre-restore` suffix. Run `doctor` and a read-only dashboard check before restart.
+Create a consistent backup with `python -m scheduler.cli backup`. By default it is written to a `backups` folder beside the configured database (for the default local setup, `data/backups`). Store or transfer it encrypted and keep an off-host copy. To choose another destination, pass `--output <path>`. To restore, stop web and worker processes, validate the exact file, then run `python -m scheduler.cli restore <path> --confirm RESTORE`. The command preserves the previous database beside the active file with `.pre-restore` suffix. Run `doctor` and a read-only dashboard check before restart.
 
 ## Data-encryption-key rotation
 

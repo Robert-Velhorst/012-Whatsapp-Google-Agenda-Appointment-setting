@@ -1,5 +1,11 @@
 # Codex worklog
 
+## 2026-10-14 - Keep default backups on the persistent data volume
+
+- The CLI previously wrote its default backup relative to the process working directory. In Docker that is `/app`, while Compose persists only `/app/data`, so a successful backup could disappear when the container is replaced. The default now writes to `backups/` beside the configured database; explicit `--output` destinations remain unchanged.
+- Updated the Hetzner and operator instructions to distinguish a persistent on-host backup from the separately configured encrypted off-host backup schedule. Added a regression test for the configured-database-relative path and extended the Windows package smoke to require the packaged command to create its default backup in the data directory.
+- Current local verification: Python suite `242 passed`; Windows 11 x64 package built with Python 3.13.14/PyInstaller 6.22.0 (ZIP SHA-256 `20C34F1532648EBC576CB7930473B45E217DD3D6206016DA67D13C30E7E56D7C`); packaged migration, three-field encryption rotation, default backup, health, and branded login passed (67.1 MiB working set). Synthetic local data only; no provider or Hetzner host was accessed. These checks are local and do not imply hosted CI or deployment acceptance.
+
 ## 2026-10-14 - Normalize support-bundle collision errors across platforms
 
 - GitHub Actions on Linux exposed that an existing archive was preserved but `FileExistsError` rendered as `File exists`, failing an assertion expecting the stable operator wording `already exists`. Reproduced locally by injecting POSIX errno 17, then normalized the message without changing atomic no-overwrite behavior.

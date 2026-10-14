@@ -96,6 +96,14 @@ finally:
     }
     & $Executable migrate
     if ($LASTEXITCODE -ne 0) { throw "Packaged application could not open the rotated database with the new key." }
+    $backupOutput = & $Executable backup
+    if ($LASTEXITCODE -ne 0) { throw "Packaged default backup command failed: $($backupOutput -join ' ')" }
+    $BackupPath = [IO.Path]::GetFullPath(($backupOutput | Select-Object -Last 1).ToString().Trim())
+    $ExpectedBackupDirectory = [IO.Path]::GetFullPath((Join-Path $RotatedDirectory "backups"))
+    if (-not [string]::Equals((Split-Path -Parent $BackupPath), $ExpectedBackupDirectory, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Packaged default backup was written outside the configured data directory: $BackupPath"
+    }
+    if (-not (Test-Path -LiteralPath $BackupPath -PathType Leaf)) { throw "Packaged backup command reported success without creating the backup file." }
 
     $process = Start-Process -FilePath $Executable -WorkingDirectory $RunDirectory -RedirectStandardOutput (Join-Path $LogDirectory "package-test.out.log") -RedirectStandardError (Join-Path $LogDirectory "package-test.err.log") -WindowStyle Hidden -PassThru
 } finally {
@@ -123,6 +131,7 @@ try {
         loginStatus = $login.StatusCode
         loginContainsBrand = $login.Content.Contains("Agenda Relay")
         encryptionRotation = $rotation.encrypted_database_values_rotated
+        defaultBackupCreated = (Test-Path -LiteralPath $BackupPath -PathType Leaf)
         workingSetMiB = [Math]::Round($running.WorkingSet64 / 1MB, 1)
         logs = $null
     } | ConvertTo-Json

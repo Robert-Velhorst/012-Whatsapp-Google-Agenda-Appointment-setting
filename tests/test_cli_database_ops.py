@@ -85,6 +85,26 @@ def test_online_backup_is_consistent_and_refuses_live_database_overwrite(app_bun
         assert connection.execute("SELECT max(version) FROM schema_migrations").fetchone() == (max(version for version, _ in MIGRATIONS),)
 
 
+def test_backup_default_is_inside_database_data_directory(monkeypatch, tmp_path, capsys):
+    database = tmp_path / "data" / "scheduler.sqlite3"
+    app = SimpleNamespace(extensions={
+        "settings": SimpleNamespace(database_path=database),
+        "store": object(),
+        "scheduling": object(),
+    })
+    captured = {}
+    monkeypatch.setattr("scheduler.cli.create_app", lambda: app)
+    monkeypatch.setattr("scheduler.cli._online_backup", lambda _source, destination: captured.setdefault("output", destination))
+
+    assert main(["backup"]) == 0
+
+    output = captured["output"]
+    assert output.parent == database.parent / "backups"
+    assert output.name.startswith("agenda-relay-")
+    assert output.suffix == ".sqlite3"
+    assert str(output) in capsys.readouterr().out
+
+
 def test_online_backup_does_not_overwrite_an_existing_backup(app_bundle, tmp_path):
     app, _, _ = app_bundle
     database = app.extensions["settings"].database_path

@@ -57,7 +57,7 @@ Status is evidence-based as of 2026-10-14. `Implemented` means locally wired and
 | 050 | Responsive/browser compatibility | Implemented | Desktop and mobile browser QA passed with zero console warnings/errors |
 | 051 | Performance/indexing | Implemented | WAL/persistent connections/indexes plus repeatable 1,000-record benchmark |
 | 052 | Large dataset/pagination | Implemented | 1,000-record dashboard/feed benchmark and bounded pagination verified |
-| 053 | Backup/restore | Implemented | SQLite online backup, integrity check, pre-restore safety copy |
+| 053 | Backup/restore | Implemented | SQLite online backup, integrity check, pre-restore safety copy; default destination follows `DATABASE_PATH` into the persistent Docker data mount; encrypted off-host scheduling remains operator-configured |
 | 054 | Reconciliation/repair | Partial | Integrity/doctor/retention supplied; advanced repair commands absent |
 | 055 | Local-first analytics | Partial | Workload counts/audit local; no analytics event dashboard |
 | 056 | SaaS readiness | Partial | Workspace fields present; billing intentionally absent; SaaS auth absent |
@@ -154,6 +154,10 @@ The operator can paste a relevant message into the authenticated **Personal What
 - Hardened appointment/request transitions against cancellation during calendar booking and partial commits. Proposal creation/send/confirmation/expiry/reconciliation, booking claim/completion/failure/recovery, manual sharing, and cancellation now write coupled state and transition audit in one SQLite transaction; cancellation during `booking` returns HTTP 409. Regression injects an audit-write failure and proves rollback, and covers stale-booking recovery consistency.
 - At the earlier reconciliation checkpoint, 102 tests passed; Ruff, compilation, and `git diff --check` passed. A local synthetic browser session verified the reconcile-delivered UI transition and audit entry. For commit `ec83cd0`, the Windows package workflow passed, including hosted tests and package smoke test. Live HAI and provider acceptance remain unverified.
 - Historical Windows launcher follow-up: exact process identity, health-gated recovery, missing-worker recovery, and fail-closed stop behavior have PowerShell self-checks; they passed under PowerShell 7 and Windows PowerShell 5.1. The source package smoke and 112-test Python suite passed locally. Exact source SHA `01b45886928844b9c92087abad5ca6bf5407d9f9` passed push CI, PR CI, Windows package, and CodeQL; run IDs and remaining live-acceptance gates are recorded in `docs/FINAL_VERIFICATION_REPORT.md`. Later follow-ups extended HAI cursor and then-existing tunnel process-ownership coverage; verify current PR checks for the latest commit.
+
+## Backup path follow-up (2026-10-14)
+
+The CLI's default online backup now lands in a `backups` folder beside the configured database. With the default Compose configuration this is `/app/data/backups`, persisted through the host's `./data` mount; this is still only an on-host copy, so the documented encrypted off-host schedule and restore drills must be configured separately. The focused CLI tests and full local suite passed (242 tests). A current-source Windows 11 x64 package was built and its isolated smoke test verified migrations, three encrypted-field rotation, default backup creation, health, and branded login. This does not establish a live Hetzner deployment, off-host backup automation, or provider acceptance.
 
 ## Overall verdict
 

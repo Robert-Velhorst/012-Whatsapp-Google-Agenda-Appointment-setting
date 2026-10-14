@@ -115,7 +115,7 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             remote = ipaddress.ip_address(request.remote_addr or "")
             # The application does not authenticate a reverse proxy, so forwarded
             # headers cannot safely grant access to a loopback-only feed. In
-            # particular, keep this endpoint unavailable through the ngrok tunnel.
+            # particular, keep this endpoint unavailable through public ingress.
             if remote.is_loopback and request.headers.get("X-Forwarded-For"):
                 return False
             networks = [ipaddress.ip_network(value.strip(), strict=False) for value in settings.hai_allowed_networks.split(",") if value.strip()]

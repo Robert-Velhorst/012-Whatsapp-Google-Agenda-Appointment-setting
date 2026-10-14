@@ -90,11 +90,19 @@ Keep Caddy, Docker, and the app host's clocks synchronized. Configure host/servi
 
 ## Database and data migration
 
-Agenda Relay uses SQLite; it does not use PostgreSQL. Use the app's online backup command rather than copying a live `.sqlite3` file:
+Agenda Relay uses SQLite; it does not use PostgreSQL. Use the app's online backup command rather than copying a live `.sqlite3` file. On a Windows source, choose a protected path:
 
 ```powershell
 python -m scheduler.cli backup --output C:\safe\agenda.sqlite3
 ```
+
+On Hetzner, run the command through Compose. Its default destination is under `/app/data/backups`, which maps to the persistent host `./data/backups` directory:
+
+```sh
+docker compose run --rm web python -m scheduler.cli backup
+```
+
+This creates a local on-host backup only. Configure a separate encrypted, access-controlled off-host copy and restore drills; this repository does not install that schedule.
 
 For a Windows source, stop the web and worker processes after the backup. Transfer the backup, matching `DATA_ENCRYPTION_KEY`, encrypted `GOOGLE_TOKEN_FILE` if migrating a connected account, and Google OAuth client JSON using an approved encrypted channel. Verify hashes on both ends; store keys separately from database backups. Avoid sending credentials through shell command arguments or Git. Do not copy a live SQLite WAL independently of its database.
 

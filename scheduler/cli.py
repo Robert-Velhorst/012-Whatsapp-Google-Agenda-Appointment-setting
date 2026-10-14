@@ -196,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             time.sleep(max(args.interval, 5))
     if args.command == "backup":
-        output = args.output or Path("backups") / f"agenda-relay-{datetime.now(UTC):%Y%m%d-%H%M%S}.sqlite3"
+        output = args.output or settings.database_path.parent / "backups" / f"agenda-relay-{datetime.now(UTC):%Y%m%d-%H%M%S}.sqlite3"
         try:
             _online_backup(settings.database_path, output)
         except (OSError, sqlite3.Error, ValueError) as exc:
