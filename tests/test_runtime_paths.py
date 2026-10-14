@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from scheduler import config
+from scheduler import standalone
 
 
 def test_frozen_runtime_root_is_executable_parent(monkeypatch, tmp_path):
@@ -55,3 +56,19 @@ def test_dotenv_loader_reads_explicit_application_root(monkeypatch, tmp_path):
     config._load_runtime_environment(package)
 
     assert config.os.environ["APP_ENV"] == "production"
+
+
+def test_frozen_setup_writes_configuration_beside_executable(monkeypatch, tmp_path):
+    package = tmp_path / "AgendaRelay"
+    package.mkdir()
+    monkeypatch.setattr(standalone.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(standalone.sys, "executable", str(package / "AgendaRelay.exe"))
+    setup_calls = []
+    monkeypatch.setattr("scheduler.setup.interactive_setup", lambda directory: setup_calls.append(directory) or 0)
+
+    try:
+        standalone.main(["--setup"])
+    except SystemExit as exc:
+        assert exc.code == 0
+
+    assert setup_calls == [package]

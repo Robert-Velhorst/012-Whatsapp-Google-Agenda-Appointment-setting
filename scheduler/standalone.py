@@ -5,6 +5,7 @@ import logging
 import os
 import sys
 import threading
+from pathlib import Path
 
 from waitress import serve
 
@@ -25,7 +26,8 @@ def main(argv: list[str] | None = None) -> int | None:
     args = parser.parse_args(arguments)
     if args.setup:
         from scheduler.setup import interactive_setup
-        raise SystemExit(interactive_setup())
+        setup_directory = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path.cwd()
+        raise SystemExit(interactive_setup(setup_directory))
     app = create_app()
     host = validate_bind_host(os.getenv("BIND_HOST", "127.0.0.1"), app.extensions["settings"].is_production)
     service = app.extensions["scheduling"]

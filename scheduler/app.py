@@ -625,7 +625,10 @@ def _error(code: str, message: str, status: int):
 
 
 def _csv_safe(value: object) -> object:
-    if isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\t", "\r")):
-        return "'" + value
+    if isinstance(value, str):
+        formula_prefixes = ("=", "+", "-", "@")
+        first_non_whitespace = value.lstrip(" \t\r\n\v\f\ufeff")
+        if value.startswith(("\t", "\r")) or first_non_whitespace.startswith(formula_prefixes):
+            return "'" + value
     return value
 

@@ -1,3 +1,6 @@
+import csv
+import io
+
 import pytest
 
 from scheduler.app import create_app
@@ -340,9 +343,21 @@ def test_csv_export_neutralizes_spreadsheet_formulas(app_bundle, auth_headers):
     store = app.extensions["store"]
     contact_id = store.upsert_contact("default", "31600000001", "Europe/Amsterdam", display_name="=HYPERLINK(\"https://evil.example\")")
     store.create_request("default", contact_id, "csv-formula", "+CMD|' /C calc'!A0", 30, "Europe/Amsterdam", "2026-08-09", 0.8)
+    whitespace_contact_id = store.upsert_contact(
+        "default", "31600000002", "Europe/Amsterdam", display_name=" \t=HYPERLINK(\"https://evil.example\")",
+    )
+    store.create_request("default", whitespace_contact_id, "csv-whitespace-formula", "Call", 30, "Europe/Amsterdam", "2026-08-09", 0.8)
+    bom_contact_id = store.upsert_contact(
+        "default", "31600000003", "Europe/Amsterdam", display_name="\ufeff@SUM(1+1)",
+    )
+    store.create_request("default", bom_contact_id, "csv-bom-formula", "Call", 30, "Europe/Amsterdam", "2026-08-09", 0.8)
     csv_data = app.test_client().get("/api/export/requests.csv", headers=auth_headers).data.decode()
-    assert "'=HYPERLINK" in csv_data
-    assert "'+CMD" in csv_data
+    rows = list(csv.reader(io.StringIO(csv_data)))
+    exported_contacts = {row[1] for row in rows[1:]}
+    assert "'=HYPERLINK(\"https://evil.example\")" in exported_contacts
+    assert "'+CMD|' /C calc'!A0" in {row[2] for row in rows[1:]}
+    assert "' \t=HYPERLINK(\"https://evil.example\")" in exported_contacts
+    assert "'\ufeff@SUM(1+1)" in exported_contacts
 
 
 def test_contact_export_delete_and_workspace_isolation(app_bundle, auth_headers):
