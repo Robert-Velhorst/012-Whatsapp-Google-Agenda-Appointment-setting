@@ -129,3 +129,10 @@ def test_responsive_scheduling_detail_remains_available_below_desktop_width(app_
 
     assert "@media(max-width:1180px){.desk-layout{grid-template-columns:1fr}.detail-rail{display:block}" in stylesheet
 
+
+def test_primary_navigation_has_visible_keyboard_focus_indicator(app_bundle):
+    app, _, _ = app_bundle
+    stylesheet = (Path(app.static_folder) / "app.css").read_text(encoding="utf-8")
+
+    assert ".nav-link:focus-visible{outline:2px solid var(--blue);outline-offset:2px}" in stylesheet
+

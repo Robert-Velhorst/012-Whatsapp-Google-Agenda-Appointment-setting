@@ -9,4 +9,5 @@
 .contacts-panel{max-width:100%;overflow-x:auto}.contacts-table{min-width:1200px}.danger-button{border:1px solid var(--red);border-radius:6px;background:var(--red-soft);color:var(--red);padding:7px 10px;font:inherit;font-weight:650;cursor:pointer;white-space:nowrap}.danger-button:hover,.danger-button:focus-visible{background:var(--red);color:#fff;outline:2px solid var(--red);outline-offset:2px}
 @media(max-width:1180px){.contacts-table th:nth-child(3),.contacts-table td:nth-child(3){display:table-cell}}
 @media(max-width:760px){.contacts-table th:nth-child(2),.contacts-table td:nth-child(2),.contacts-table th:nth-child(5),.contacts-table td:nth-child(5){display:table-cell}}
+.nav-link:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 

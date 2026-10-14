@@ -53,7 +53,7 @@ Status is evidence-based as of 2026-10-14. `Implemented` means locally wired and
 | 046 | Cross-user isolation | Partial | Workspace isolation tested; multiple interactive users absent |
 | 047 | File/path traversal tests | Not applicable | No user-selected file paths or uploads |
 | 048 | Provider failure simulation | Implemented | Verified rejection versus ambiguous delivery states tested; ambiguous retries prohibited |
-| 049 | Accessibility | Partial | Semantic labels/focus/responsive/reduced motion; formal audit pending |
+| 049 | Accessibility | Partial | Semantic labels/responsive/reduced motion; primary-navigation keyboard focus has a 2px blue outline (5.34:1 against focus background) with regression coverage; full WCAG audit remains pending |
 | 050 | Responsive/browser compatibility | Implemented | Desktop and mobile browser QA passed with zero console warnings/errors |
 | 051 | Performance/indexing | Implemented | WAL/persistent connections/indexes plus repeatable 1,000-record benchmark |
 | 052 | Large dataset/pagination | Implemented | 1,000-record dashboard/feed benchmark and bounded pagination verified |
