@@ -1176,12 +1176,11 @@ class Store:
                         "DELETE FROM scheduling_requests WHERE workspace_id=? AND id=? AND status=?",
                         (workspace_id, int(row["request_id"]), expected_request_status),
                     ).rowcount
-
-        if any(counts.values()):
-            self.audit(
-                workspace_id, "worker", "privacy.scheduling_retention_purge", "workspace", workspace_id,
-                {**counts, "cutoff": cutoff, "google_events_deleted": 0, "audit_history_deleted": 0},
-            )
+            if any(counts.values()):
+                self._audit_in_transaction(
+                    db, workspace_id, "worker", "privacy.scheduling_retention_purge", "workspace", workspace_id,
+                    {**counts, "cutoff": cutoff, "google_events_deleted": 0, "audit_history_deleted": 0},
+                )
         return counts
 
     @staticmethod

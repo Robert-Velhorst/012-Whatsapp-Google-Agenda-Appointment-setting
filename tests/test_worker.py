@@ -356,6 +356,60 @@ def test_scheduling_retention_removes_aged_resolved_records_but_preserves_future
     assert json.loads(purge[0])["audit_history_deleted"] == 0
 
 
+def test_scheduling_retention_rolls_back_deletions_when_audit_write_fails(app_bundle):
+    app, _, _ = app_bundle
+    client = app.test_client()
+    assert post_webhook(client, webhook()).status_code == 200
+    store = app.extensions["store"]
+    item = store.dashboard("default")["items"][0]
+    app.extensions["scheduling"].send_proposal(item["proposal_id"])
+    assert post_webhook(client, webhook("wamid.retention-confirmed", body="1")).status_code == 200
+    appointment = store.dashboard("default")["items"][0]
+    appointment_id = appointment["appointment_id"]
+    assert app.extensions["scheduling"].book_appointment(appointment_id)["status"] == "booked"
+    old = (utc_now() - timedelta(days=100)).isoformat()
+    with store.connect() as db:
+        db.execute(
+            "UPDATE appointments SET start_at=?,end_at=?,updated_at=? WHERE workspace_id=? AND id=?",
+            (old, old, old, "default", appointment_id),
+        )
+        db.execute(
+            "CREATE TRIGGER reject_scheduling_retention_audit BEFORE INSERT ON audit_events "
+            "WHEN NEW.action='privacy.scheduling_retention_purge' BEGIN "
+            "SELECT RAISE(ABORT, 'retention audit unavailable'); END"
+        )
+    job_id = store.schedule_job(
+        "default", "appointment_reminder", "retention-audit-rollback",
+        (utc_now() + timedelta(days=1)).isoformat(), {"appointment_id": appointment_id},
+    )
+    assert job_id is not None
+
+    with pytest.raises(sqlite3.IntegrityError, match="retention audit unavailable"):
+        store.purge_terminal_scheduling_records("default", 90, 168)
+
+    with store.connect() as db:
+        assert db.execute(
+            "SELECT COUNT(*) FROM appointments WHERE workspace_id=? AND id=? AND status='booked'",
+            ("default", appointment_id),
+        ).fetchone()[0] == 1
+        assert db.execute(
+            "SELECT COUNT(*) FROM scheduling_requests WHERE workspace_id=? AND id=?",
+            ("default", appointment["id"]),
+        ).fetchone()[0] == 1
+        assert db.execute(
+            "SELECT COUNT(*) FROM proposals WHERE workspace_id=? AND id=?",
+            ("default", appointment["proposal_id"]),
+        ).fetchone()[0] == 1
+        assert db.execute(
+            "SELECT COUNT(*) FROM background_jobs WHERE workspace_id=? AND id=?",
+            ("default", job_id),
+        ).fetchone()[0] == 1
+        assert db.execute(
+            "SELECT COUNT(*) FROM audit_events WHERE workspace_id=? AND action='privacy.scheduling_retention_purge'",
+            ("default",),
+        ).fetchone()[0] == 0
+
+
 def test_v4_database_migration_adds_retention_indexes(tmp_path):
     database_path = tmp_path / "v4.sqlite3"
     db = sqlite3.connect(database_path)
