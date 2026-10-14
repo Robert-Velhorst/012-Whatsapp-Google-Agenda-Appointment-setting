@@ -1,5 +1,12 @@
 # Codex worklog
 
+## 2026-10-14 - Ship offline encryption-key rotation for standalone installs
+
+- Added a non-overwriting rotation bundle command for the encrypted SQLite fields and Google OAuth token file. It validates the source schema, SQLite integrity/foreign keys, every migrated value under the new key, and the token JSON before atomically publishing a new output directory; the source files stay unchanged.
+- Added strict decryption for migration use, bounded 256-row batches and streaming database hashing to limit memory, environment-only key inputs, and command dispatch through the frozen Windows executable. Updated the security, operator, README, and acceptance docs; vault-managed rotation remains out of scope.
+- `python -m pytest -q -W error`: 151 passed; `compileall`, `pip check`, `git diff --check`, PowerShell parsing, local Windows package build, packaged rotation/migration command, and packaged health/login smoke passed. The package smoke rotated an empty disposable database (0 records); unit coverage re-encrypted all three database fields plus an OAuth token fixture and verified failure leaves inputs unchanged.
+- No production database, credentials, provider, or public tunnel was used. Live provider/deployment acceptance remains open.
+
 ## 2026-10-14 - Sanitize API exceptions and verify assisted flow in browser
 
 - Reproduced CodeQL's exception-disclosure path with a traceback-bearing HAI error. API exception handlers now return stable client-safe messages while preserving error codes and HTTP statuses; the regression proves traceback and filesystem path details are absent.

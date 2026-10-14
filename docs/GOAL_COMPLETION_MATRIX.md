@@ -34,7 +34,7 @@ Status is evidence-based as of 2026-10-14. `Implemented` means locally wired and
 | 027 | Notifications/reminders | Partial | Worker complete; real approved template not available |
 | 028 | Privacy/delete | Implemented | Export, retention purge, consent controls, guarded API deletion, and CSRF-protected browser deletion requiring current-password reauthentication; active appointments must be cancelled first |
 | 029 | Web security | Implemented | CSP, HSTS production, no-store, anti-frame/sniff/referrer |
-| 030 | Secret management/rotation | Partial | Env/secret mounts and docs; no external vault integration |
+| 030 | Secret management/rotation | Partial | Environment/secret mounts and a tested offline key-rotation bundle are available; no external vault integration or managed key rotation |
 | 031 | One-command local development | Implemented | README/Makefile/locked environment commands |
 | 032 | Docker/deployment | Partial | Hardened non-root image and Windows executable verified; protected ngrok ingress now supports paused Google OAuth bootstrap; no authorized live provider deployment |
 | 033 | Migrations/rollback safety | Implemented | Forward ledger, backup/restore, pre-restore copy |

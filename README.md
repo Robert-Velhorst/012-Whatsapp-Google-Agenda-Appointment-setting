@@ -80,6 +80,7 @@ python -m scheduler.cli migrate
 python -m scheduler.cli worker --once
 python -m scheduler.cli worker --interval 30
 python -m scheduler.cli backup
+python -m scheduler.cli rotate-encryption-key --output-dir C:\secure\agenda-relay-rotated
 python -m scheduler.cli support-bundle
 python -m pytest -q --basetemp=.pytest-run
 ```
@@ -89,6 +90,10 @@ Restore is deliberately explicit and first preserves the previous database:
 ```powershell
 python -m scheduler.cli restore C:\safe\agenda-relay-backup.sqlite3 --confirm RESTORE
 ```
+
+Encryption-key rotation is an offline operation. Stop every web/worker process, set `DATA_ENCRYPTION_KEY` to the current key and `NEW_DATA_ENCRYPTION_KEY` to a newly generated random secret of at least 64 characters, then choose a new, non-existing output directory. The command creates a verified replacement database and (when present) OAuth token file there without modifying the originals. Test the staged files with the new key before changing `DATABASE_PATH`, `GOOGLE_TOKEN_FILE`, and `DATA_ENCRYPTION_KEY` in `.env`; keep the original files as rollback copies until the rotated installation has been verified. Do not put either key on a command line or in shell history.
+
+For a packaged Windows installation, use `AgendaRelay.exe doctor`, `AgendaRelay.exe backup`, and `AgendaRelay.exe rotate-encryption-key --output-dir <new-empty-directory>` from the package folder instead of `python -m scheduler.cli ...`; the packaged executable dispatches the same operator commands without requiring a separate Python installation.
 
 ## Docker
 

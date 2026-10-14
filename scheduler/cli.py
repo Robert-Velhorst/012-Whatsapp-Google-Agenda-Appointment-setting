@@ -15,6 +15,8 @@ from pathlib import Path
 from werkzeug.security import generate_password_hash
 
 from .app import create_app
+from .config import Settings
+from .crypto_rotation import rotate_encryption_bundle
 from .migrations import MIGRATIONS
 
 
@@ -32,6 +34,8 @@ def build_parser() -> argparse.ArgumentParser:
     restore = sub.add_parser("restore", help="Restore a validated SQLite backup")
     restore.add_argument("backup", type=Path)
     restore.add_argument("--confirm", required=True, help="Must equal RESTORE")
+    rotate = sub.add_parser("rotate-encryption-key", help="Create a verified, non-overwriting encrypted-data rotation bundle")
+    rotate.add_argument("--output-dir", type=Path, required=True, help="New directory for rotated database, token file, and manifest")
     bundle = sub.add_parser("support-bundle", help="Create a redacted diagnostic bundle")
     bundle.add_argument("--output", type=Path)
     password = sub.add_parser("hash-password", help="Generate ADMIN_PASSWORD_HASH without storing the password")
@@ -135,6 +139,22 @@ def main(argv: list[str] | None = None) -> int:
             print("Password must be at least 12 characters", file=sys.stderr)
             return 2
         print(generate_password_hash(password))
+        return 0
+
+    if args.command == "rotate-encryption-key":
+        settings = Settings.from_env()
+        try:
+            result = rotate_encryption_bundle(
+                settings.database_path,
+                Path(settings.google_token_file),
+                args.output_dir,
+                settings.data_encryption_key,
+                os.getenv("NEW_DATA_ENCRYPTION_KEY", ""),
+            )
+        except (OSError, sqlite3.Error, ValueError) as exc:
+            print(f"Encryption-key rotation failed: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps(result, indent=2))
         return 0
 
     app = create_app()

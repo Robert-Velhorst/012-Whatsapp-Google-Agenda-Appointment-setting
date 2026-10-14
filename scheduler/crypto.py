@@ -33,3 +33,16 @@ class CryptoBox:
             except InvalidToken:
                 return "[encrypted with a different key]"
         return value
+
+    def decrypt_strict(self, value: str | None) -> str:
+        """Decrypt a stored value or fail instead of disguising key/data corruption."""
+        if not value:
+            return ""
+        if value.startswith("plain:"):
+            return value[6:]
+        if not value.startswith("enc:") or not self._fernet:
+            raise ValueError("Stored value is not encrypted with a usable key")
+        try:
+            return self._fernet.decrypt(value[4:].encode("ascii")).decode("utf-8")
+        except (InvalidToken, UnicodeDecodeError, UnicodeEncodeError) as exc:
+            raise ValueError("Stored value cannot be decrypted with the supplied key") from exc

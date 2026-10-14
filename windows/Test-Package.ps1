@@ -36,7 +36,8 @@ $TestEnvironment = @{
     FLASK_SECRET_KEY = "package-test-only-session-secret-0123456789"
     ADMIN_API_TOKEN = "package-test-only-api-token-0123456789"
     ADMIN_PASSWORD_HASH = ""
-    DATA_ENCRYPTION_KEY = ""
+    DATA_ENCRYPTION_KEY = "package-test-old-encryption-key-01234567890123456789012345678901"
+    NEW_DATA_ENCRYPTION_KEY = "package-test-new-encryption-key-01234567890123456789012345678901"
 }
 $PreviousEnvironment = @{}
 $process = $null
@@ -45,6 +46,25 @@ try {
         $PreviousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
         [Environment]::SetEnvironmentVariable($name, $TestEnvironment[$name], "Process")
     }
+
+    # Exercise the packaged command router and the exact offline rotation path.
+    & $Executable migrate
+    if ($LASTEXITCODE -ne 0) { throw "Packaged migrate command failed before key-rotation smoke test." }
+    $RotatedDirectory = Join-Path $DataDirectory "rotated"
+    $rotationOutput = & $Executable rotate-encryption-key --output-dir $RotatedDirectory
+    if ($LASTEXITCODE -ne 0) { throw "Packaged encryption-key rotation failed: $($rotationOutput -join ' ')" }
+    $rotation = ($rotationOutput -join [Environment]::NewLine) | ConvertFrom-Json
+    if (-not (Test-Path -LiteralPath (Join-Path $RotatedDirectory "scheduler.sqlite3"))) { throw "Rotation did not publish its validated database." }
+    $TestEnvironment["DATABASE_PATH"] = Join-Path $RotatedDirectory "scheduler.sqlite3"
+    $TestEnvironment["GOOGLE_TOKEN_FILE"] = Join-Path $RotatedDirectory "google-token.json"
+    $TestEnvironment["DATA_ENCRYPTION_KEY"] = $TestEnvironment["NEW_DATA_ENCRYPTION_KEY"]
+    $TestEnvironment["NEW_DATA_ENCRYPTION_KEY"] = ""
+    foreach ($name in $TestEnvironment.Keys) {
+        [Environment]::SetEnvironmentVariable($name, $TestEnvironment[$name], "Process")
+    }
+    & $Executable migrate
+    if ($LASTEXITCODE -ne 0) { throw "Packaged application could not open the rotated database with the new key." }
+
     $process = Start-Process -FilePath $Executable -WorkingDirectory $RunDirectory -RedirectStandardOutput (Join-Path $LogDirectory "package-test.out.log") -RedirectStandardError (Join-Path $LogDirectory "package-test.err.log") -WindowStyle Hidden -PassThru
 } finally {
     foreach ($name in $TestEnvironment.Keys) {
@@ -69,6 +89,7 @@ try {
         mode = $health.mode
         loginStatus = $login.StatusCode
         loginContainsBrand = $login.Content.Contains("Agenda Relay")
+        encryptionRotation = $rotation.encrypted_database_values_rotated
         workingSetMiB = [Math]::Round($running.WorkingSet64 / 1MB, 1)
         logs = $LogDirectory
     } | ConvertTo-Json

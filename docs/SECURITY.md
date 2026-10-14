@@ -17,14 +17,15 @@
 
 Conversation bodies, proposal text, private booking tokens, and Google OAuth token JSON use Fernet encryption derived from `DATA_ENCRYPTION_KEY`. Production refuses to start without the key. Contact identifiers, appointment timestamps, and audit metadata remain visible to SQLite and require encrypted host volumes and restrictive filesystem permissions.
 
-Secrets are environment-owned. They are excluded from Git, Docker build context, backups produced by Git, and support bundles. Rotation procedure:
+Secrets are environment-owned. They are excluded from Git, Docker build context, backups produced by Git, and support bundles. To rotate the data-encryption key, stop all web and worker processes and use the offline `rotate-encryption-key` CLI command to create and verify a non-overwriting replacement bundle. The command requires the current `DATA_ENCRYPTION_KEY`, a new `NEW_DATA_ENCRYPTION_KEY` of at least 64 characters, and a new output directory; it leaves the current database and token file unchanged. Test the replacement bundle with the new key before updating `DATABASE_PATH`, `GOOGLE_TOKEN_FILE`, and `DATA_ENCRYPTION_KEY`. Keep the originals until the rotated installation passes `doctor` and a read-only application check. Do not pass secrets on the command line or commit them.
+
+Provider-token rotation and recovery:
 
 1. Pause automation.
 2. Back up the database and OAuth token file to encrypted storage.
 3. Rotate Meta/Google tokens at the provider.
-4. Re-encrypt data with an offline migration before changing `DATA_ENCRYPTION_KEY`; changing the key without migration makes existing ciphertext unreadable.
-5. Update the host secret manager and run `doctor`.
-6. Resume after one signed webhook and one provider connection check.
+4. Update the host secret manager and run `doctor`.
+5. Resume after one signed webhook and one provider connection check.
 
 ## Web security
 

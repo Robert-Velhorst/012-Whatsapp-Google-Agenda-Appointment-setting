@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import sys
 import threading
 
 from waitress import serve
@@ -13,10 +14,15 @@ from scheduler.config import validate_bind_host
 logger = logging.getLogger(__name__)
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> int | None:
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments and arguments[0] != "--setup":
+        # Keep the source and frozen Windows entry points on the same operator CLI.
+        from scheduler.cli import main as cli_main
+        return cli_main(arguments)
     parser = argparse.ArgumentParser(description="Agenda Relay standalone scheduler")
     parser.add_argument("--setup", action="store_true", help="Create local login and security configuration")
-    args = parser.parse_args()
+    args = parser.parse_args(arguments)
     if args.setup:
         from scheduler.setup import interactive_setup
         raise SystemExit(interactive_setup())
@@ -52,4 +58,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
