@@ -5,6 +5,7 @@
 - The production Docker image previously installed `requirements.txt`, which also supplies pytest for development/tests. Split the pinned runtime dependencies into `requirements-runtime.txt` and a generated transitive lock; the development requirements include both the runtime set and pytest. The runtime lock resolves 37 distributions versus 43 in the development lock, excluding pytest and five test-only dependencies.
 - Docker now installs only `requirements-runtime.lock` and fails the image build if pytest is present. CI audits the production lock separately; a regression test ensures the runtime pins are covered and the dev file still includes the test runner.
 - Local strict verification: `314 passed` with warnings treated as errors and pytest cache disabled; compileall, `pip check`, and `git diff --check` passed. The local Docker daemon did not return from a read-only version check, so the actual image build and runtime-lock audit require the hosted CI run.
+- Exact PR SHA `7bccd26` passed hosted verify (`38743273714`, including Docker build and runtime-lock audit), Windows package (`38743273923`), Python/Actions analysis (`38743267002`), and CodeQL (`116450593182`). These are build/test results, not a live Hetzner deployment.
 
 ## 2026-10-15 - Fix Windows PowerShell 5.1 package-smoke capture
 
