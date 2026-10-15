@@ -867,6 +867,7 @@ class Store:
             )
             if cursor.rowcount != 1:
                 return None
+            self._touch_request_for_appointment_in_transaction(db, workspace_id, appointment_id)
             self._audit_in_transaction(
                 db, workspace_id, actor, "appointment.cancellation_started", "appointment", appointment_id,
                 {"provider": "google_calendar"},
@@ -883,6 +884,7 @@ class Store:
                 (message, now, workspace_id, appointment_id),
             )
             if cursor.rowcount:
+                self._touch_request_for_appointment_in_transaction(db, workspace_id, appointment_id)
                 self._audit_in_transaction(
                     db, workspace_id, actor, "appointment.cancellation_manual_required", "appointment", appointment_id,
                     {"provider": "google_calendar"},
@@ -936,6 +938,7 @@ class Store:
             )
             if cursor.rowcount != 1:
                 raise ValueError("Appointment changed during cancellation reconciliation")
+            self._touch_request_for_appointment_in_transaction(db, workspace_id, appointment_id)
             self._audit_in_transaction(
                 db, workspace_id, actor, "appointment.cancellation_reconciled", "appointment", appointment_id,
                 {"outcome": "event_still_active", "retry_requires_explicit_action": True},
@@ -945,6 +948,13 @@ class Store:
         now = utc_now().isoformat()
         message = "The process stopped during Calendar cancellation; verify the event before retrying"
         with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            stale_ids = [
+                int(row["id"]) for row in db.execute(
+                    "SELECT id FROM appointments WHERE workspace_id=? AND status='cancelling' AND updated_at<?",
+                    (workspace_id, cutoff_iso),
+                ).fetchall()
+            ]
             cursor = db.execute(
                 "UPDATE appointments SET status='cancel_manual_required',error_text=?,updated_at=? "
                 "WHERE workspace_id=? AND status='cancelling' AND updated_at<?",
@@ -952,6 +962,8 @@ class Store:
             )
             count = cursor.rowcount
             if count:
+                for appointment_id in stale_ids:
+                    self._touch_request_for_appointment_in_transaction(db, workspace_id, appointment_id)
                 self._audit_in_transaction(
                     db, workspace_id, "worker", "appointments.stale_cancellations_recovered", "workspace", workspace_id,
                     {"count": count, "cutoff": cutoff_iso},

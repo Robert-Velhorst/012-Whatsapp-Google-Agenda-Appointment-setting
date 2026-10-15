@@ -623,6 +623,38 @@ def test_cancellation_is_blocked_after_reminder_worker_claims_send(app_bundle, a
     assert store.get_appointment("default", appointment_id)["status"] == "booked"
 
 
+def test_cancellation_recovery_transitions_advance_hai_feed_cursor(app_bundle):
+    app, _, _ = app_bundle
+    appointment_id = _book_calendar_appointment(app)
+    store = app.extensions["store"]
+    _, cursor = store.hai_feed("default")
+
+    assert store.claim_cancellation("default", appointment_id, "operator") is not None
+    items, cursor = store.hai_feed("default", cursor)
+    assert len(items) == 1
+    assert items[0]["appointment_status"] == "cancelling"
+
+    store.mark_cancellation_manual_required("default", appointment_id, "operator")
+    items, cursor = store.hai_feed("default", cursor)
+    assert len(items) == 1
+    assert items[0]["appointment_status"] == "cancel_manual_required"
+
+    store.restore_booked_after_cancellation_check("default", appointment_id, "operator")
+    items, cursor = store.hai_feed("default", cursor)
+    assert len(items) == 1
+    assert items[0]["appointment_status"] == "booked"
+
+    assert store.claim_cancellation("default", appointment_id, "operator") is not None
+    _, cursor = store.hai_feed("default", cursor)
+    with store.connect() as db:
+        db.execute("UPDATE appointments SET updated_at='2000-01-01T00:00:00+00:00' WHERE id=?", (appointment_id,))
+
+    assert store.recover_stale_cancellations("default", "2020-01-01T00:00:00+00:00") == 1
+    items, _ = store.hai_feed("default", cursor)
+    assert len(items) == 1
+    assert items[0]["appointment_status"] == "cancel_manual_required"
+
+
 def test_calendar_cancellation_timeout_is_reconciled_without_losing_state(app_bundle, auth_headers):
     app, calendar, _ = app_bundle
     appointment_id = _book_calendar_appointment(app)
