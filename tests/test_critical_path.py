@@ -1,4 +1,5 @@
 import sqlite3
+import threading
 from dataclasses import replace
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -574,6 +575,54 @@ def _book_calendar_appointment(app):
     return appointment_id
 
 
+def test_cancellation_is_blocked_after_reminder_worker_claims_send(app_bundle, auth_headers, monkeypatch):
+    app, calendar, whatsapp = app_bundle
+    appointment_id = _book_calendar_appointment(app)
+    store = app.extensions["store"]
+    service = app.extensions["scheduling"]
+    service.settings = replace(service.settings, whatsapp_reminder_template="appointment_reminder")
+    store.schedule_job(
+        "default", "appointment_reminder", f"test-reminder:{appointment_id}",
+        "2000-01-01T00:00:00+00:00", {"appointment_id": appointment_id},
+    )
+    worker_at_send = threading.Event()
+    allow_send = threading.Event()
+    worker_errors = []
+    original_rate_limit = service._enforce_rate_limit
+
+    def pause_before_send(sender):
+        worker_at_send.set()
+        if not allow_send.wait(timeout=5):
+            raise TimeoutError("test did not release the reminder sender")
+        original_rate_limit(sender)
+
+    monkeypatch.setattr(service, "_enforce_rate_limit", pause_before_send)
+
+    def run_worker():
+        try:
+            service.run_due_jobs()
+        except Exception as exc:  # Captured across the worker thread for deterministic assertions below.
+            worker_errors.append(exc)
+
+    worker_thread = threading.Thread(target=run_worker, daemon=True)
+    worker_thread.start()
+    try:
+        assert worker_at_send.wait(timeout=5)
+        response = app.test_client().post(f"/api/appointments/{appointment_id}/cancel", headers=auth_headers)
+        assert response.status_code == 409
+        assert response.get_json()["error"]["code"] == "appointment_not_cancellable"
+        assert calendar.cancelled == []
+        assert store.get_appointment("default", appointment_id)["status"] == "booked"
+    finally:
+        allow_send.set()
+        worker_thread.join(timeout=5)
+
+    assert not worker_thread.is_alive()
+    assert worker_errors == []
+    assert len(whatsapp.templates) == 1
+    assert store.get_appointment("default", appointment_id)["status"] == "booked"
+
+
 def test_calendar_cancellation_timeout_is_reconciled_without_losing_state(app_bundle, auth_headers):
     app, calendar, _ = app_bundle
     appointment_id = _book_calendar_appointment(app)
@@ -722,6 +771,94 @@ def test_reschedule_requires_review_then_updates_calendar_and_local_state(app_bu
     assert len(feed_updates) == 1
     assert feed_updates[0]["appointment_status"] == "booked"
     assert feed_updates[0]["start_at"] == target_start.isoformat()
+
+
+def test_reschedule_cannot_be_discarded_while_reminder_is_running(app_bundle):
+    app, _, _ = app_bundle
+    appointment_id = _book_calendar_appointment(app)
+    store = app.extensions["store"]
+    service = app.extensions["scheduling"]
+    store.schedule_job(
+        "default", "appointment_reminder", f"test-reminder:{appointment_id}",
+        "2099-01-01T00:00:00+00:00", {"appointment_id": appointment_id},
+    )
+    target_start = datetime.now(ZoneInfo("Europe/Amsterdam")).replace(hour=15, minute=0, second=0, microsecond=0) + timedelta(days=6)
+    service.prepare_reschedule(appointment_id, target_start.isoformat())
+
+    with store.connect() as db:
+        db.execute(
+            "UPDATE background_jobs SET status='running' WHERE job_type='appointment_reminder' "
+            "AND payload_json LIKE ?",
+            (f'%\"appointment_id\": {appointment_id}%',),
+        )
+
+    with pytest.raises(ValueError, match="reminder is currently being sent"):
+        service.discard_reschedule(appointment_id)
+
+    assert store.get_appointment("default", appointment_id)["status"] == "reschedule_pending"
+    with store.connect() as db:
+        reminders = db.execute(
+            "SELECT status FROM background_jobs WHERE job_type='appointment_reminder' "
+            "AND payload_json LIKE ? ORDER BY id",
+            (f'%\"appointment_id\": {appointment_id}%',),
+        ).fetchall()
+    assert [row["status"] for row in reminders] == ["running"]
+
+
+def test_prepare_reschedule_serializes_running_reminder_check(app_bundle, monkeypatch):
+    app, _, _ = app_bundle
+    appointment_id = _book_calendar_appointment(app)
+    store = app.extensions["store"]
+    service = app.extensions["scheduling"]
+    store.schedule_job(
+        "default", "appointment_reminder", f"test-reminder:{appointment_id}",
+        "2099-01-01T00:00:00+00:00", {"appointment_id": appointment_id},
+    )
+    target_start = datetime.now(ZoneInfo("Europe/Amsterdam")).replace(hour=15, minute=0, second=0, microsecond=0) + timedelta(days=7)
+    reminder_check_entered = threading.Event()
+    allow_reminder_check_to_finish = threading.Event()
+    prepare_started = threading.Event()
+    prepare_errors = []
+    original_check = store._appointment_has_running_reminder
+
+    def pause_after_reminder_check(db, workspace_id, checked_appointment_id):
+        running = original_check(db, workspace_id, checked_appointment_id)
+        reminder_check_entered.set()
+        if not allow_reminder_check_to_finish.wait(timeout=5):
+            raise TimeoutError("test did not release the reminder check")
+        return running
+
+    monkeypatch.setattr(
+        type(store), "_appointment_has_running_reminder", staticmethod(pause_after_reminder_check),
+    )
+
+    def prepare():
+        prepare_started.set()
+        try:
+            service.prepare_reschedule(appointment_id, target_start.isoformat())
+        except Exception as exc:  # Captured across the worker thread for deterministic assertions below.
+            prepare_errors.append(exc)
+
+    prepare_thread = threading.Thread(target=prepare, daemon=True)
+    with store.connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        db.execute(
+            "UPDATE background_jobs SET status='running' WHERE job_type='appointment_reminder' "
+            "AND payload_json LIKE ?",
+            (f'%\"appointment_id\": {appointment_id}%',),
+        )
+        prepare_thread.start()
+        prepare_started_in_time = prepare_started.wait(timeout=5)
+        check_raced_ahead_of_writer_lock = reminder_check_entered.wait(timeout=0.5)
+
+    allow_reminder_check_to_finish.set()
+    prepare_thread.join(timeout=5)
+
+    assert not prepare_thread.is_alive()
+    assert prepare_started_in_time
+    assert not check_raced_ahead_of_writer_lock
+    assert len(prepare_errors) == 1 and isinstance(prepare_errors[0], ValueError)
+    assert store.get_appointment("default", appointment_id)["status"] == "booked"
 
 
 def test_reschedule_browser_review_requires_csrf_and_explicit_confirmation(app_bundle):

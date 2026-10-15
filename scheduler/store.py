@@ -856,6 +856,10 @@ class Store:
     def claim_cancellation(self, workspace_id: str, appointment_id: int, actor: str) -> dict[str, Any] | None:
         now = utc_now().isoformat()
         with self.connect() as db:
+            # Serialize the reminder-state check with worker claims and the cancellation transition.
+            db.execute("BEGIN IMMEDIATE")
+            if self._appointment_has_running_reminder(db, workspace_id, appointment_id):
+                raise ValueError("A Calendar reminder is currently being sent; wait before cancelling the appointment")
             cursor = db.execute(
                 "UPDATE appointments SET status='cancelling',error_text=NULL,updated_at=? "
                 "WHERE workspace_id=? AND id=? AND status='booked' AND google_event_id IS NOT NULL",
@@ -957,6 +961,8 @@ class Store:
     def prepare_reschedule(self, workspace_id: str, appointment_id: int, start_at: str, end_at: str, actor: str) -> bool:
         now = utc_now().isoformat()
         with self.connect() as db:
+            # Serialize the reminder-state check with worker claims and the appointment transition.
+            db.execute("BEGIN IMMEDIATE")
             if self._appointment_has_running_reminder(db, workspace_id, appointment_id):
                 raise ValueError("A Calendar reminder is currently being sent; wait before preparing a reschedule")
             cursor = db.execute(
@@ -978,12 +984,16 @@ class Store:
     ) -> bool:
         now = utc_now().isoformat()
         with self.connect() as db:
+            # Prevent a worker from claiming the old reminder between this check and the state/job updates.
+            db.execute("BEGIN IMMEDIATE")
             row = db.execute(
                 "SELECT reschedule_attempt FROM appointments WHERE workspace_id=? AND id=? AND status='reschedule_pending'",
                 (workspace_id, appointment_id),
             ).fetchone()
             if not row:
                 return False
+            if self._appointment_has_running_reminder(db, workspace_id, appointment_id):
+                raise ValueError("A Calendar reminder is currently being sent; wait before discarding a reschedule")
             cursor = db.execute(
                 "UPDATE appointments SET status='booked',pending_start_at=NULL,pending_end_at=NULL,updated_at=? "
                 "WHERE workspace_id=? AND id=? AND status='reschedule_pending'",

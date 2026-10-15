@@ -20,7 +20,7 @@ Status is evidence-based as of 2026-10-15. `Implemented` means locally wired and
 | 013 | Compliance boundaries | Implemented | Official APIs only; reminder-template/manual boundary |
 | 014 | No fake production success | Implemented | Fakes confined to tests; truthful provider states |
 | 015 | Upload/media safety | Not applicable | Product exposes no upload/media routes |
-| 016 | Jobs/workers | Implemented | Claimed reminder jobs, terminal/manual states, retention, stale-claim recovery |
+| 016 | Jobs/workers | Implemented | Claimed reminder jobs, terminal/manual states, retention, stale-claim recovery, and serialized reminder claims against reschedule preparation/discard and cancellation |
 | 017 | Idempotency | Implemented | Unique inbound/domain/job/event keys and atomic claims |
 | 018 | Rate/provider quotas | Implemented | Atomic per-contact hourly outbound reservations; provider errors surfaced |
 | 019 | Audit history | Implemented | Workspace-scoped audit events and UI/API |
@@ -81,7 +81,7 @@ Status is evidence-based as of 2026-10-15. `Implemented` means locally wired and
 | 074 | API usage audit | Implemented | Public/operator/provider surfaces mapped |
 | 075 | Documentation truthfulness | Implemented | Partial/blocked status stated throughout |
 | 076 | Debt register | Implemented | `docs/MAINTENANCE.md` |
-| 077 | Bug hunt log | Implemented | Worklog records template, security, provider ambiguity, concurrency, timezone, corrupt-restore, and contact-language/transaction fixes |
+| 077 | Bug hunt log | Implemented | Worklog records template, security, provider ambiguity, concurrency (including reminder/cancel/reschedule races), timezone, corrupt-restore, and contact-language/transaction fixes |
 | 078 | Red-team loop one | Partial | Automated auth/signature/CSRF/size/state review; independent review absent |
 | 079 | Red-team loop two | Partial | Privacy/isolation/encryption review; independent review absent |
 | 080 | Red-team loop three | Partial | Provider ambiguity/idempotency review; real-provider chaos test blocked |
