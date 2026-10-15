@@ -12,5 +12,10 @@
 .nav-link:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 @media(max-width:760px){.sidebar nav{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));overflow:visible}.nav-link{min-height:44px;gap:8px;padding:9px 8px;white-space:normal}}
 @media(max-width:760px){.settings-block dl{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
-:root{--amber:#a15b00}
+:root{--amber:#a15b00;--green:#126f45}
+.row-action,.pagination a,.text-button{min-width:24px;min-height:24px;display:inline-flex;align-items:center}
+.row-action{padding:3px 2px}
+.pagination a{padding:4px}
+.text-button{padding:3px 6px}
+:where(a,button,input,select,textarea):focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 

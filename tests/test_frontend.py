@@ -176,6 +176,34 @@ def test_primary_navigation_has_visible_keyboard_focus_indicator(app_bundle):
     assert ".nav-link:focus-visible{outline:2px solid var(--blue);outline-offset:2px}" in stylesheet
 
 
+def test_compact_dashboard_actions_meet_minimum_target_size_and_have_focus_indicator(app_bundle):
+    app, _, _ = app_bundle
+    stylesheet = (Path(app.static_folder) / "app.css").read_text(encoding="utf-8")
+
+    assert ".row-action,.pagination a,.text-button{min-width:24px;min-height:24px;display:inline-flex;align-items:center}" in stylesheet
+    assert ".row-action{padding:3px 2px}" in stylesheet
+    assert ".pagination a{padding:4px}" in stylesheet
+    assert ".text-button{padding:3px 6px}" in stylesheet
+    assert ":where(a,button,input,select,textarea):focus-visible{outline:2px solid var(--blue);outline-offset:2px}" in stylesheet
+
+
+def test_green_status_color_meets_wcag_small_text_contrast(app_bundle):
+    app, _, _ = app_bundle
+    stylesheet = (Path(app.static_folder) / "app.css").read_text(encoding="utf-8")
+    green_colors = re.findall(r"--green:(#[0-9a-fA-F]{6})", stylesheet)
+    assert green_colors
+
+    def luminance(color):
+        channels = [int(color[index:index + 2], 16) / 255 for index in (1, 3, 5)]
+        linear = [value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4 for value in channels]
+        return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+    foreground = luminance(green_colors[-1])
+    for background in ("#ffffff", "#ecf8f1"):
+        ratio = (luminance(background) + 0.05) / (foreground + 0.05)
+        assert ratio >= 4.5, f"green contrast is {ratio:.2f}:1 on {background}"
+
+
 def test_mobile_primary_navigation_wraps_instead_of_hiding_destinations(app_bundle):
     app, _, _ = app_bundle
     stylesheet = (Path(app.static_folder) / "app.css").read_text(encoding="utf-8")

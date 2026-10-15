@@ -1,5 +1,12 @@
 # Codex worklog
 
+## 2026-10-15 - Correct compact dashboard accessibility targets
+
+- Browser inspection of the synthetic local dashboard measured the review action at 16px high and pagination at 23px high. Added 24x24 minimum target dimensions and padding to compact row actions, pagination links, and sign-out; added a consistent visible focus outline for interactive elements.
+- Darkened the green status token to meet WCAG AA 4.5:1 contrast on white and green-soft surfaces. The goal matrix remains partial because this focused correction is not a complete WCAG audit.
+- Hetzner remains the supported production route. Ngrok is not required; historical mentions are retained only to preserve dated evidence.
+- Verification: frontend suite `14 passed`; full strict suite `345 passed` with warnings treated as errors; `compileall`, `pip check`, and `git diff --check` passed. The prior synthetic browser server had stopped before a post-change reload, so browser-rendered target-size verification is not claimed.
+
 ## 2026-10-15 - Separate production and development dependencies
 
 - The production Docker image previously installed `requirements.txt`, which also supplies pytest for development/tests. Split the pinned runtime dependencies into `requirements-runtime.txt` and a generated transitive lock; the development requirements include both the runtime set and pytest. The runtime lock resolves 37 distributions versus 43 in the development lock, excluding pytest and five test-only dependencies.
