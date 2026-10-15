@@ -99,3 +99,7 @@ Three serial 1,000-record runs before the change measured 143.9–198.3 records/
 ## Post-dependency-refresh sample — 2026-10-14
 
 Three serial runs of the same temporary-database workload on the Windows 11 development host, after installing the current `requirements.lock`, verified 1,000 records each and observed 838.9–934.5 writes/second, dashboard medians of 0.585–1.051 ms, p95 of 0.693–1.491 ms, a 500-item HAI page in 4.701–9.065 ms, and 0.49 MiB traced Python peak. The structured runs are recorded in `.ecc/benchmarks/sqlite-workload-2026-10-14.json` against code commit `2fad193d4dd4aeeb9e595376e87fb490204f3107`. This is a single-host, serial synthetic sample; do not interpret it as concurrent capacity, live-provider latency, a stable speed claim, or a Hetzner benchmark. The workload uses temporary SQLite databases only.
+
+## Fresh sample — 2026-10-15
+
+Three serial runs of `python -m scripts.benchmark --records 1000 --reads 500` against the current working tree verified 1,000 records per run and observed 44.3–353.8 writes/second, dashboard medians of 0.630–0.917 ms, p95 of 0.928–1.968 ms, maximum reads of 5.174–7.372 ms, a 500-item HAI page in 1.857–3.192 ms, and 0.49 MiB traced Python peak. Dashboard/feed timings and Python allocation remained small, but write-throughput variation was too large to support a speedup or capacity claim. The runs used separate temporary databases on one Windows 11 host, serially; concurrent, cold-cache, live-provider, and Hetzner performance remain unmeasured.

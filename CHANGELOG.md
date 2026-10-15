@@ -3,6 +3,9 @@
 ## Unreleased
 
 - Correctly distinguish Dutch `overmorgen` from `morgen` and recognize English “the day after tomorrow” when selecting requested dates.
+- Close persistent SQLite connections when their owning request/worker thread exits, including after concurrent webhook processing.
+- Disable the web-only Docker healthcheck for the scheduler worker and validate the effective Compose health model in CI.
+- Update historical release verification so Hetzner, not ngrok, is identified as the current production acceptance path.
 - Prevent duplicate Calendar events after ambiguous create/persistence failures by requiring reconciliation before retry; recover missing reminder jobs on idempotent booking retries.
 - Serialize Google OAuth token refreshes across web/worker processes sharing the token file and atomically replace token contents.
 - Normalize no-overwrite support-bundle errors across Windows and POSIX while preserving the existing archive.

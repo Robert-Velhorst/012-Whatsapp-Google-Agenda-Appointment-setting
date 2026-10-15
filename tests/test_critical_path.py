@@ -317,11 +317,12 @@ def test_scheduling_webhook_batches_contact_language_request_and_audit_write(app
     app, _, _ = app_bundle
     store = app.extensions["store"]
     statements = []
-    store._local.connection.set_trace_callback(statements.append)
+    connection = store._local.connection.connection
+    connection.set_trace_callback(statements.append)
     try:
         response = post_webhook(app.test_client(), webhook())
     finally:
-        store._local.connection.set_trace_callback(None)
+        connection.set_trace_callback(None)
 
     assert response.status_code == 200
     assert response.get_json()["proposals"] == 1

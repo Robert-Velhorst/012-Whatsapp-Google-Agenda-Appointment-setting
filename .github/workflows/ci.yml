@@ -22,4 +22,5 @@ jobs:
       - run: pytest -q
       - run: touch .env
       - run: docker compose config --no-env-resolution --quiet
+      - run: docker compose config --no-env-resolution --no-interpolate --format json | python -c "import json,sys; assert json.load(sys.stdin)['services']['worker']['healthcheck']['disable'] is True"
       - run: docker build -t agenda-relay:test .

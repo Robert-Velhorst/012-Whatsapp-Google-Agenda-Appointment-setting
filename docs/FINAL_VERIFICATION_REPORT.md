@@ -23,7 +23,7 @@ This report preserves evidence from its dated verification period; its ngrok exp
 
 ## Provider/account gate
 
-No real WhatsApp message or Google Calendar event was created during release verification. A temporary isolated ngrok agent reached the cloud service, but the account's free endpoint was already online elsewhere and ngrok returned `ERR_NGROK_334`. Agenda Relay did not enable endpoint pooling or disturb that existing tunnel. Live production acceptance therefore still requires authorized Meta and Google credentials/approvals plus an assigned available ngrok domain/session.
+No real WhatsApp message or Google Calendar event was created during release verification. A temporary isolated ngrok agent reached the cloud service, but the account's free endpoint was already online elsewhere and ngrok returned `ERR_NGROK_334`. Agenda Relay did not enable endpoint pooling or disturb that existing tunnel. That tunnel experiment is historical and is not a current deployment requirement. Live production acceptance now requires an authorized Hetzner deployment with verified DNS/TLS, secure ingress, backups and rollback, plus authorized Google credentials/consent and the applicable WhatsApp workflow; see [the current Hetzner deployment guide](HETZNER_DEPLOYMENT.md).
 
 This distinction is intentional: local build/test/package readiness is verified; real-provider production operation is not claimed without owner-authorized accounts and cleanup.
 

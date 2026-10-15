@@ -21,6 +21,27 @@ def utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+class _ThreadConnection:
+    """Close a persistent SQLite connection when its owning thread exits."""
+
+    def __init__(self, connection: sqlite3.Connection):
+        self.connection: sqlite3.Connection | None = connection
+
+    def close(self) -> None:
+        connection = self.connection
+        if connection is not None:
+            connection.close()
+            self.connection = None
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            # Destructors run during thread/interpreter teardown; explicit Store.close
+            # remains the path for reporting shutdown failures to its caller.
+            pass
+
+
 class Store:
     def __init__(self, path: Path, crypto: CryptoBox | None = None):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -32,8 +53,8 @@ class Store:
 
     @contextmanager
     def connect(self):
-        connection = getattr(self._local, "connection", None)
-        if connection is None:
+        thread_connection = getattr(self._local, "connection", None)
+        if thread_connection is None:
             connection = sqlite3.connect(self.path, timeout=5, cached_statements=256)
             connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA foreign_keys=ON")
@@ -42,7 +63,12 @@ class Store:
             connection.execute("PRAGMA synchronous=NORMAL")
             connection.execute("PRAGMA temp_store=MEMORY")
             connection.execute("PRAGMA cache_size=-4096")
-            self._local.connection = connection
+            thread_connection = _ThreadConnection(connection)
+            self._local.connection = thread_connection
+        else:
+            connection = thread_connection.connection
+            if connection is None:
+                raise RuntimeError("This thread's SQLite connection has already been closed")
         try:
             yield connection
             connection.commit()
@@ -52,9 +78,9 @@ class Store:
 
     def close(self) -> None:
         """Close the connection owned by the current thread."""
-        connection = getattr(self._local, "connection", None)
-        if connection is not None:
-            connection.close()
+        thread_connection = getattr(self._local, "connection", None)
+        if thread_connection is not None:
+            thread_connection.close()
             del self._local.connection
 
     def ensure_workspace(self, workspace_id: str, name: str, timezone_name: str) -> None:

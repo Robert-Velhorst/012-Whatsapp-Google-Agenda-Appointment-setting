@@ -1,6 +1,8 @@
 
-from dataclasses import replace
+import gc
+import warnings
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from threading import Event
 
 import pytest
@@ -184,6 +186,20 @@ def test_duplicate_webhook_during_processing_requests_provider_retry(app_bundle)
     duplicate = post_webhook(app.test_client(), payload)
     assert duplicate.status_code == 200
     assert duplicate.get_json()["duplicates"] == 1
+
+
+def test_thread_local_store_connection_closes_when_request_thread_exits(app_bundle):
+    app, _, _ = app_bundle
+    store = app.extensions["store"]
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", ResourceWarning)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            assert pool.submit(store.get_state, "default", "missing", "").result() == ""
+        gc.collect()
+
+    leaked = [warning for warning in caught if issubclass(warning.category, ResourceWarning)]
+    assert leaked == []
 
 
 def test_new_unrelated_message_does_not_reuse_old_scheduling_intent(app_bundle):
