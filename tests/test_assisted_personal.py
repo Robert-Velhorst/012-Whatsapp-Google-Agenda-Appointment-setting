@@ -177,6 +177,29 @@ def test_assisted_path_rejects_non_scheduling_and_missing_calendar_without_creat
     assert app.extensions["store"].dashboard("default")["total"] == 0
 
 
+def test_assisted_ui_rejects_non_new_booking_messages_without_calling_providers(app_bundle):
+    app, calendar, whatsapp = app_bundle
+    client = signed_in_client(app)
+
+    for message in (
+        "I don't want to schedule a call tomorrow.",
+        "I need to reschedule our call to Friday.",
+        "I had a meeting yesterday.",
+    ):
+        response = client.post(
+            "/actions/assisted/analyze",
+            data={"csrf_token": "assisted-test-csrf", "message": message},
+        )
+
+        assert response.status_code == 302
+        page = client.get(response.headers["Location"])
+        assert b"could not identify a scheduling request" in page.data
+        assert app.extensions["store"].dashboard("default")["total"] == 0
+
+    assert calendar.preferred_times == []
+    assert whatsapp.sent == []
+
+
 def test_assisted_calendar_failure_is_recorded_without_leaking_provider_details(app_bundle, monkeypatch):
     app, calendar, _ = app_bundle
     client = signed_in_client(app)
