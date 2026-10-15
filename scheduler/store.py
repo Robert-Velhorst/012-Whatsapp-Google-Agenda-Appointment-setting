@@ -1371,6 +1371,7 @@ class Store:
                 )
                 if cursor.rowcount != 1:
                     raise ValueError("Appointment changed during calendar reconciliation")
+                self._touch_request_in_transaction(db, workspace_id, int(row["request_id"]))
                 outcome = "event_not_found"
                 detail = {"outcome": outcome, "provider": "google_calendar", "retry_requires_explicit_operator_action": True}
 

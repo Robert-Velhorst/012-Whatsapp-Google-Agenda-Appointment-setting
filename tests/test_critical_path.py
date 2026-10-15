@@ -401,6 +401,60 @@ def test_ambiguous_calendar_create_requires_reconciliation_before_retry(app_bund
     assert len(calendar.created) == 1
 
 
+def test_failed_booking_reconciliation_advances_hai_appointment_cursor(app_bundle):
+    app, calendar, _ = app_bundle
+    client = app.test_client()
+    post_webhook(client, webhook())
+    store = app.extensions["store"]
+    scheduling = app.extensions["scheduling"]
+    item = store.dashboard("default")["items"][0]
+    scheduling.send_proposal(item["proposal_id"])
+    post_webhook(client, webhook("wamid.2", body="The second one works for me"))
+    appointment_id = store.dashboard("default")["items"][0]["appointment_id"]
+    original_mark_booked = store.mark_booked
+
+    def fail_local_commit(*args, **kwargs):
+        raise sqlite3.IntegrityError("synthetic local commit failure after provider create")
+
+    store.mark_booked = fail_local_commit
+    with pytest.raises(CalendarUnavailable, match="needs reconciliation"):
+        scheduling.book_appointment(appointment_id)
+    store.mark_booked = original_mark_booked
+    assert store.get_appointment("default", appointment_id)["status"] == "manual_required"
+
+    calendar.events.pop(appointment_id)
+    _, cursor = store.hai_feed("default")
+    result = scheduling.reconcile_stale_booking(appointment_id)
+    assert result["status"] == "failed"
+
+    items, _ = store.hai_feed("default", cursor)
+    assert len(items) == 1
+    assert items[0]["status"] == "failed"
+    assert items[0]["appointment_status"] == "failed"
+
+
+def test_hai_feed_cursor_pages_equal_timestamp_rows_without_gaps_or_duplicates(app_bundle):
+    app, _, _ = app_bundle
+    client = app.test_client()
+    for index in range(4):
+        post_webhook(client, webhook(f"wamid.page.{index}", body="Could we schedule a meeting tomorrow?"))
+    store = app.extensions["store"]
+    timestamp = "2026-10-15T12:00:00+00:00"
+    with store.connect() as db:
+        db.execute("UPDATE scheduling_requests SET updated_at=?", (timestamp,))
+
+    cursor = store._encode_feed_cursor(timestamp, 0)
+    seen_ids = []
+    while True:
+        items, next_cursor = store.hai_feed("default", cursor, limit=2)
+        if not items:
+            break
+        seen_ids.extend(item["id"] for item in items)
+        cursor = next_cursor
+
+    assert seen_ids == [1, 2, 3, 4]
+
+
 def test_idempotent_booking_retry_repairs_missing_reminder_job(app_bundle):
     app, calendar, _ = app_bundle
     client = app.test_client()
