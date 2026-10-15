@@ -32,6 +32,41 @@ def test_intent_handles_hours_and_invalid_duration():
     assert analyse("schedule a call for 900 minutes", date(2026, 8, 8), 30).duration_minutes == 30
 
 
+@pytest.mark.parametrize("message", [
+    "I don't want to schedule a call tomorrow.",
+    "Please do not book a meeting.",
+    "Ik wil geen afspraak inplannen.",
+    "Geen afspraak maken deze week.",
+])
+def test_intent_does_not_treat_explicitly_declined_scheduling_as_a_request(message):
+    assert not analyse(message, date(2026, 8, 8), 30).is_scheduling
+
+
+@pytest.mark.parametrize("message", [
+    "I need to reschedule our call to Friday.",
+    "Please cancel my appointment.",
+    "Ik moet onze afspraak verzetten.",
+])
+def test_intent_does_not_create_a_new_appointment_for_cancel_or_reschedule_messages(message):
+    assert not analyse(message, date(2026, 8, 8), 30).is_scheduling
+
+
+@pytest.mark.parametrize("message", [
+    "I had a meeting yesterday.",
+    "We had an appointment last week.",
+    "I already have a call tomorrow.",
+])
+def test_intent_does_not_treat_existing_or_past_event_statements_as_new_requests(message):
+    assert not analyse(message, date(2026, 8, 8), 30).is_scheduling
+
+
+def test_intent_keeps_explicit_future_request_after_retrospective_context():
+    intent = analyse("We met last week. Could we schedule another call tomorrow?", date(2026, 8, 8), 30)
+
+    assert intent.is_scheduling
+    assert intent.requested_start == date(2026, 8, 9)
+
+
 @pytest.mark.parametrize(("message", "expected"), [
     ("Can we schedule a call next Friday at 3?", time(15)),
     ("Kunnen we vrijdagmiddag een afspraak plannen?", time(14)),

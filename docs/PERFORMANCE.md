@@ -103,3 +103,7 @@ Three serial runs of the same temporary-database workload on the Windows 11 deve
 ## Fresh sample — 2026-10-15
 
 Three serial runs of `python -m scripts.benchmark --records 1000 --reads 500` against the current working tree verified 1,000 records per run and observed 44.3–353.8 writes/second, dashboard medians of 0.630–0.917 ms, p95 of 0.928–1.968 ms, maximum reads of 5.174–7.372 ms, a 500-item HAI page in 1.857–3.192 ms, and 0.49 MiB traced Python peak. Dashboard/feed timings and Python allocation remained small, but write-throughput variation was too large to support a speedup or capacity claim. The runs used separate temporary databases on one Windows 11 host, serially; concurrent, cold-cache, live-provider, and Hetzner performance remain unmeasured.
+
+## Post-cursor-fix sample — 2026-10-15
+
+Three further serial runs against source commit `57d2fd7` verified all 1,000 records per run and measured 879.8–1,096.3 writes/second, 0.698–1.007 ms dashboard median, 1.180–1.857 ms p95, 1.978–2.466 ms for the 500-item HAI feed, and 0.49 MiB traced Python peak. These separate temporary-database measurements show stable small read/feed timings in this sample but do not establish a speedup, concurrent capacity, or a Hetzner performance guarantee. No resource/performance tradeoff was made from this synthetic benchmark.

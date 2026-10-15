@@ -41,7 +41,31 @@ class DeterministicIntentProvider:
     def analyse(self, text: str, today: date, default_duration: int) -> Intent:
         lower = text.lower()
         matched_terms = [term for term in SCHEDULING_TERMS if re.search(rf"\b{re.escape(term)}\b", lower)]
-        is_scheduling = bool(matched_terms)
+        non_new_booking_request = re.search(
+            r"\b(?:don't|do not|dont)\s+(?:(?:want|need)\s+to\s+)?(?:schedule|book|arrange|meet)\b"
+            r"|\b(?:don't|do not|dont)\s+want\s+(?:a\s+)?(?:meeting|call|appointment)\b"
+            r"|\b(?:wil|willen)\s+geen\s+(?:afspraak|meeting|call|overleg)\b"
+            r"|\bgeen\s+(?:afspraak|meeting|call|overleg)\s+(?:maken|plannen|inplannen)\b"
+            r"|\b(?:cancel|cancell?ed|cancell?ing|cancellation|reschedule|rescheduled|rescheduling|"
+            r"postpone|postponed|postponing|move|moved|moving|change|changed)\b"
+            r"|\b(?:annuleer|annuleren|annulering|verzet|verzetten|verplaatsen|verschuif|wijzig|wijzigen|verander|veranderen)\b",
+            lower,
+        )
+        past_or_existing_event = re.search(
+            r"\b(?:i|we|they)\s+(?:already\s+)?(?:had|held|attended)\s+(?:(?:a|an|the|our|my)\s+)?(?:meeting|call|appointment)\b"
+            r"|\b(?:i|we|they)\s+(?:already\s+)?have\s+(?:(?:a|an|the|our|my)\s+)(?:meeting|call|appointment)\b",
+            lower,
+        )
+        clear_request = re.search(
+            r"\b(?:can|could|would)\s+(?:we|i|you)\b"
+            r"|\b(?:want|need|would like)\s+to\s+(?:schedule|book|arrange|meet|set up)\b"
+            r"|\b(?:schedule|book|arrange|set up|inplannen|afspreken|plannen)\b"
+            r"|\b(?:available|free)\b",
+            lower,
+        )
+        is_scheduling = bool(matched_terms) and non_new_booking_request is None and not (
+            past_or_existing_event is not None and clear_request is None
+        )
         dutch_markers = (
             "afspraak", "morgen", "maandag", "dinsdag", "woensdag", "donderdag", "vrijdag",
             "uur", "beschikbaar", "volgende week", "komende week",

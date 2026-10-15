@@ -102,6 +102,27 @@ def test_webhook_is_idempotent_and_creates_reviewable_proposal(app_bundle, auth_
     assert whatsapp.sent == []
 
 
+@pytest.mark.parametrize("body", [
+    "I don't want to schedule a call tomorrow.",
+    "Ik wil geen afspraak inplannen.",
+    "I need to reschedule our call to Friday.",
+    "Please cancel my appointment.",
+    "Ik moet onze afspraak verzetten.",
+    "I had a meeting yesterday.",
+    "We had an appointment last week.",
+    "I already have a call tomorrow.",
+])
+def test_non_new_booking_webhook_message_does_not_create_scheduling_request(app_bundle, body):
+    app, _, whatsapp = app_bundle
+
+    response = post_webhook(app.test_client(), webhook(body=body))
+
+    assert response.status_code == 200
+    assert response.get_json()["ignored"] == 1
+    assert app.extensions["store"].dashboard("default")["total"] == 0
+    assert whatsapp.sent == []
+
+
 def test_provider_retry_resumes_inbound_message_after_transient_analysis_failure(app_bundle):
     app, calendar, _ = app_bundle
     scheduling = app.extensions["scheduling"]
