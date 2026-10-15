@@ -51,11 +51,16 @@ try {
     & $Executable migrate
     if ($LASTEXITCODE -ne 0) { throw "Packaged migrate command failed before key-rotation smoke test." }
     $passwordArgument = "SyntheticOnly-NoSecret-123!"
-    $passwordRejectionOutput = @(& $Executable hash-password $passwordArgument 2>&1 | ForEach-Object { $_.ToString() })
-    $passwordRejectionExitCode = $LASTEXITCODE
+    $passwordStdoutPath = Join-Path $LogDirectory "password-rejection.out.log"
+    $passwordStderrPath = Join-Path $LogDirectory "password-rejection.err.log"
+    $passwordProcess = Start-Process -FilePath $Executable -ArgumentList @("hash-password", $passwordArgument) -WorkingDirectory $RunDirectory -RedirectStandardOutput $passwordStdoutPath -RedirectStandardError $passwordStderrPath -WindowStyle Hidden -Wait -PassThru
+    $passwordRejectionExitCode = $passwordProcess.ExitCode
+    $passwordStdout = if (Test-Path -LiteralPath $passwordStdoutPath) { Get-Content -LiteralPath $passwordStdoutPath -Raw } else { "" }
+    $passwordStderr = if (Test-Path -LiteralPath $passwordStderrPath) { Get-Content -LiteralPath $passwordStderrPath -Raw } else { "" }
+    $passwordRejectionOutput = $passwordStdout + $passwordStderr
     if ($passwordRejectionExitCode -ne 2) { throw "Packaged hash-password accepted a command-line password or returned an unexpected exit code: $passwordRejectionExitCode." }
-    if (($passwordRejectionOutput -join "`n") -notmatch "does not accept password arguments") { throw "Packaged hash-password did not report its secure-prompt requirement." }
-    if (($passwordRejectionOutput -join "`n").Contains($passwordArgument)) { throw "Packaged hash-password echoed a command-line password argument." }
+    if ($passwordRejectionOutput -notmatch "does not accept password arguments") { throw "Packaged hash-password did not report its secure-prompt requirement." }
+    if ($passwordRejectionOutput.Contains($passwordArgument)) { throw "Packaged hash-password echoed a command-line password argument." }
     $seedSmokeData = @'
 from scheduler.config import Settings
 from scheduler.crypto import CryptoBox

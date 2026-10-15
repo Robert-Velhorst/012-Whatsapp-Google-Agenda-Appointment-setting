@@ -1,5 +1,11 @@
 # Codex worklog
 
+## 2026-10-15 - Fix Windows PowerShell 5.1 package-smoke capture
+
+- The exact-commit Windows package workflow for `f8aee95` failed before assertions: Windows PowerShell 5.1 converted the expected native executable stderr usage text into a terminating `NativeCommandError` under `$ErrorActionPreference = "Stop"`. The Python/Actions analyses, verify job, and CodeQL passed on that SHA.
+- Changed the smoke test to launch the packaged CLI with `Start-Process -Wait -PassThru`, redirect stdout/stderr to isolated log files, and assert the exit code/message/no-echo from those files. This keeps the rejection test compatible with both Windows PowerShell 5.1 and PowerShell 7.
+- Re-ran the full isolated package smoke against the existing x64 executable under Windows PowerShell 5.1 and PowerShell 7. Both passed migrations, synthetic command-line password rejection, three-field key rotation, default backup creation, health (`true`), and branded login (HTTP 200); measured working sets were 66.9 MiB and 67.3 MiB. The new hosted package workflow still needs to run on the follow-up commit.
+
 ## 2026-10-15 - Goal continuation and independent-scan limitation
 
 - Revalidated the current working tree after the secure-password CLI and Windows package follow-up. The full suite passes with warnings treated as errors and pytest's cache plugin disabled: `312 passed`; `compileall`, `pip check`, `git diff --check`, and PowerShell parsing of the Windows launcher/package scripts passed. A default pytest run also passed, but this workspace denies writes to `.pytest_cache`, so the strict rerun disabled that cache instead of treating the warning as a product failure.
