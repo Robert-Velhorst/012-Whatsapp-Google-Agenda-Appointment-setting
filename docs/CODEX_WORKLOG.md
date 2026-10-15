@@ -4,7 +4,8 @@
 
 - The exact-commit Windows package workflow for `f8aee95` failed before assertions: Windows PowerShell 5.1 converted the expected native executable stderr usage text into a terminating `NativeCommandError` under `$ErrorActionPreference = "Stop"`. The Python/Actions analyses, verify job, and CodeQL passed on that SHA.
 - Changed the smoke test to launch the packaged CLI with `Start-Process -Wait -PassThru`, redirect stdout/stderr to isolated log files, and assert the exit code/message/no-echo from those files. This keeps the rejection test compatible with both Windows PowerShell 5.1 and PowerShell 7.
-- Re-ran the full isolated package smoke against the existing x64 executable under Windows PowerShell 5.1 and PowerShell 7. Both passed migrations, synthetic command-line password rejection, three-field key rotation, default backup creation, health (`true`), and branded login (HTTP 200); measured working sets were 66.9 MiB and 67.3 MiB. The new hosted package workflow still needs to run on the follow-up commit.
+- Re-ran the full isolated package smoke against the existing x64 executable under Windows PowerShell 5.1 and PowerShell 7. Both passed migrations, synthetic command-line password rejection, three-field key rotation, default backup creation, health (`true`), and branded login (HTTP 200); measured working sets were 66.9 MiB and 67.3 MiB.
+- Exact follow-up SHA `27e08a1` then passed hosted package (run `38741399911`), verify (`38741399933`), Python/Actions analysis (`38741393476`), and CodeQL (`116443953595`). This verifies the Windows harness fix on GitHub runners, not a production deployment.
 
 ## 2026-10-15 - Goal continuation and independent-scan limitation
 
