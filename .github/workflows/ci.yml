@@ -18,6 +18,7 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt pip-audit==2.10.1
       - run: pip-audit
+      - run: pip-audit -r requirements-runtime.lock
       - run: python -m compileall -q scheduler run.py
       - run: pytest -q
       - run: touch .env
