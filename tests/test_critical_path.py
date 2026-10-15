@@ -655,6 +655,75 @@ def test_cancellation_recovery_transitions_advance_hai_feed_cursor(app_bundle):
     assert items[0]["appointment_status"] == "cancel_manual_required"
 
 
+def test_proposal_send_claim_advances_hai_feed_cursor(app_bundle):
+    app, _, _ = app_bundle
+    client = app.test_client()
+    post_webhook(client, webhook())
+    store = app.extensions["store"]
+    proposal_id = store.dashboard("default")["items"][0]["proposal_id"]
+    _, cursor = store.hai_feed("default")
+
+    assert store.claim_proposal_send("default", proposal_id)
+    items, _ = store.hai_feed("default", cursor)
+
+    assert len(items) == 1
+    assert items[0]["proposal_status"] == "sending"
+
+
+def test_proposal_delivery_recovery_states_advance_hai_feed_cursor(app_bundle):
+    app, _, _ = app_bundle
+    post_webhook(app.test_client(), webhook())
+    store = app.extensions["store"]
+    proposal_id = store.dashboard("default")["items"][0]["proposal_id"]
+    _, cursor = store.hai_feed("default")
+
+    assert store.claim_proposal_send("default", proposal_id)
+    store.mark_proposal_failed("default", proposal_id, "synthetic delivery failure")
+    items, cursor = store.hai_feed("default", cursor)
+    assert len(items) == 1
+    assert items[0]["proposal_status"] == "send_failed"
+
+    assert store.claim_proposal_send("default", proposal_id)
+    store.mark_proposal_manual_required("default", proposal_id, "synthetic uncertain delivery")
+    items, cursor = store.hai_feed("default", cursor)
+    assert len(items) == 1
+    assert items[0]["proposal_status"] == "manual_required"
+
+    with store.connect() as db:
+        db.execute(
+            "UPDATE proposals SET status='sending',sent_at='2000-01-01T00:00:00+00:00' WHERE id=?",
+            (proposal_id,),
+        )
+    assert store.recover_stale_proposal_sends("default", "2020-01-01T00:00:00+00:00") == 1
+    items, _ = store.hai_feed("default", cursor)
+    assert len(items) == 1
+    assert items[0]["proposal_status"] == "manual_required"
+
+
+def test_proposal_expiry_advances_hai_cursor_when_request_status_is_unchanged(app_bundle):
+    app, _, _ = app_bundle
+    post_webhook(app.test_client(), webhook())
+    store = app.extensions["store"]
+    proposal_id = store.dashboard("default")["items"][0]["proposal_id"]
+    assert store.claim_proposal_send("default", proposal_id)
+    store.mark_proposal_sent("default", proposal_id, "synthetic-message-id")
+
+    with store.connect() as db:
+        db.execute(
+            "UPDATE scheduling_requests SET status='booked' WHERE id=(SELECT request_id FROM proposals WHERE id=?)",
+            (proposal_id,),
+        )
+        db.execute("UPDATE proposals SET sent_at='2000-01-01T00:00:00+00:00' WHERE id=?", (proposal_id,))
+    _, cursor = store.hai_feed("default")
+
+    assert store.expire_stale_proposals("default", "2020-01-01T00:00:00+00:00") == 1
+    items, _ = store.hai_feed("default", cursor)
+
+    assert len(items) == 1
+    assert items[0]["status"] == "booked"
+    assert items[0]["proposal_status"] == "expired"
+
+
 def test_calendar_cancellation_timeout_is_reconciled_without_losing_state(app_bundle, auth_headers):
     app, calendar, _ = app_bundle
     appointment_id = _book_calendar_appointment(app)

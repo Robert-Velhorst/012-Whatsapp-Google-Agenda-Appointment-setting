@@ -398,16 +398,13 @@ class Store:
         )
 
     @staticmethod
-    def _touch_request_for_appointment_in_transaction(
-        db: sqlite3.Connection, workspace_id: str, appointment_id: int,
-    ) -> None:
+    def _touch_request_in_transaction(db: sqlite3.Connection, workspace_id: str, request_id: int) -> None:
         row = db.execute(
-            "SELECT r.id,r.updated_at FROM scheduling_requests r JOIN appointments a ON a.request_id=r.id "
-            "WHERE r.workspace_id=? AND a.workspace_id=? AND a.id=?",
-            (workspace_id, workspace_id, appointment_id),
+            "SELECT updated_at FROM scheduling_requests WHERE workspace_id=? AND id=?",
+            (workspace_id, request_id),
         ).fetchone()
         if not row:
-            raise KeyError("Scheduling request for appointment not found")
+            raise KeyError("Scheduling request not found")
         previous = datetime.fromisoformat(row["updated_at"])
         if previous.tzinfo is None:
             raise ValueError("Scheduling request timestamp is not timezone-aware")
@@ -416,8 +413,20 @@ class Store:
             updated = previous + timedelta(microseconds=1)
         db.execute(
             "UPDATE scheduling_requests SET updated_at=? WHERE workspace_id=? AND id=?",
-            (updated.isoformat(), workspace_id, int(row["id"])),
+            (updated.isoformat(), workspace_id, request_id),
         )
+
+    @staticmethod
+    def _touch_request_for_appointment_in_transaction(
+        db: sqlite3.Connection, workspace_id: str, appointment_id: int,
+    ) -> None:
+        row = db.execute(
+            "SELECT request_id FROM appointments WHERE workspace_id=? AND id=?",
+            (workspace_id, appointment_id),
+        ).fetchone()
+        if not row:
+            raise KeyError("Scheduling request for appointment not found")
+        Store._touch_request_in_transaction(db, workspace_id, int(row["request_id"]))
 
     def transition_request(self, workspace_id: str, request_id: int, target: str, actor: str, detail: dict | None = None) -> None:
         with self.connect() as db:
@@ -474,20 +483,28 @@ class Store:
     def expire_stale_proposals(self, workspace_id: str, cutoff_iso: str) -> int:
         now = utc_now().isoformat()
         with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             rows = db.execute(
                 "SELECT id,request_id FROM proposals WHERE workspace_id=? AND status='sent' AND COALESCE(sent_at,created_at)<?",
                 (workspace_id, cutoff_iso),
             ).fetchall()
             if not rows:
                 return 0
-            db.executemany("UPDATE proposals SET status='expired' WHERE workspace_id=? AND id=?", [(workspace_id, row["id"]) for row in rows])
             for row in rows:
+                cursor = db.execute(
+                    "UPDATE proposals SET status='expired' WHERE workspace_id=? AND id=? AND status='sent'",
+                    (workspace_id, row["id"]),
+                )
+                if cursor.rowcount != 1:
+                    continue
                 request = db.execute("SELECT status FROM scheduling_requests WHERE workspace_id=? AND id=?", (workspace_id, row["request_id"])).fetchone()
                 if request and request["status"] == "awaiting_confirmation":
                     self._transition_request_in_transaction(
                         db, workspace_id, int(row["request_id"]), "needs_clarification", "scheduler",
                         {"proposal_id": int(row["id"]), "reason": "proposal_expired"},
                     )
+                else:
+                    self._touch_request_in_transaction(db, workspace_id, int(row["request_id"]))
             self._audit_in_transaction(db, workspace_id, "scheduler", "proposals.expired", "proposal", None, {"count": len(rows), "cutoff": cutoff_iso})
         return len(rows)
 
@@ -497,15 +514,25 @@ class Store:
                 "UPDATE proposals SET status='sending',sent_at=?,error_text=NULL WHERE workspace_id=? AND id=? AND status IN ('pending_approval','send_failed')",
                 (utc_now().isoformat(), workspace_id, proposal_id),
             )
+            if cursor.rowcount == 1:
+                row = db.execute("SELECT request_id FROM proposals WHERE workspace_id=? AND id=?", (workspace_id, proposal_id)).fetchone()
+                self._touch_request_in_transaction(db, workspace_id, int(row["request_id"]))
         return cursor.rowcount == 1
 
     def recover_stale_proposal_sends(self, workspace_id: str, cutoff_iso: str) -> int:
         message = "The process stopped during WhatsApp delivery; verify provider state before any resend"
         with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                "SELECT id,request_id FROM proposals WHERE workspace_id=? AND status='sending' AND sent_at<?",
+                (workspace_id, cutoff_iso),
+            ).fetchall()
             cursor = db.execute(
                 "UPDATE proposals SET status='manual_required',error_text=? WHERE workspace_id=? AND status='sending' AND sent_at<?",
                 (message, workspace_id, cutoff_iso),
             )
+            for row in rows:
+                self._touch_request_in_transaction(db, workspace_id, int(row["request_id"]))
             if cursor.rowcount:
                 self._audit_in_transaction(db, workspace_id, "worker", "proposals.stale_send_recovered", "proposal", None, {"count": cursor.rowcount, "cutoff": cutoff_iso})
         return cursor.rowcount
@@ -595,6 +622,8 @@ class Store:
         with self.connect() as db:
             cursor = db.execute("UPDATE proposals SET status='send_failed',error_text=? WHERE workspace_id=? AND id=? AND status='sending'", (error[:500], workspace_id, proposal_id))
             if cursor.rowcount:
+                row = db.execute("SELECT request_id FROM proposals WHERE workspace_id=? AND id=?", (workspace_id, proposal_id)).fetchone()
+                self._touch_request_in_transaction(db, workspace_id, int(row["request_id"]))
                 self._audit_in_transaction(db, workspace_id, "scheduler", "proposal.send_failed", "proposal", proposal_id, {"error": error[:200]})
 
     def mark_proposal_manual_required(self, workspace_id: str, proposal_id: int, error: str) -> None:
@@ -604,6 +633,8 @@ class Store:
                 (error[:500], workspace_id, proposal_id),
             )
             if cursor.rowcount:
+                row = db.execute("SELECT request_id FROM proposals WHERE workspace_id=? AND id=?", (workspace_id, proposal_id)).fetchone()
+                self._touch_request_in_transaction(db, workspace_id, int(row["request_id"]))
                 self._audit_in_transaction(db, workspace_id, "scheduler", "proposal.manual_required", "proposal", proposal_id, {"error": error[:200]})
 
     def reconcile_proposal_delivery(self, workspace_id: str, proposal_id: int, outcome: str, actor: str) -> None:
@@ -649,6 +680,7 @@ class Store:
                 )
                 if proposal_update.rowcount != 1:
                     raise ValueError("Proposal changed during delivery reconciliation")
+                self._touch_request_in_transaction(db, workspace_id, int(row["request_id"]))
 
             db.execute(
                 "INSERT INTO audit_events(workspace_id,actor,action,entity_type,entity_id,detail_json,created_at) "
