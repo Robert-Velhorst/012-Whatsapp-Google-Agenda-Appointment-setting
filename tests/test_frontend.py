@@ -175,3 +175,24 @@ def test_primary_navigation_has_visible_keyboard_focus_indicator(app_bundle):
 
     assert ".nav-link:focus-visible{outline:2px solid var(--blue);outline-offset:2px}" in stylesheet
 
+
+def test_mobile_primary_navigation_wraps_instead_of_hiding_destinations(app_bundle):
+    app, _, _ = app_bundle
+    stylesheet = (Path(app.static_folder) / "app.css").read_text(encoding="utf-8")
+
+    assert (
+        "@media(max-width:760px){.sidebar nav{display:grid;"
+        "grid-template-columns:repeat(auto-fit,minmax(104px,1fr));overflow:visible}"
+        ".nav-link{min-height:44px;gap:8px;padding:9px 8px;white-space:normal}}"
+    ) in stylesheet
+
+
+def test_settings_metadata_grid_reflows_on_narrow_mobile_viewports(app_bundle):
+    app, _, _ = app_bundle
+    stylesheet = (Path(app.static_folder) / "app.css").read_text(encoding="utf-8")
+
+    assert (
+        "@media(max-width:760px){.settings-block dl{"
+        "grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}"
+    ) in stylesheet
+

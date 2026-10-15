@@ -10,5 +10,7 @@
 @media(max-width:1180px){.contacts-table th:nth-child(3),.contacts-table td:nth-child(3){display:table-cell}}
 @media(max-width:760px){.contacts-table th:nth-child(2),.contacts-table td:nth-child(2),.contacts-table th:nth-child(5),.contacts-table td:nth-child(5){display:table-cell}}
 .nav-link:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+@media(max-width:760px){.sidebar nav{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));overflow:visible}.nav-link{min-height:44px;gap:8px;padding:9px 8px;white-space:normal}}
+@media(max-width:760px){.settings-block dl{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
 :root{--amber:#a15b00}
 
