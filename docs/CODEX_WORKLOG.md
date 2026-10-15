@@ -1,5 +1,20 @@
 # Codex worklog
 
+## 2026-10-15 - Goal continuation and independent-scan limitation
+
+- Revalidated the current working tree after the secure-password CLI and Windows package follow-up. The full suite passes with warnings treated as errors and pytest's cache plugin disabled: `312 passed`; `compileall`, `pip check`, `git diff --check`, and PowerShell parsing of the Windows launcher/package scripts passed. A default pytest run also passed, but this workspace denies writes to `.pytest_cache`, so the strict rerun disabled that cache instead of treating the warning as a product failure.
+- A repository-wide Codex Security Deep Scan was attempted but did not start because the host did not provide the managed filesystem permission profile required by its read-only workers. No findings or coverage report were produced; this must not be represented as a completed security review.
+- Hetzner is the cloud target. Current operational docs/manifests contain no ngrok requirement; remaining ngrok mentions are historical release notes. Docker Compose runtime validation was not completed because this checkout has no operator `.env`; no private environment file or credentials were created.
+- These checks are local source evidence only. No Hetzner deployment, Google/WhatsApp provider, HAI endpoint, or live personal conversation was accessed. The separate HAI cursor patch remains uncommitted and unpublished as requested.
+
+## 2026-10-15 - Remove raw-password CLI argument and verify Windows package
+
+- Removed the optional positional plaintext password from `hash-password`; the command now always uses the masked secure prompt. Extra password/option arguments fail with a static message before prompting and are not echoed. Added regressions for positional, option-like, separator, unknown-option/value, short interactive, help, other-command parser behavior, and the standalone command router.
+- Extended the Windows package smoke test to invoke the packaged executable with a synthetic password argument and verify exit code 2, the secure-prompt error, and no echo. Corrected the smoke harness to keep isolated rotated-database settings in the packaged server process through health/login checks, then restore the caller's environment.
+- A full-suite rerun exposed a time-sensitive provider-safety test that expected booking to enqueue a 24-hour reminder even when the “tomorrow” appointment was already within that window. The test now queues an explicit due reminder for its provider-error scenario; it passed five consecutive focused runs without changing production reminder policy.
+- Verification: full suite `312 passed`; compileall, PowerShell parsing of both Windows scripts, and `git diff --check` passed. A fresh Windows 11 Pro build 26300 / Python 3.13.14 / PyInstaller 6.22.3 x64 package passed migration, synthetic password-argument rejection, three-field encrypted-data key rotation, persistent default backup creation, health, and branded login. Working set at smoke time was 67.4 MiB; ZIP SHA-256 `821FEB80ADE3EC3D2C89DD4C96245B6A3168EF08F39278CE2FE2A297966C1194`.
+- This is local Windows/package evidence only; no live Hetzner deployment, Google account, WhatsApp account, HAI endpoint, or production data was used. The package was built in a unique temporary directory; repository `dist` artifacts were not overwritten.
+
 ## 2026-10-15 - Close thread-owned SQLite connections and correct worker health reporting
 
 - A warnings-as-errors suite run exposed an unclosed SQLite connection after concurrent webhook work ended on a request thread. The app-level `Store.close()` only owns the calling thread's connection, so it could not close connections belonging to short-lived worker threads. Reproduced the leak with a focused regression; a thread-local connection wrapper now closes its SQLite handle as its owning thread exits, while explicit shutdown still closes the current thread's connection. The regression failed before the change and passes afterward.
@@ -10,8 +25,8 @@
 
 ## 2026-10-15 - Verify local HAI cursor-continuation patch
 
-- The separate, uncommitted HAI patch now passes `go test ./...` and `go vet ./...` using its pinned Go 1.27.2 toolchain; the affected `internal/accountfeed` package also passes independently. The Windows Go archive was downloaded to Temp and SHA-256 verified against the official Go downloads page before execution. No HAI source was committed or pushed.
-- The guarded PostgreSQL-backed account-feed integration test was skipped because `HAI_ACCOUNT_FEED_TEST_DSN` is unset. No Postgres test database was created, no HAI endpoint was contacted, and the cursor patch is not in the published HAI revision. Live synchronization and Hetzner same-host network acceptance remain open.
+- Reverified the separate, uncommitted HAI cursor patch against checked-in `main` at `345cf356c3f4ab497568713dc994820b4ba22b10`. Downloaded Go 1.27.2 to a unique temporary directory from the official distribution, verified Windows amd64 archive SHA-256 `1314008898bd40df77af4b014f777f08873dbdfbcd3d92308728ee03304fe04f`, and passed `go test ./...`, `go vet ./...`, plus ten repeated HTTP cursor-forwarding/failed-checkpoint tests.
+- The guarded PostgreSQL-backed account-feed integration test remains skipped because `HAI_ACCOUNT_FEED_TEST_DSN` is unset. No Postgres test database was created, no HAI endpoint was contacted, and no HAI source was committed or pushed. Live synchronization and Hetzner same-host network acceptance remain open.
 
 ## 2026-10-15 - Fix clipped mobile navigation and narrow Settings overflow
 

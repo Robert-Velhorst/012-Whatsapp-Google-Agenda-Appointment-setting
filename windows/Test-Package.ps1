@@ -50,6 +50,12 @@ try {
     # Exercise the packaged command router and the exact offline rotation path.
     & $Executable migrate
     if ($LASTEXITCODE -ne 0) { throw "Packaged migrate command failed before key-rotation smoke test." }
+    $passwordArgument = "SyntheticOnly-NoSecret-123!"
+    $passwordRejectionOutput = @(& $Executable hash-password $passwordArgument 2>&1 | ForEach-Object { $_.ToString() })
+    $passwordRejectionExitCode = $LASTEXITCODE
+    if ($passwordRejectionExitCode -ne 2) { throw "Packaged hash-password accepted a command-line password or returned an unexpected exit code: $passwordRejectionExitCode." }
+    if (($passwordRejectionOutput -join "`n") -notmatch "does not accept password arguments") { throw "Packaged hash-password did not report its secure-prompt requirement." }
+    if (($passwordRejectionOutput -join "`n").Contains($passwordArgument)) { throw "Packaged hash-password echoed a command-line password argument." }
     $seedSmokeData = @'
 from scheduler.config import Settings
 from scheduler.crypto import CryptoBox
@@ -105,7 +111,6 @@ finally:
     }
     if (-not (Test-Path -LiteralPath $BackupPath -PathType Leaf)) { throw "Packaged backup command reported success without creating the backup file." }
 
-    $process = Start-Process -FilePath $Executable -WorkingDirectory $RunDirectory -RedirectStandardOutput (Join-Path $LogDirectory "package-test.out.log") -RedirectStandardError (Join-Path $LogDirectory "package-test.err.log") -WindowStyle Hidden -PassThru
 } finally {
     foreach ($name in $TestEnvironment.Keys) {
         [Environment]::SetEnvironmentVariable($name, $PreviousEnvironment[$name], "Process")
@@ -114,6 +119,10 @@ finally:
 try {
     $succeeded = $false
     $health = $null
+    foreach ($name in $TestEnvironment.Keys) {
+        [Environment]::SetEnvironmentVariable($name, $TestEnvironment[$name], "Process")
+    }
+    $process = Start-Process -FilePath $Executable -WorkingDirectory $RunDirectory -RedirectStandardOutput (Join-Path $LogDirectory "package-test.out.log") -RedirectStandardError (Join-Path $LogDirectory "package-test.err.log") -WindowStyle Hidden -PassThru
     for ($attempt = 1; $attempt -le 60; $attempt++) {
         try {
             $health = Invoke-RestMethod "http://127.0.0.1:$Port/api/health" -TimeoutSec 2
@@ -155,6 +164,9 @@ try {
     $processStopped = $true
     if ($process) {
         $processStopped = $process.HasExited -or -not (Get-Process -Id $process.Id -ErrorAction SilentlyContinue)
+    }
+    foreach ($name in $TestEnvironment.Keys) {
+        [Environment]::SetEnvironmentVariable($name, $PreviousEnvironment[$name], "Process")
     }
     if ($succeeded -and $processStopped) {
         $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)

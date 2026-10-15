@@ -39,8 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     rotate.add_argument("--output-dir", type=Path, required=True, help="New directory for rotated database, token file, and manifest")
     bundle = sub.add_parser("support-bundle", help="Create a redacted diagnostic bundle")
     bundle.add_argument("--output", type=Path)
-    password = sub.add_parser("hash-password", help="Generate ADMIN_PASSWORD_HASH without storing the password")
-    password.add_argument("password", nargs="?")
+    sub.add_parser("hash-password", help="Generate ADMIN_PASSWORD_HASH without storing the password")
     return parser
 
 
@@ -154,13 +153,26 @@ def _restore_database(backup_path: Path, database_path: Path, store=None) -> Pat
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    arguments = sys.argv[1:] if argv is None else argv
+    if (
+        len(arguments) > 1
+        and arguments[0] == "hash-password"
+        and arguments[1:] not in (["-h"], ["--help"])
+    ):
+        parser.print_usage(sys.stderr)
+        parser.exit(
+            2,
+            "agenda-relay: error: hash-password does not accept password arguments; "
+            "run it without arguments to use the secure prompt\n",
+        )
+    args = parser.parse_args(arguments)
     if args.command == "setup":
         from .setup import interactive_setup
         return interactive_setup()
     if args.command == "hash-password":
         import getpass
-        password = args.password or getpass.getpass("Operator password: ")
+        password = getpass.getpass("Operator password: ")
         if len(password) < 12:
             print("Password must be at least 12 characters", file=sys.stderr)
             return 2

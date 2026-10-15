@@ -168,14 +168,23 @@ def test_reminder_provider_exception_details_are_not_persisted(app_bundle, monke
         raise RuntimeError(secret_provider_detail)
 
     monkeypatch.setattr(whatsapp, "send_template", fail_template)
+    reminder_key = f"reminder:{appointment_id}:provider-failure-test"
     with store.connect() as db:
-        db.execute("UPDATE background_jobs SET run_at=? WHERE dedupe_key LIKE ?", ((utc_now() - timedelta(minutes=1)).isoformat(), f"reminder:{appointment_id}:%"))
+        db.execute(
+            "UPDATE background_jobs SET status='cancelled' WHERE workspace_id=? AND job_type=? AND dedupe_key LIKE ? AND status='queued'",
+            ("default", "appointment_reminder", f"reminder:{appointment_id}:%"),
+        )
+    store.schedule_job(
+        "default", "appointment_reminder", reminder_key,
+        (utc_now() - timedelta(minutes=1)).isoformat(), {"appointment_id": appointment_id},
+    )
 
     result = app.extensions["scheduling"].run_due_jobs()
 
+    assert result["claimed"] == 1, repr(result)
     assert result["manual_required"] == 1
     with store.connect() as db:
-        job = db.execute("SELECT status,last_error FROM background_jobs WHERE dedupe_key LIKE ?", (f"reminder:{appointment_id}:%",)).fetchone()
+        job = db.execute("SELECT status,last_error FROM background_jobs WHERE dedupe_key=?", (reminder_key,)).fetchone()
     assert job["status"] == "manual_required"
     assert "unverified" in job["last_error"]
     assert secret_provider_detail not in job["last_error"]

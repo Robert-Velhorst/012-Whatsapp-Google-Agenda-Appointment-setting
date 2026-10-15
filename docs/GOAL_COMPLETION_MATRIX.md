@@ -16,7 +16,7 @@ Status is evidence-based as of 2026-10-15. `Implemented` means locally wired and
 | 009 | API/error envelope | Implemented | Protected JSON endpoints and structured errors |
 | 010 | Frontend/navigation | Implemented | Server-rendered accessible application shell |
 | 011 | Core vertical slice | Implemented | Webhook through event/reminder/audit |
-| 012 | Provider reality review | Partial | Official adapters wired; signed WhatsApp status callbacks are retained and displayed; real credentials/acceptance remain unavailable. Current HAI `main` (checked at `b7e3ad2086c23313a0355101498bee82cda62d4e`) parses `cursor` but issues a plain GET and does not persist/send the cursor between syncs; this feed remains a bounded snapshot |
+| 012 | Provider reality review | Partial | Official adapters wired; signed WhatsApp status callbacks are retained and displayed; real credentials/acceptance remain unavailable. Checked-in HAI `main` at `345cf356c3f4ab497568713dc994820b4ba22b10` parses `cursor` but uses a plain GET. The separate uncommitted HAI working-tree patch sends/persists the cursor and passes `go test ./...`, `go vet ./...`, ten repeated cursor-checkpoint tests, and the tagged registry migration/reconstruction test against an isolated disposable PostgreSQL 16 database. It remains unpublished and has not been accepted against a live HAI endpoint or Hetzner network path. |
 | 013 | Compliance boundaries | Implemented | Official APIs only; reminder-template/manual boundary |
 | 014 | No fake production success | Implemented | Fakes confined to tests; truthful provider states |
 | 015 | Upload/media safety | Not applicable | Product exposes no upload/media routes |
