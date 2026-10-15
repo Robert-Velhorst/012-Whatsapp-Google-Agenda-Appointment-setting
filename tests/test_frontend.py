@@ -22,6 +22,13 @@ def test_shared_html_template_has_noindex_description_for_operator_and_booking_p
     assert booking.status_code == 200
     assert b'<meta name="description"' in booking.data
     assert b'<meta name="robots" content="noindex, nofollow">' in booking.data
+    # The private link already identifies the scheduling request; asking the
+    # recipient to re-enter contact details would restore the original friction.
+    assert b'name="slot"' in booking.data
+    assert b'name="consent"' in booking.data
+    assert b'name="name"' not in booking.data
+    assert b'name="email"' not in booking.data
+    assert b'name="phone"' not in booking.data
 
 
 def test_amber_status_color_meets_wcag_small_text_contrast(app_bundle):
