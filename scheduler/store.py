@@ -21,6 +21,27 @@ def utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+class _ThreadConnection:
+    """Close a persistent SQLite connection when its owning thread exits."""
+
+    def __init__(self, connection: sqlite3.Connection):
+        self.connection: sqlite3.Connection | None = connection
+
+    def close(self) -> None:
+        connection = self.connection
+        if connection is not None:
+            connection.close()
+            self.connection = None
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            # Destructors run during thread/interpreter teardown; explicit Store.close
+            # remains the path for reporting shutdown failures to its caller.
+            pass
+
+
 class Store:
     def __init__(self, path: Path, crypto: CryptoBox | None = None):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -32,8 +53,8 @@ class Store:
 
     @contextmanager
     def connect(self):
-        connection = getattr(self._local, "connection", None)
-        if connection is None:
+        thread_connection = getattr(self._local, "connection", None)
+        if thread_connection is None:
             connection = sqlite3.connect(self.path, timeout=5, cached_statements=256)
             connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA foreign_keys=ON")
@@ -42,7 +63,12 @@ class Store:
             connection.execute("PRAGMA synchronous=NORMAL")
             connection.execute("PRAGMA temp_store=MEMORY")
             connection.execute("PRAGMA cache_size=-4096")
-            self._local.connection = connection
+            thread_connection = _ThreadConnection(connection)
+            self._local.connection = thread_connection
+        else:
+            connection = thread_connection.connection
+            if connection is None:
+                raise RuntimeError("This thread's SQLite connection has already been closed")
         try:
             yield connection
             connection.commit()
@@ -52,13 +78,10 @@ class Store:
 
     def close(self) -> None:
         """Close the connection owned by the current thread."""
-        connection = getattr(self._local, "connection", None)
-        if connection is not None:
-            try:
-                connection.execute("PRAGMA optimize")
-            finally:
-                connection.close()
-                del self._local.connection
+        thread_connection = getattr(self._local, "connection", None)
+        if thread_connection is not None:
+            thread_connection.close()
+            del self._local.connection
 
     def ensure_workspace(self, workspace_id: str, name: str, timezone_name: str) -> None:
         now = utc_now().isoformat()
@@ -71,10 +94,22 @@ class Store:
 
     def audit(self, workspace_id: str, actor: str, action: str, entity_type: str, entity_id: Any = None, detail: dict | None = None) -> None:
         with self.connect() as db:
-            db.execute(
-                "INSERT INTO audit_events(workspace_id,actor,action,entity_type,entity_id,detail_json,created_at) VALUES(?,?,?,?,?,?,?)",
-                (workspace_id, actor, action, entity_type, None if entity_id is None else str(entity_id), json.dumps(detail or {}, sort_keys=True), utc_now().isoformat()),
-            )
+            self._audit_in_transaction(db, workspace_id, actor, action, entity_type, entity_id, detail)
+
+    @staticmethod
+    def _audit_in_transaction(
+        db: sqlite3.Connection,
+        workspace_id: str,
+        actor: str,
+        action: str,
+        entity_type: str,
+        entity_id: Any = None,
+        detail: dict | None = None,
+    ) -> None:
+        db.execute(
+            "INSERT INTO audit_events(workspace_id,actor,action,entity_type,entity_id,detail_json,created_at) VALUES(?,?,?,?,?,?,?)",
+            (workspace_id, actor, action, entity_type, None if entity_id is None else str(entity_id), json.dumps(detail or {}, sort_keys=True), utc_now().isoformat()),
+        )
 
     def set_state(self, workspace_id: str, key: str, value: str, actor: str = "operator") -> None:
         now = utc_now().isoformat()
@@ -84,24 +119,46 @@ class Store:
                 "ON CONFLICT(workspace_id,key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
                 (workspace_id, key, value, now),
             )
-        self.audit(workspace_id, actor, "system_state.changed", "system", key, {"value": value})
+            self._audit_in_transaction(db, workspace_id, actor, "system_state.changed", "system", key, {"value": value})
 
     def get_state(self, workspace_id: str, key: str, default: str = "") -> str:
         with self.connect() as db:
             row = db.execute("SELECT value FROM system_state WHERE workspace_id=? AND key=?", (workspace_id, key)).fetchone()
         return row[0] if row else default
 
-    def upsert_contact(self, workspace_id: str, sender: str, timezone_name: str, language: str = "en", display_name: str | None = None) -> int:
+    def _upsert_contact_in_transaction(
+        self,
+        db: sqlite3.Connection,
+        workspace_id: str,
+        sender: str,
+        timezone_name: str,
+        language: str | None,
+        display_name: str | None,
+    ) -> int:
+        if language not in {None, "en", "nl"}:
+            raise ValueError("Language must be en or nl")
         now = utc_now().isoformat()
-        with self.connect() as db:
-            db.execute(
-                "INSERT INTO contacts(workspace_id,sender,display_name,timezone,language,created_at,updated_at) VALUES(?,?,?,?,?,?,?) "
-                "ON CONFLICT(workspace_id,sender) DO UPDATE SET display_name=COALESCE(excluded.display_name,contacts.display_name), "
-                "language=excluded.language,updated_at=excluded.updated_at",
-                (workspace_id, sender, display_name, timezone_name, language, now, now),
-            )
-            row = db.execute("SELECT id FROM contacts WHERE workspace_id=? AND sender=?", (workspace_id, sender)).fetchone()
+        db.execute(
+            "INSERT INTO contacts(workspace_id,sender,display_name,timezone,language,created_at,updated_at) VALUES(?,?,?,?,?,?,?) "
+            "ON CONFLICT(workspace_id,sender) DO UPDATE SET display_name=COALESCE(excluded.display_name,contacts.display_name), "
+            "language=COALESCE(?,contacts.language),updated_at=excluded.updated_at",
+            (workspace_id, sender, display_name, timezone_name, language or "en", now, now, language),
+        )
+        row = db.execute("SELECT id FROM contacts WHERE workspace_id=? AND sender=?", (workspace_id, sender)).fetchone()
         return int(row[0])
+
+    def upsert_contact(
+        self,
+        workspace_id: str,
+        sender: str,
+        timezone_name: str,
+        language: str | None = None,
+        display_name: str | None = None,
+    ) -> int:
+        with self.connect() as db:
+            return self._upsert_contact_in_transaction(
+                db, workspace_id, sender, timezone_name, language, display_name,
+            )
 
     def update_contact(self, workspace_id: str, contact_id: int, *, display_name: str | None, email: str | None, timezone_name: str, language: str, consent_status: str) -> bool:
         if consent_status not in {"implicit_inbound", "confirmed", "revoked"}:
@@ -119,8 +176,8 @@ class Store:
                 "UPDATE contacts SET display_name=?,email=?,timezone=?,language=?,consent_status=?,updated_at=? WHERE workspace_id=? AND id=?",
                 (display_name or None, email or None, timezone_name, language, consent_status, utc_now().isoformat(), workspace_id, contact_id),
             )
-        if cursor.rowcount:
-            self.audit(workspace_id, "operator", "contact.updated", "contact", contact_id, {"consent_status": consent_status})
+            if cursor.rowcount:
+                self._audit_in_transaction(db, workspace_id, "operator", "contact.updated", "contact", contact_id, {"consent_status": consent_status})
         return cursor.rowcount == 1
 
     def get_contact(self, workspace_id: str, contact_id: int) -> dict[str, Any] | None:
@@ -128,17 +185,98 @@ class Store:
             row = db.execute("SELECT * FROM contacts WHERE workspace_id=? AND id=?", (workspace_id, contact_id)).fetchone()
         return dict(row) if row else None
 
-    def record_inbound(self, workspace_id: str, external_id: str, sender: str, body: str, received_at: str) -> bool:
+    def request_for_source_message(self, workspace_id: str, source_message_id: str) -> dict[str, Any] | None:
         with self.connect() as db:
-            try:
+            row = db.execute(
+                "SELECT r.id,r.status,p.id proposal_id FROM scheduling_requests r "
+                "LEFT JOIN proposals p ON p.request_id=r.id "
+                "WHERE r.workspace_id=? AND r.source_message_id=?",
+                (workspace_id, source_message_id),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def accept_inbound_message(
+        self,
+        workspace_id: str,
+        external_id: str,
+        sender: str,
+        body: str,
+        received_at: str,
+        *,
+        max_per_sender: int,
+        max_total: int,
+        window_minutes: int = 60,
+    ) -> str:
+        """Deduplicate, rate-limit, and persist an inbound message atomically."""
+        now = utc_now()
+        now_text = now.isoformat()
+        cutoff = (now - timedelta(minutes=window_minutes)).isoformat()
+        sender_bucket = "sender:" + hashlib.sha256(sender.encode("utf-8")).hexdigest()
+        with self.connect() as db:
+            # Serialize the duplicate check, both quota checks, and reservation
+            # so concurrent callbacks cannot oversubscribe either allowance.
+            db.execute("BEGIN IMMEDIATE")
+            duplicate = db.execute(
+                "SELECT processing_status,processing_started_at FROM inbound_messages WHERE workspace_id=? AND external_id=?",
+                (workspace_id, external_id),
+            ).fetchone()
+            if duplicate:
+                status = duplicate["processing_status"]
+                if status == "processed":
+                    return "duplicate"
+                lease_cutoff = (now - timedelta(minutes=5)).isoformat()
+                if status == "processing" and duplicate["processing_started_at"] and duplicate["processing_started_at"] > lease_cutoff:
+                    return "in_progress"
                 db.execute(
-                    "INSERT INTO inbound_messages(workspace_id,external_id,sender,body_ciphertext,received_at) VALUES(?,?,?,?,?)",
-                    (workspace_id, external_id, sender, self.crypto.encrypt(body), received_at),
+                    "UPDATE inbound_messages SET processing_status='processing',processing_started_at=? WHERE workspace_id=? AND external_id=?",
+                    (now_text, workspace_id, external_id),
                 )
-            except sqlite3.IntegrityError:
-                return False
-        self.audit(workspace_id, "whatsapp", "message.received", "message", external_id, {"sender_suffix": sender[-4:]})
-        return True
+                return "retry"
+            sender_count = int(db.execute(
+                "SELECT COUNT(*) FROM rate_events WHERE workspace_id=? AND subject=? AND action='whatsapp.inbound' AND created_at>=?",
+                (workspace_id, sender_bucket, cutoff),
+            ).fetchone()[0])
+            total_count = int(db.execute(
+                "SELECT COUNT(*) FROM rate_events WHERE workspace_id=? AND subject='__whatsapp_global__' AND action='whatsapp.inbound' AND created_at>=?",
+                (workspace_id, cutoff),
+            ).fetchone()[0])
+            if sender_count >= max_per_sender or total_count >= max_total:
+                return "rate_limited"
+            db.execute(
+                "INSERT INTO inbound_messages(workspace_id,external_id,sender,body_ciphertext,received_at,processing_status,processing_started_at) VALUES(?,?,?,?,?,'processing',?)",
+                (workspace_id, external_id, sender, self.crypto.encrypt(body), received_at, now_text),
+            )
+            db.executemany(
+                "INSERT INTO rate_events(workspace_id,subject,action,created_at) VALUES(?,?,'whatsapp.inbound',?)",
+                ((workspace_id, sender_bucket, now_text), (workspace_id, "__whatsapp_global__", now_text)),
+            )
+            self._audit_in_transaction(
+                db, workspace_id, "whatsapp", "message.received", "message", external_id,
+                {"sender_suffix": sender[-4:]},
+            )
+        return "accepted"
+
+    def inbound_message_body(self, workspace_id: str, external_id: str) -> str | None:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT body_ciphertext FROM inbound_messages WHERE workspace_id=? AND external_id=?",
+                (workspace_id, external_id),
+            ).fetchone()
+        return self.crypto.decrypt(row["body_ciphertext"]) if row else None
+
+    def complete_inbound_message(self, workspace_id: str, external_id: str) -> None:
+        with self.connect() as db:
+            db.execute(
+                "UPDATE inbound_messages SET processing_status='processed',processing_started_at=NULL WHERE workspace_id=? AND external_id=?",
+                (workspace_id, external_id),
+            )
+
+    def retry_inbound_message(self, workspace_id: str, external_id: str) -> None:
+        with self.connect() as db:
+            db.execute(
+                "UPDATE inbound_messages SET processing_status='pending',processing_started_at=NULL WHERE workspace_id=? AND external_id=? AND processing_status='processing'",
+                (workspace_id, external_id),
+            )
 
     def recent_messages(self, workspace_id: str, sender: str, limit: int = 12) -> list[dict[str, str]]:
         with self.connect() as db:
@@ -148,27 +286,151 @@ class Store:
             ).fetchall()
         return [{"external_id": row["external_id"], "body": self.crypto.decrypt(row["body_ciphertext"]), "received_at": row["received_at"]} for row in reversed(rows)]
 
-    def create_request(self, workspace_id: str, contact_id: int, source_message_id: str, title: str, duration: int, timezone_name: str, requested_start: str, confidence: float) -> int:
+    def _create_request_in_transaction(
+        self,
+        db: sqlite3.Connection,
+        workspace_id: str,
+        contact_id: int,
+        source_message_id: str,
+        title: str,
+        duration: int,
+        timezone_name: str,
+        requested_start: str,
+        confidence: float,
+    ) -> int:
         now = utc_now().isoformat()
+        cursor = db.execute(
+            "INSERT INTO scheduling_requests(workspace_id,contact_id,source_message_id,title,duration_minutes,timezone,requested_start,status,confidence,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (workspace_id, contact_id, source_message_id, title, duration, timezone_name, requested_start, "detected", confidence, now, now),
+        )
+        request_id = int(cursor.lastrowid)
+        self._audit_in_transaction(
+            db,
+            workspace_id,
+            "scheduler",
+            "request.detected",
+            "request",
+            request_id,
+            {"confidence": confidence, "duration_minutes": duration},
+        )
+        return request_id
+
+    def create_request(self, workspace_id: str, contact_id: int, source_message_id: str, title: str, duration: int, timezone_name: str, requested_start: str, confidence: float) -> int:
+        with self.connect() as db:
+            return self._create_request_in_transaction(
+                db, workspace_id, contact_id, source_message_id, title, duration,
+                timezone_name, requested_start, confidence,
+            )
+
+    def update_contact_and_create_request(
+        self,
+        workspace_id: str,
+        contact_id: int,
+        language: str,
+        display_name: str | None,
+        source_message_id: str,
+        title: str,
+        duration: int,
+        timezone_name: str,
+        requested_start: str,
+        confidence: float,
+    ) -> int:
+        """Update detected contact details and create its request/audit atomically."""
+        if language not in {"en", "nl"}:
+            raise ValueError("Language must be en or nl")
         with self.connect() as db:
             cursor = db.execute(
-                "INSERT INTO scheduling_requests(workspace_id,contact_id,source_message_id,title,duration_minutes,timezone,requested_start,status,confidence,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                (workspace_id, contact_id, source_message_id, title, duration, timezone_name, requested_start, "detected", confidence, now, now),
+                "UPDATE contacts SET display_name=COALESCE(?,display_name),language=?,updated_at=? "
+                "WHERE workspace_id=? AND id=?",
+                (display_name, language, utc_now().isoformat(), workspace_id, contact_id),
             )
-            request_id = int(cursor.lastrowid)
-        self.audit(workspace_id, "scheduler", "request.detected", "request", request_id, {"confidence": confidence, "duration_minutes": duration})
-        return request_id
+            if cursor.rowcount != 1:
+                raise KeyError("Contact not found")
+            return self._create_request_in_transaction(
+                db, workspace_id, contact_id, source_message_id, title, duration,
+                timezone_name, requested_start, confidence,
+            )
+
+    def create_contact_request(
+        self,
+        workspace_id: str,
+        sender: str,
+        timezone_name: str,
+        language: str,
+        display_name: str | None,
+        source_message_id: str,
+        title: str,
+        duration: int,
+        requested_start: str,
+        confidence: float,
+    ) -> tuple[int, int]:
+        """Create/update the contact and detected request with one atomic commit."""
+        with self.connect() as db:
+            contact_id = self._upsert_contact_in_transaction(
+                db, workspace_id, sender, timezone_name, language, display_name,
+            )
+            request_id = self._create_request_in_transaction(
+                db, workspace_id, contact_id, source_message_id, title, duration,
+                timezone_name, requested_start, confidence,
+            )
+        return contact_id, request_id
+
+    def _transition_request_in_transaction(
+        self,
+        db: sqlite3.Connection,
+        workspace_id: str,
+        request_id: int,
+        target: str,
+        actor: str,
+        detail: dict | None = None,
+    ) -> None:
+        row = db.execute("SELECT status FROM scheduling_requests WHERE workspace_id=? AND id=?", (workspace_id, request_id)).fetchone()
+        if not row:
+            raise KeyError("Scheduling request not found")
+        current = row[0]
+        if not transition_allowed(current, target):
+            raise ValueError(f"Invalid request transition {current} -> {target}")
+        now = utc_now().isoformat()
+        db.execute("UPDATE scheduling_requests SET status=?,updated_at=? WHERE workspace_id=? AND id=?", (target, now, workspace_id, request_id))
+        db.execute(
+            "INSERT INTO audit_events(workspace_id,actor,action,entity_type,entity_id,detail_json,created_at) VALUES(?,?,?,?,?,?,?)",
+            (workspace_id, actor, "request.transition", "request", str(request_id), json.dumps({"from": current, "to": target, **(detail or {})}, sort_keys=True), now),
+        )
+
+    @staticmethod
+    def _touch_request_in_transaction(db: sqlite3.Connection, workspace_id: str, request_id: int) -> None:
+        row = db.execute(
+            "SELECT updated_at FROM scheduling_requests WHERE workspace_id=? AND id=?",
+            (workspace_id, request_id),
+        ).fetchone()
+        if not row:
+            raise KeyError("Scheduling request not found")
+        previous = datetime.fromisoformat(row["updated_at"])
+        if previous.tzinfo is None:
+            raise ValueError("Scheduling request timestamp is not timezone-aware")
+        updated = utc_now()
+        if updated <= previous:
+            updated = previous + timedelta(microseconds=1)
+        db.execute(
+            "UPDATE scheduling_requests SET updated_at=? WHERE workspace_id=? AND id=?",
+            (updated.isoformat(), workspace_id, request_id),
+        )
+
+    @staticmethod
+    def _touch_request_for_appointment_in_transaction(
+        db: sqlite3.Connection, workspace_id: str, appointment_id: int,
+    ) -> None:
+        row = db.execute(
+            "SELECT request_id FROM appointments WHERE workspace_id=? AND id=?",
+            (workspace_id, appointment_id),
+        ).fetchone()
+        if not row:
+            raise KeyError("Scheduling request for appointment not found")
+        Store._touch_request_in_transaction(db, workspace_id, int(row["request_id"]))
 
     def transition_request(self, workspace_id: str, request_id: int, target: str, actor: str, detail: dict | None = None) -> None:
         with self.connect() as db:
-            row = db.execute("SELECT status FROM scheduling_requests WHERE workspace_id=? AND id=?", (workspace_id, request_id)).fetchone()
-            if not row:
-                raise KeyError("Scheduling request not found")
-            current = row[0]
-            if not transition_allowed(current, target):
-                raise ValueError(f"Invalid request transition {current} -> {target}")
-            db.execute("UPDATE scheduling_requests SET status=?,updated_at=? WHERE workspace_id=? AND id=?", (target, utc_now().isoformat(), workspace_id, request_id))
-        self.audit(workspace_id, actor, "request.transition", "request", request_id, {"from": current, "to": target, **(detail or {})})
+            self._transition_request_in_transaction(db, workspace_id, request_id, target, actor, detail)
 
     def create_proposal(self, workspace_id: str, request_id: int, reply_text: str, slots: list[str], booking_token: str | None = None) -> tuple[int, str]:
         now = utc_now().isoformat()
@@ -180,7 +442,7 @@ class Store:
                 (workspace_id, request_id, self.crypto.encrypt(reply_text), json.dumps(slots), token_hash, self.crypto.encrypt(raw_token), now),
             )
             proposal_id = int(cursor.lastrowid)
-        self.transition_request(workspace_id, request_id, "proposal_pending", "scheduler", {"proposal_id": proposal_id})
+            self._transition_request_in_transaction(db, workspace_id, request_id, "proposal_pending", "scheduler", {"proposal_id": proposal_id})
         return proposal_id, raw_token
 
     def update_proposal_reply(self, workspace_id: str, proposal_id: int, reply_text: str) -> None:
@@ -221,18 +483,29 @@ class Store:
     def expire_stale_proposals(self, workspace_id: str, cutoff_iso: str) -> int:
         now = utc_now().isoformat()
         with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             rows = db.execute(
                 "SELECT id,request_id FROM proposals WHERE workspace_id=? AND status='sent' AND COALESCE(sent_at,created_at)<?",
                 (workspace_id, cutoff_iso),
             ).fetchall()
             if not rows:
                 return 0
-            db.executemany("UPDATE proposals SET status='expired' WHERE workspace_id=? AND id=?", [(workspace_id, row["id"]) for row in rows])
-            db.executemany(
-                "UPDATE scheduling_requests SET status='needs_clarification',updated_at=? WHERE workspace_id=? AND id=? AND status='awaiting_confirmation'",
-                [(now, workspace_id, row["request_id"]) for row in rows],
-            )
-        self.audit(workspace_id, "scheduler", "proposals.expired", "proposal", None, {"count": len(rows), "cutoff": cutoff_iso})
+            for row in rows:
+                cursor = db.execute(
+                    "UPDATE proposals SET status='expired' WHERE workspace_id=? AND id=? AND status='sent'",
+                    (workspace_id, row["id"]),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                request = db.execute("SELECT status FROM scheduling_requests WHERE workspace_id=? AND id=?", (workspace_id, row["request_id"])).fetchone()
+                if request and request["status"] == "awaiting_confirmation":
+                    self._transition_request_in_transaction(
+                        db, workspace_id, int(row["request_id"]), "needs_clarification", "scheduler",
+                        {"proposal_id": int(row["id"]), "reason": "proposal_expired"},
+                    )
+                else:
+                    self._touch_request_in_transaction(db, workspace_id, int(row["request_id"]))
+            self._audit_in_transaction(db, workspace_id, "scheduler", "proposals.expired", "proposal", None, {"count": len(rows), "cutoff": cutoff_iso})
         return len(rows)
 
     def claim_proposal_send(self, workspace_id: str, proposal_id: int) -> bool:
@@ -241,26 +514,81 @@ class Store:
                 "UPDATE proposals SET status='sending',sent_at=?,error_text=NULL WHERE workspace_id=? AND id=? AND status IN ('pending_approval','send_failed')",
                 (utc_now().isoformat(), workspace_id, proposal_id),
             )
+            if cursor.rowcount == 1:
+                row = db.execute("SELECT request_id FROM proposals WHERE workspace_id=? AND id=?", (workspace_id, proposal_id)).fetchone()
+                self._touch_request_in_transaction(db, workspace_id, int(row["request_id"]))
         return cursor.rowcount == 1
 
     def recover_stale_proposal_sends(self, workspace_id: str, cutoff_iso: str) -> int:
         message = "The process stopped during WhatsApp delivery; verify provider state before any resend"
         with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                "SELECT id,request_id FROM proposals WHERE workspace_id=? AND status='sending' AND sent_at<?",
+                (workspace_id, cutoff_iso),
+            ).fetchall()
             cursor = db.execute(
                 "UPDATE proposals SET status='manual_required',error_text=? WHERE workspace_id=? AND status='sending' AND sent_at<?",
                 (message, workspace_id, cutoff_iso),
             )
-        if cursor.rowcount:
-            self.audit(workspace_id, "worker", "proposals.stale_send_recovered", "proposal", None, {"count": cursor.rowcount, "cutoff": cutoff_iso})
+            for row in rows:
+                self._touch_request_in_transaction(db, workspace_id, int(row["request_id"]))
+            if cursor.rowcount:
+                self._audit_in_transaction(db, workspace_id, "worker", "proposals.stale_send_recovered", "proposal", None, {"count": cursor.rowcount, "cutoff": cutoff_iso})
         return cursor.rowcount
 
-    def mark_proposal_sent(self, workspace_id: str, proposal_id: int, provider_message_id: str | None) -> None:
+    def mark_proposal_sent(self, workspace_id: str, proposal_id: int, provider_message_id: str | None, actor: str = "operator") -> None:
         with self.connect() as db:
             row = db.execute("SELECT request_id,status FROM proposals WHERE workspace_id=? AND id=?", (workspace_id, proposal_id)).fetchone()
             if not row or row["status"] != "sending":
                 raise ValueError("Proposal is not sendable")
             db.execute("UPDATE proposals SET status='sent',provider_message_id=?,sent_at=?,error_text=NULL WHERE id=?", (provider_message_id, utc_now().isoformat(), proposal_id))
-        self.transition_request(workspace_id, int(row["request_id"]), "awaiting_confirmation", "operator", {"proposal_id": proposal_id})
+            self._transition_request_in_transaction(db, workspace_id, int(row["request_id"]), "awaiting_confirmation", actor, {"proposal_id": proposal_id})
+
+    def record_whatsapp_delivery_status(
+        self, workspace_id: str, provider_message_id: str, status: str, provider_timestamp: str,
+        error_code: str | None = None,
+    ) -> bool:
+        if not provider_message_id or len(provider_message_id) > 255:
+            raise ValueError("Invalid WhatsApp provider message ID")
+        if status not in {"sent", "delivered", "read", "failed", "deleted"}:
+            raise ValueError("Invalid WhatsApp delivery status")
+        if error_code is not None and (not error_code or len(error_code) > 32):
+            raise ValueError("Invalid WhatsApp provider error code")
+        try:
+            datetime.fromisoformat(provider_timestamp)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Invalid WhatsApp provider timestamp") from exc
+        received_at = utc_now().isoformat()
+        with self.connect() as db:
+            cursor = db.execute(
+                "INSERT OR IGNORE INTO whatsapp_delivery_events "
+                "(workspace_id,provider_message_id,status,provider_timestamp,error_code,received_at) "
+                "VALUES(?,?,?,?,?,?)",
+                (workspace_id, provider_message_id, status, provider_timestamp, error_code, received_at),
+            )
+            if cursor.rowcount:
+                db.execute(
+                    "INSERT INTO audit_events(workspace_id,actor,action,entity_type,entity_id,detail_json,created_at) "
+                    "VALUES(?,?,?,?,?,?,?)",
+                    (
+                        workspace_id, "whatsapp_webhook", "whatsapp.delivery_status", "provider_message",
+                        provider_message_id,
+                        json.dumps({"status": status, "provider_timestamp": provider_timestamp, "error_code": error_code}, sort_keys=True),
+                        received_at,
+                    ),
+                )
+        return cursor.rowcount == 1
+
+    def latest_whatsapp_delivery_status(self, workspace_id: str, provider_message_id: str) -> dict[str, str | None] | None:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT status,provider_timestamp,error_code FROM whatsapp_delivery_events "
+                "WHERE workspace_id=? AND provider_message_id=? "
+                "ORDER BY provider_timestamp DESC,received_at DESC,id DESC LIMIT 1",
+                (workspace_id, provider_message_id),
+            ).fetchone()
+        return dict(row) if row else None
 
     def mark_assisted_proposal_shared(self, workspace_id: str, proposal_id: int, actor: str) -> None:
         """Activate a booking link only after the operator confirms manual sharing."""
@@ -281,27 +609,33 @@ class Store:
             )
             if cursor.rowcount != 1:
                 raise ValueError("This assisted proposal is no longer awaiting manual sharing.")
-        self.transition_request(
-            workspace_id, int(row["request_id"]), "awaiting_confirmation", actor,
-            {"proposal_id": proposal_id, "delivery": "operator_confirmed_manual_share"},
-        )
-        self.audit(
-            workspace_id, actor, "proposal.shared_manually", "proposal", proposal_id,
-            {"provider_delivery_verified": False, "channel": "personal_whatsapp"},
-        )
+            self._transition_request_in_transaction(
+                db, workspace_id, int(row["request_id"]), "awaiting_confirmation", actor,
+                {"proposal_id": proposal_id, "delivery": "operator_confirmed_manual_share"},
+            )
+            db.execute(
+                "INSERT INTO audit_events(workspace_id,actor,action,entity_type,entity_id,detail_json,created_at) VALUES(?,?,?,?,?,?,?)",
+                (workspace_id, actor, "proposal.shared_manually", "proposal", str(proposal_id), json.dumps({"provider_delivery_verified": False, "channel": "personal_whatsapp"}, sort_keys=True), now),
+            )
 
     def mark_proposal_failed(self, workspace_id: str, proposal_id: int, error: str) -> None:
         with self.connect() as db:
-            db.execute("UPDATE proposals SET status='send_failed',error_text=? WHERE workspace_id=? AND id=? AND status='sending'", (error[:500], workspace_id, proposal_id))
-        self.audit(workspace_id, "scheduler", "proposal.send_failed", "proposal", proposal_id, {"error": error[:200]})
+            cursor = db.execute("UPDATE proposals SET status='send_failed',error_text=? WHERE workspace_id=? AND id=? AND status='sending'", (error[:500], workspace_id, proposal_id))
+            if cursor.rowcount:
+                row = db.execute("SELECT request_id FROM proposals WHERE workspace_id=? AND id=?", (workspace_id, proposal_id)).fetchone()
+                self._touch_request_in_transaction(db, workspace_id, int(row["request_id"]))
+                self._audit_in_transaction(db, workspace_id, "scheduler", "proposal.send_failed", "proposal", proposal_id, {"error": error[:200]})
 
     def mark_proposal_manual_required(self, workspace_id: str, proposal_id: int, error: str) -> None:
         with self.connect() as db:
-            db.execute(
+            cursor = db.execute(
                 "UPDATE proposals SET status='manual_required',error_text=? WHERE workspace_id=? AND id=? AND status='sending'",
                 (error[:500], workspace_id, proposal_id),
             )
-        self.audit(workspace_id, "scheduler", "proposal.manual_required", "proposal", proposal_id, {"error": error[:200]})
+            if cursor.rowcount:
+                row = db.execute("SELECT request_id FROM proposals WHERE workspace_id=? AND id=?", (workspace_id, proposal_id)).fetchone()
+                self._touch_request_in_transaction(db, workspace_id, int(row["request_id"]))
+                self._audit_in_transaction(db, workspace_id, "scheduler", "proposal.manual_required", "proposal", proposal_id, {"error": error[:200]})
 
     def reconcile_proposal_delivery(self, workspace_id: str, proposal_id: int, outcome: str, actor: str) -> None:
         """Record an operator-verified outcome for an ambiguous Business API send."""
@@ -332,13 +666,12 @@ class Store:
                     "WHERE workspace_id=? AND id=? AND status='manual_required'",
                     (now, workspace_id, proposal_id),
                 )
-                request_update = db.execute(
-                    "UPDATE scheduling_requests SET status='awaiting_confirmation',updated_at=? "
-                    "WHERE workspace_id=? AND id=? AND status='proposal_pending'",
-                    (now, workspace_id, row["request_id"]),
-                )
-                if proposal_update.rowcount != 1 or request_update.rowcount != 1:
+                if proposal_update.rowcount != 1:
                     raise ValueError("Proposal or request changed during delivery reconciliation")
+                self._transition_request_in_transaction(
+                    db, workspace_id, int(row["request_id"]), "awaiting_confirmation", actor,
+                    {"proposal_id": proposal_id, "delivery_reconciled": outcome},
+                )
             else:
                 proposal_update = db.execute(
                     "UPDATE proposals SET status='send_failed',error_text=? "
@@ -347,6 +680,7 @@ class Store:
                 )
                 if proposal_update.rowcount != 1:
                     raise ValueError("Proposal changed during delivery reconciliation")
+                self._touch_request_in_transaction(db, workspace_id, int(row["request_id"]))
 
             db.execute(
                 "INSERT INTO audit_events(workspace_id,actor,action,entity_type,entity_id,detail_json,created_at) "
@@ -385,8 +719,11 @@ class Store:
                 (workspace_id, row["request_id"], proposal_id, start.isoformat(), end.isoformat(), request_row["timezone"], now, now),
             )
             appointment_id = int(cursor.lastrowid)
-        self.transition_request(workspace_id, int(row["request_id"]), "slot_confirmed", actor, {"slot_index": slot_index, "appointment_id": appointment_id})
-        self.audit(workspace_id, actor, "proposal.confirmed", "proposal", proposal_id, {"slot_index": slot_index})
+            self._transition_request_in_transaction(db, workspace_id, int(row["request_id"]), "slot_confirmed", actor, {"slot_index": slot_index, "appointment_id": appointment_id})
+            db.execute(
+                "INSERT INTO audit_events(workspace_id,actor,action,entity_type,entity_id,detail_json,created_at) VALUES(?,?,?,?,?,?,?)",
+                (workspace_id, actor, "proposal.confirmed", "proposal", str(proposal_id), json.dumps({"slot_index": slot_index}, sort_keys=True), now),
+            )
         return appointment_id
 
     def get_appointment(self, workspace_id: str, appointment_id: int) -> dict[str, Any] | None:
@@ -399,40 +736,503 @@ class Store:
             ).fetchone()
         return dict(row) if row else None
 
-    def claim_booking(self, workspace_id: str, appointment_id: int) -> dict[str, Any] | None:
+    def claim_booking(self, workspace_id: str, appointment_id: int, actor: str = "operator") -> dict[str, Any] | None:
         with self.connect() as db:
+            row = db.execute("SELECT request_id FROM appointments WHERE workspace_id=? AND id=?", (workspace_id, appointment_id)).fetchone()
+            if not row:
+                return None
             cursor = db.execute(
-                "UPDATE appointments SET status='booking',updated_at=? WHERE workspace_id=? AND id=? AND status IN ('pending_approval','failed')",
+                "UPDATE appointments SET status='booking',booking_attempt=booking_attempt+1,updated_at=? "
+                "WHERE workspace_id=? AND id=? AND status IN ('pending_approval','failed')",
                 (utc_now().isoformat(), workspace_id, appointment_id),
             )
             if cursor.rowcount != 1:
                 return None
+            self._transition_request_in_transaction(db, workspace_id, int(row["request_id"]), "booking_pending", actor, {"appointment_id": appointment_id})
         appointment = self.get_appointment(workspace_id, appointment_id)
-        self.transition_request(workspace_id, int(appointment["request_id"]), "booking_pending", "operator", {"appointment_id": appointment_id})
         return appointment
 
     def mark_booked(self, workspace_id: str, appointment_id: int, event_id: str, event_link: str | None) -> None:
         now = utc_now().isoformat()
         with self.connect() as db:
-            row = db.execute("SELECT request_id FROM appointments WHERE workspace_id=? AND id=?", (workspace_id, appointment_id)).fetchone()
-            db.execute("UPDATE appointments SET status='booked',google_event_id=?,google_event_link=?,error_text=NULL,updated_at=? WHERE id=?", (event_id, event_link, now, appointment_id))
-        self.transition_request(workspace_id, int(row["request_id"]), "booked", "scheduler", {"appointment_id": appointment_id, "google_event_id": event_id})
+            row = db.execute("SELECT request_id FROM appointments WHERE workspace_id=? AND id=? AND status='booking'", (workspace_id, appointment_id)).fetchone()
+            if not row:
+                raise ValueError("Appointment is not being booked")
+            cursor = db.execute(
+                "UPDATE appointments SET status='booked',google_event_id=?,google_event_link=?,error_text=NULL,updated_at=? WHERE workspace_id=? AND id=? AND status='booking'",
+                (event_id, event_link, now, workspace_id, appointment_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Appointment changed while booking")
+            self._transition_request_in_transaction(db, workspace_id, int(row["request_id"]), "booked", "scheduler", {"appointment_id": appointment_id, "google_event_id": event_id})
 
-    def mark_booking_failed(self, workspace_id: str, appointment_id: int, error: str) -> None:
+    def mark_booking_failed(
+        self,
+        workspace_id: str,
+        appointment_id: int,
+        error: str,
+        actor: str = "scheduler",
+        detail: dict | None = None,
+    ) -> None:
         with self.connect() as db:
-            db.execute("UPDATE appointments SET status='failed',error_text=?,updated_at=? WHERE workspace_id=? AND id=?", (error[:500], utc_now().isoformat(), workspace_id, appointment_id))
-        self.audit(workspace_id, "scheduler", "appointment.booking_failed", "appointment", appointment_id, {"error": error[:200]})
+            row = db.execute("SELECT request_id FROM appointments WHERE workspace_id=? AND id=?", (workspace_id, appointment_id)).fetchone()
+            if not row:
+                raise KeyError("Appointment not found")
+            now = utc_now().isoformat()
+            db.execute("UPDATE appointments SET status='failed',error_text=?,updated_at=? WHERE workspace_id=? AND id=?", (error[:500], now, workspace_id, appointment_id))
+            self._transition_request_in_transaction(db, workspace_id, int(row["request_id"]), "failed", actor, detail or {"error": error[:200]})
+            db.execute(
+                "INSERT INTO audit_events(workspace_id,actor,action,entity_type,entity_id,detail_json,created_at) VALUES(?,?,?,?,?,?,?)",
+                (workspace_id, "scheduler", "appointment.booking_failed", "appointment", str(appointment_id), json.dumps({"error": error[:200]}, sort_keys=True), now),
+            )
+
+    def mark_booking_manual_required(
+        self,
+        workspace_id: str,
+        appointment_id: int,
+        reason: str,
+        actor: str = "scheduler",
+    ) -> None:
+        if reason not in {"calendar_create_result_unknown", "booking_state_persist_failed"}:
+            raise ValueError("Invalid manual booking reconciliation reason")
+        message = "Google Calendar may contain an event; verify it before retrying"
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT request_id,status FROM appointments WHERE workspace_id=? AND id=?",
+                (workspace_id, appointment_id),
+            ).fetchone()
+            if not row:
+                raise KeyError("Appointment not found")
+            if row["status"] == "manual_required":
+                return
+            if row["status"] != "booking":
+                raise ValueError("Appointment is not being booked")
+            cursor = db.execute(
+                "UPDATE appointments SET status='manual_required',error_text=?,updated_at=? "
+                "WHERE workspace_id=? AND id=? AND status='booking'",
+                (message, now, workspace_id, appointment_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Appointment changed while recording calendar reconciliation")
+            self._transition_request_in_transaction(
+                db, workspace_id, int(row["request_id"]), "failed", actor,
+                {"appointment_id": appointment_id, "reason": reason},
+            )
+            detail = {"reason": reason, "reconciliation_required": True}
+            db.execute(
+                "INSERT INTO audit_events(workspace_id,actor,action,entity_type,entity_id,detail_json,created_at) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (workspace_id, actor, "appointment.booking_manual_required", "appointment", str(appointment_id), json.dumps(detail, sort_keys=True), now),
+            )
+
+    @staticmethod
+    def _background_job_ids_for_appointment(
+        db: sqlite3.Connection,
+        workspace_id: str,
+        appointment_id: int,
+        *,
+        job_type: str | None = None,
+        active_only: bool = False,
+    ) -> list[int]:
+        conditions = ["workspace_id=?", "payload_json LIKE ?"]
+        parameters: list[Any] = [workspace_id, '%"appointment_id"%']
+        if job_type is not None:
+            conditions.append("job_type=?")
+            parameters.append(job_type)
+        if active_only:
+            conditions.append("status IN ('queued','manual_required','failed')")
+        candidates = db.execute(
+            "SELECT id,payload_json FROM background_jobs WHERE " + " AND ".join(conditions),
+            parameters,
+        ).fetchall()
+        matching_ids = []
+        for candidate in candidates:
+            try:
+                payload = json.loads(candidate["payload_json"])
+            except (TypeError, ValueError):
+                continue
+            if isinstance(payload, dict) and type(payload.get("appointment_id")) is int and payload["appointment_id"] == appointment_id:
+                matching_ids.append(int(candidate["id"]))
+        return matching_ids
 
     def cancel_appointment(self, workspace_id: str, appointment_id: int, actor: str) -> bool:
         now = utc_now().isoformat()
         with self.connect() as db:
-            row = db.execute("SELECT request_id,status FROM appointments WHERE workspace_id=? AND id=?", (workspace_id, appointment_id)).fetchone()
+            row = db.execute(
+                "SELECT request_id,status,google_event_id FROM appointments WHERE workspace_id=? AND id=?",
+                (workspace_id, appointment_id),
+            ).fetchone()
             if not row or row["status"] == "cancelled":
                 return False
-            db.execute("UPDATE appointments SET status='cancelled',updated_at=? WHERE id=?", (now, appointment_id))
-            db.execute("UPDATE background_jobs SET status='cancelled',updated_at=? WHERE workspace_id=? AND payload_json LIKE ? AND status IN ('queued','manual_required','failed')", (now, workspace_id, f'%"appointment_id": {appointment_id}%'))
-        self.transition_request(workspace_id, int(row["request_id"]), "cancelled", actor, {"appointment_id": appointment_id})
+            if row["status"] == "booking":
+                raise ValueError("Appointment booking is in progress; wait for it to finish before cancelling")
+            if row["status"] not in {"pending_approval", "failed"} or row["google_event_id"]:
+                raise ValueError("Calendar-backed or ambiguous appointments require provider reconciliation before cancellation")
+            cursor = db.execute(
+                "UPDATE appointments SET status='cancelled',updated_at=? WHERE workspace_id=? AND id=? AND status IN ('pending_approval','failed') AND google_event_id IS NULL",
+                (now, workspace_id, appointment_id),
+            )
+            if cursor.rowcount != 1:
+                return False
+            reminder_job_ids = self._background_job_ids_for_appointment(
+                db, workspace_id, appointment_id, job_type="appointment_reminder", active_only=True
+            )
+            db.executemany(
+                "UPDATE background_jobs SET status='cancelled',updated_at=? WHERE workspace_id=? AND id=? AND status IN ('queued','manual_required','failed')",
+                [(now, workspace_id, job_id) for job_id in reminder_job_ids],
+            )
+            self._transition_request_in_transaction(db, workspace_id, int(row["request_id"]), "cancelled", actor, {"appointment_id": appointment_id})
         return True
+
+    def claim_cancellation(self, workspace_id: str, appointment_id: int, actor: str) -> dict[str, Any] | None:
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            # Serialize the reminder-state check with worker claims and the cancellation transition.
+            db.execute("BEGIN IMMEDIATE")
+            if self._appointment_has_running_reminder(db, workspace_id, appointment_id):
+                raise ValueError("A Calendar reminder is currently being sent; wait before cancelling the appointment")
+            cursor = db.execute(
+                "UPDATE appointments SET status='cancelling',error_text=NULL,updated_at=? "
+                "WHERE workspace_id=? AND id=? AND status='booked' AND google_event_id IS NOT NULL",
+                (now, workspace_id, appointment_id),
+            )
+            if cursor.rowcount != 1:
+                return None
+            self._touch_request_for_appointment_in_transaction(db, workspace_id, appointment_id)
+            self._audit_in_transaction(
+                db, workspace_id, actor, "appointment.cancellation_started", "appointment", appointment_id,
+                {"provider": "google_calendar"},
+            )
+        return self.get_appointment(workspace_id, appointment_id)
+
+    def mark_cancellation_manual_required(self, workspace_id: str, appointment_id: int, actor: str) -> None:
+        now = utc_now().isoformat()
+        message = "Google Calendar cancellation outcome is unknown; verify the event before retrying"
+        with self.connect() as db:
+            cursor = db.execute(
+                "UPDATE appointments SET status='cancel_manual_required',error_text=?,updated_at=? "
+                "WHERE workspace_id=? AND id=? AND status='cancelling'",
+                (message, now, workspace_id, appointment_id),
+            )
+            if cursor.rowcount:
+                self._touch_request_for_appointment_in_transaction(db, workspace_id, appointment_id)
+                self._audit_in_transaction(
+                    db, workspace_id, actor, "appointment.cancellation_manual_required", "appointment", appointment_id,
+                    {"provider": "google_calendar"},
+                )
+
+    def finish_cancellation(self, workspace_id: str, appointment_id: int, actor: str) -> bool:
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT request_id,status FROM appointments WHERE workspace_id=? AND id=?",
+                (workspace_id, appointment_id),
+            ).fetchone()
+            if not row:
+                raise KeyError("Appointment not found")
+            if row["status"] == "cancelled":
+                return False
+            if row["status"] not in {"cancelling", "cancel_manual_required"}:
+                raise ValueError("Appointment is not awaiting cancellation completion")
+            cursor = db.execute(
+                "UPDATE appointments SET status='cancelled',error_text=NULL,updated_at=? "
+                "WHERE workspace_id=? AND id=? AND status IN ('cancelling','cancel_manual_required')",
+                (now, workspace_id, appointment_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Appointment changed during cancellation reconciliation")
+            reminder_job_ids = self._background_job_ids_for_appointment(
+                db, workspace_id, appointment_id, job_type="appointment_reminder", active_only=True
+            )
+            db.executemany(
+                "UPDATE background_jobs SET status='cancelled',updated_at=? "
+                "WHERE workspace_id=? AND id=? AND status IN ('queued','manual_required','failed')",
+                [(now, workspace_id, job_id) for job_id in reminder_job_ids],
+            )
+            self._transition_request_in_transaction(
+                db, workspace_id, int(row["request_id"]), "cancelled", actor,
+                {"appointment_id": appointment_id, "provider_event_absent": True},
+            )
+            self._audit_in_transaction(
+                db, workspace_id, actor, "appointment.cancelled", "appointment", appointment_id,
+                {"provider": "google_calendar"},
+            )
+        return True
+
+    def restore_booked_after_cancellation_check(self, workspace_id: str, appointment_id: int, actor: str) -> None:
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            cursor = db.execute(
+                "UPDATE appointments SET status='booked',error_text=NULL,updated_at=? "
+                "WHERE workspace_id=? AND id=? AND status='cancel_manual_required'",
+                (now, workspace_id, appointment_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Appointment changed during cancellation reconciliation")
+            self._touch_request_for_appointment_in_transaction(db, workspace_id, appointment_id)
+            self._audit_in_transaction(
+                db, workspace_id, actor, "appointment.cancellation_reconciled", "appointment", appointment_id,
+                {"outcome": "event_still_active", "retry_requires_explicit_action": True},
+            )
+
+    def recover_stale_cancellations(self, workspace_id: str, cutoff_iso: str) -> int:
+        now = utc_now().isoformat()
+        message = "The process stopped during Calendar cancellation; verify the event before retrying"
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            stale_ids = [
+                int(row["id"]) for row in db.execute(
+                    "SELECT id FROM appointments WHERE workspace_id=? AND status='cancelling' AND updated_at<?",
+                    (workspace_id, cutoff_iso),
+                ).fetchall()
+            ]
+            cursor = db.execute(
+                "UPDATE appointments SET status='cancel_manual_required',error_text=?,updated_at=? "
+                "WHERE workspace_id=? AND status='cancelling' AND updated_at<?",
+                (message, now, workspace_id, cutoff_iso),
+            )
+            count = cursor.rowcount
+            if count:
+                for appointment_id in stale_ids:
+                    self._touch_request_for_appointment_in_transaction(db, workspace_id, appointment_id)
+                self._audit_in_transaction(
+                    db, workspace_id, "worker", "appointments.stale_cancellations_recovered", "workspace", workspace_id,
+                    {"count": count, "cutoff": cutoff_iso},
+                )
+        return count
+
+    def prepare_reschedule(self, workspace_id: str, appointment_id: int, start_at: str, end_at: str, actor: str) -> bool:
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            # Serialize the reminder-state check with worker claims and the appointment transition.
+            db.execute("BEGIN IMMEDIATE")
+            if self._appointment_has_running_reminder(db, workspace_id, appointment_id):
+                raise ValueError("A Calendar reminder is currently being sent; wait before preparing a reschedule")
+            cursor = db.execute(
+                "UPDATE appointments SET status='reschedule_pending',pending_start_at=?,pending_end_at=?,reschedule_attempt=reschedule_attempt+1,error_text=NULL,updated_at=? "
+                "WHERE workspace_id=? AND id=? AND status='booked' AND google_event_id IS NOT NULL",
+                (start_at, end_at, now, workspace_id, appointment_id),
+            )
+            if cursor.rowcount != 1:
+                return False
+            self._touch_request_for_appointment_in_transaction(db, workspace_id, appointment_id)
+            self._audit_in_transaction(
+                db, workspace_id, actor, "appointment.reschedule_proposed", "appointment", appointment_id,
+                {"start_at": start_at, "end_at": end_at},
+            )
+        return True
+
+    def discard_reschedule(
+        self, workspace_id: str, appointment_id: int, actor: str, reminder_at: str | None = None,
+    ) -> bool:
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            # Prevent a worker from claiming the old reminder between this check and the state/job updates.
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT reschedule_attempt FROM appointments WHERE workspace_id=? AND id=? AND status='reschedule_pending'",
+                (workspace_id, appointment_id),
+            ).fetchone()
+            if not row:
+                return False
+            if self._appointment_has_running_reminder(db, workspace_id, appointment_id):
+                raise ValueError("A Calendar reminder is currently being sent; wait before discarding a reschedule")
+            cursor = db.execute(
+                "UPDATE appointments SET status='booked',pending_start_at=NULL,pending_end_at=NULL,updated_at=? "
+                "WHERE workspace_id=? AND id=? AND status='reschedule_pending'",
+                (now, workspace_id, appointment_id),
+            )
+            if cursor.rowcount:
+                self._touch_request_for_appointment_in_transaction(db, workspace_id, appointment_id)
+                old_jobs = self._background_job_ids_for_appointment(
+                    db, workspace_id, appointment_id, job_type="appointment_reminder", active_only=True,
+                )
+                db.executemany(
+                    "UPDATE background_jobs SET status='cancelled',updated_at=? WHERE workspace_id=? AND id=? AND status='queued'",
+                    [(now, workspace_id, job_id) for job_id in old_jobs],
+                )
+                if reminder_at and reminder_at > now:
+                    self._insert_reschedule_reminder(db, workspace_id, appointment_id, int(row["reschedule_attempt"]), reminder_at, now)
+                self._audit_in_transaction(
+                    db, workspace_id, actor, "appointment.reschedule_discarded", "appointment", appointment_id, {},
+                )
+        return cursor.rowcount == 1
+
+    def claim_reschedule(self, workspace_id: str, appointment_id: int, actor: str) -> dict[str, Any] | None:
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            if self._appointment_has_running_reminder(db, workspace_id, appointment_id):
+                return None
+            cursor = db.execute(
+                "UPDATE appointments SET status='rescheduling',updated_at=? "
+                "WHERE workspace_id=? AND id=? AND status='reschedule_pending' AND pending_start_at IS NOT NULL AND pending_end_at IS NOT NULL",
+                (now, workspace_id, appointment_id),
+            )
+            if cursor.rowcount != 1:
+                return None
+            self._touch_request_for_appointment_in_transaction(db, workspace_id, appointment_id)
+            self._audit_in_transaction(
+                db, workspace_id, actor, "appointment.reschedule_started", "appointment", appointment_id, {},
+            )
+        return self.get_appointment(workspace_id, appointment_id)
+
+    def mark_reschedule_manual_required(self, workspace_id: str, appointment_id: int, actor: str) -> None:
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            cursor = db.execute(
+                "UPDATE appointments SET status='reschedule_manual_required',error_text=?,updated_at=? "
+                "WHERE workspace_id=? AND id=? AND status='rescheduling'",
+                ("Google Calendar reschedule outcome is unknown; verify the event before retrying", now, workspace_id, appointment_id),
+            )
+            if cursor.rowcount:
+                self._touch_request_for_appointment_in_transaction(db, workspace_id, appointment_id)
+                self._audit_in_transaction(
+                    db, workspace_id, actor, "appointment.reschedule_manual_required", "appointment", appointment_id,
+                    {"provider": "google_calendar"},
+                )
+
+    def restore_reschedule_pending(self, workspace_id: str, appointment_id: int, actor: str, reason: str) -> None:
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            cursor = db.execute(
+                "UPDATE appointments SET status='reschedule_pending',error_text=NULL,updated_at=? "
+                "WHERE workspace_id=? AND id=? AND status='rescheduling'",
+                (now, workspace_id, appointment_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Appointment changed during reschedule preflight")
+            self._touch_request_for_appointment_in_transaction(db, workspace_id, appointment_id)
+            self._audit_in_transaction(
+                db, workspace_id, actor, "appointment.reschedule_preflight_failed", "appointment", appointment_id,
+                {"reason": reason},
+            )
+
+    def finish_reschedule(
+        self, workspace_id: str, appointment_id: int, actor: str, reminder_at: str | None = None,
+    ) -> dict[str, Any]:
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT request_id,pending_start_at,pending_end_at,reschedule_attempt FROM appointments "
+                "WHERE workspace_id=? AND id=? AND status IN ('rescheduling','reschedule_manual_required')",
+                (workspace_id, appointment_id),
+            ).fetchone()
+            if not row or not row["pending_start_at"] or not row["pending_end_at"]:
+                raise ValueError("Appointment has no pending reschedule to complete")
+            cursor = db.execute(
+                "UPDATE appointments SET start_at=pending_start_at,end_at=pending_end_at,pending_start_at=NULL,pending_end_at=NULL,"
+                "status='booked',error_text=NULL,updated_at=? WHERE workspace_id=? AND id=? AND status IN ('rescheduling','reschedule_manual_required')",
+                (now, workspace_id, appointment_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Appointment changed while completing its reschedule")
+            self._touch_request_for_appointment_in_transaction(db, workspace_id, appointment_id)
+            old_jobs = self._background_job_ids_for_appointment(
+                db, workspace_id, appointment_id, job_type="appointment_reminder", active_only=True
+            )
+            db.executemany(
+                "UPDATE background_jobs SET status='cancelled',updated_at=? WHERE workspace_id=? AND id=? AND status='queued'",
+                [(now, workspace_id, job_id) for job_id in old_jobs],
+            )
+            reminder_job_id = None
+            if reminder_at and reminder_at > now:
+                reminder_job_id = self._insert_reschedule_reminder(
+                    db, workspace_id, appointment_id, int(row["reschedule_attempt"]), reminder_at, now,
+                )
+            self._audit_in_transaction(
+                db, workspace_id, actor, "appointment.rescheduled", "appointment", appointment_id,
+                {"start_at": row["pending_start_at"], "end_at": row["pending_end_at"], "reminder_job_created": reminder_job_id is not None},
+            )
+        updated = self.get_appointment(workspace_id, appointment_id)
+        assert updated is not None
+        return updated
+
+    def restore_booked_after_reschedule_check(
+        self, workspace_id: str, appointment_id: int, actor: str, reminder_at: str | None = None,
+    ) -> None:
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT reschedule_attempt FROM appointments WHERE workspace_id=? AND id=? AND status='reschedule_manual_required'",
+                (workspace_id, appointment_id),
+            ).fetchone()
+            if not row:
+                raise ValueError("Appointment changed during reschedule reconciliation")
+            cursor = db.execute(
+                "UPDATE appointments SET status='booked',pending_start_at=NULL,pending_end_at=NULL,error_text=NULL,updated_at=? "
+                "WHERE workspace_id=? AND id=? AND status='reschedule_manual_required'",
+                (now, workspace_id, appointment_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Appointment changed during reschedule reconciliation")
+            self._touch_request_for_appointment_in_transaction(db, workspace_id, appointment_id)
+            old_jobs = self._background_job_ids_for_appointment(
+                db, workspace_id, appointment_id, job_type="appointment_reminder", active_only=True,
+            )
+            db.executemany(
+                "UPDATE background_jobs SET status='cancelled',updated_at=? WHERE workspace_id=? AND id=? AND status='queued'",
+                [(now, workspace_id, job_id) for job_id in old_jobs],
+            )
+            if reminder_at and reminder_at > now:
+                self._insert_reschedule_reminder(db, workspace_id, appointment_id, int(row["reschedule_attempt"]), reminder_at, now)
+            self._audit_in_transaction(
+                db, workspace_id, actor, "appointment.reschedule_reconciled", "appointment", appointment_id,
+                {"outcome": "event_still_at_original_time"},
+            )
+
+    def recover_stale_reschedules(self, workspace_id: str, cutoff_iso: str) -> int:
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            stale_ids = [
+                int(row["id"]) for row in db.execute(
+                    "SELECT id FROM appointments WHERE workspace_id=? AND status='rescheduling' AND updated_at<?",
+                    (workspace_id, cutoff_iso),
+                ).fetchall()
+            ]
+            cursor = db.execute(
+                "UPDATE appointments SET status='reschedule_manual_required',error_text=?,updated_at=? "
+                "WHERE workspace_id=? AND status='rescheduling' AND updated_at<?",
+                ("The process stopped during Calendar rescheduling; verify the event before retrying", now, workspace_id, cutoff_iso),
+            )
+            count = cursor.rowcount
+            if count:
+                for appointment_id in stale_ids:
+                    self._touch_request_for_appointment_in_transaction(db, workspace_id, appointment_id)
+                self._audit_in_transaction(
+                    db, workspace_id, "worker", "appointments.stale_reschedules_recovered", "workspace", workspace_id,
+                    {"count": count, "cutoff": cutoff_iso},
+                )
+        return count
+
+    @staticmethod
+    def _appointment_has_running_reminder(db: sqlite3.Connection, workspace_id: str, appointment_id: int) -> bool:
+        candidate_ids = Store._background_job_ids_for_appointment(
+            db, workspace_id, appointment_id, job_type="appointment_reminder",
+        )
+        for job_id in candidate_ids:
+            row = db.execute(
+                "SELECT 1 FROM background_jobs WHERE workspace_id=? AND id=? AND status='running'",
+                (workspace_id, job_id),
+            ).fetchone()
+            if row:
+                return True
+        return False
+
+    @staticmethod
+    def _insert_reschedule_reminder(
+        db: sqlite3.Connection, workspace_id: str, appointment_id: int, attempt: int, reminder_at: str, now: str,
+    ) -> int | None:
+        dedupe_key = f"reminder:{appointment_id}:reschedule:{attempt}"
+        try:
+            cursor = db.execute(
+                "INSERT INTO background_jobs(workspace_id,job_type,dedupe_key,run_at,payload_json,status,created_at,updated_at) "
+                "VALUES(?,'appointment_reminder',?,?,?,'queued',?,?)",
+                (workspace_id, dedupe_key, reminder_at, json.dumps({"appointment_id": appointment_id}), now, now),
+            )
+        except sqlite3.IntegrityError:
+            return None
+        return int(cursor.lastrowid)
 
     def schedule_job(self, workspace_id: str, job_type: str, dedupe_key: str, run_at: str, payload: dict) -> int | None:
         now = utc_now().isoformat()
@@ -454,10 +1254,31 @@ class Store:
                 (workspace_id, now_iso, limit),
             ).fetchall()
             for row in rows:
-                cursor = db.execute("UPDATE background_jobs SET status='running',attempts=attempts+1,updated_at=? WHERE id=? AND status='queued'", (utc_now().isoformat(), row["id"]))
+                data = dict(row)
+                try:
+                    payload = json.loads(data.pop("payload_json"))
+                    if not isinstance(payload, dict):
+                        raise ValueError("Job payload must be a JSON object")
+                except (TypeError, ValueError):
+                    now = utc_now().isoformat()
+                    cursor = db.execute(
+                        "UPDATE background_jobs SET status='failed',last_error=?,updated_at=? "
+                        "WHERE workspace_id=? AND id=? AND status='queued'",
+                        ("Malformed job payload; job was not executed", now, workspace_id, row["id"]),
+                    )
+                    if cursor.rowcount:
+                        self._audit_in_transaction(
+                            db, workspace_id, "worker", "job.failed", "job", row["id"],
+                            {"error": "Malformed job payload"},
+                        )
+                    continue
+                cursor = db.execute(
+                    "UPDATE background_jobs SET status='running',attempts=attempts+1,updated_at=? "
+                    "WHERE workspace_id=? AND id=? AND status='queued'",
+                    (utc_now().isoformat(), workspace_id, row["id"]),
+                )
                 if cursor.rowcount:
-                    data = dict(row)
-                    data["payload"] = json.loads(data.pop("payload_json"))
+                    data["payload"] = payload
                     claimed.append(data)
         return claimed
 
@@ -465,8 +1286,9 @@ class Store:
         if status not in {"sent", "manual_required", "failed", "cancelled"}:
             raise ValueError("Invalid terminal job state")
         with self.connect() as db:
-            db.execute("UPDATE background_jobs SET status=?,last_error=?,updated_at=? WHERE workspace_id=? AND id=?", (status, error, utc_now().isoformat(), workspace_id, job_id))
-        self.audit(workspace_id, "worker", f"job.{status}", "job", job_id, {"error": error} if error else {})
+            cursor = db.execute("UPDATE background_jobs SET status=?,last_error=?,updated_at=? WHERE workspace_id=? AND id=?", (status, error, utc_now().isoformat(), workspace_id, job_id))
+            if cursor.rowcount:
+                self._audit_in_transaction(db, workspace_id, "worker", f"job.{status}", "job", job_id, {"error": error} if error else {})
 
     def recover_stale_jobs(self, workspace_id: str, cutoff_iso: str) -> int:
         message = "Worker stopped while this job was running; verify provider state before handling it manually"
@@ -476,9 +1298,9 @@ class Store:
                 "WHERE workspace_id=? AND status='running' AND updated_at<?",
                 (message, utc_now().isoformat(), workspace_id, cutoff_iso),
             )
-        count = cursor.rowcount
-        if count:
-            self.audit(workspace_id, "worker", "jobs.stale_recovered", "job", None, {"count": count, "cutoff": cutoff_iso})
+            count = cursor.rowcount
+            if count:
+                self._audit_in_transaction(db, workspace_id, "worker", "jobs.stale_recovered", "job", None, {"count": count, "cutoff": cutoff_iso})
         return count
 
     def recover_stale_bookings(self, workspace_id: str, cutoff_iso: str) -> int:
@@ -491,16 +1313,73 @@ class Store:
             ).fetchall()
             if not rows:
                 return 0
-            db.executemany(
-                "UPDATE appointments SET status='manual_required',error_text=?,updated_at=? WHERE workspace_id=? AND id=? AND status='booking'",
-                [(message, now, workspace_id, row["id"]) for row in rows],
+            recovered = 0
+            for row in rows:
+                cursor = db.execute(
+                    "UPDATE appointments SET status='manual_required',error_text=?,updated_at=? WHERE workspace_id=? AND id=? AND status='booking'",
+                    (message, now, workspace_id, row["id"]),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                self._transition_request_in_transaction(
+                    db, workspace_id, int(row["request_id"]), "failed", "worker",
+                    {"appointment_id": int(row["id"]), "reason": "stale_calendar_booking"},
+                )
+                recovered += 1
+            db.execute(
+                "INSERT INTO audit_events(workspace_id,actor,action,entity_type,entity_id,detail_json,created_at) VALUES(?,?,?,?,?,?,?)",
+                (workspace_id, "worker", "bookings.stale_recovered", "appointment", None, json.dumps({"count": recovered, "cutoff": cutoff_iso}, sort_keys=True), now),
             )
-            db.executemany(
-                "UPDATE scheduling_requests SET status='failed',updated_at=? WHERE workspace_id=? AND id=? AND status='booking_pending'",
-                [(now, workspace_id, row["request_id"]) for row in rows],
+        return recovered
+
+    def reconcile_stale_booking(self, workspace_id: str, appointment_id: int, event: dict | None, actor: str) -> str:
+        """Record an operator-triggered provider lookup for a stale calendar booking."""
+        now = utc_now().isoformat()
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT request_id,status FROM appointments WHERE workspace_id=? AND id=?",
+                (workspace_id, appointment_id),
+            ).fetchone()
+            if not row:
+                raise KeyError("Appointment not found")
+            if row["status"] != "manual_required":
+                raise ValueError("Appointment is not awaiting calendar reconciliation")
+
+            if event is not None:
+                event_id = event.get("id") if isinstance(event, dict) else None
+                event_link = event.get("htmlLink") if isinstance(event, dict) else None
+                if not isinstance(event_id, str) or not event_id or (event_link is not None and not isinstance(event_link, str)):
+                    raise ValueError("Calendar verification returned invalid event details")
+                cursor = db.execute(
+                    "UPDATE appointments SET status='booked',google_event_id=?,google_event_link=?,error_text=NULL,updated_at=? "
+                    "WHERE workspace_id=? AND id=? AND status='manual_required'",
+                    (event_id, event_link, now, workspace_id, appointment_id),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("Appointment changed during calendar reconciliation")
+                self._transition_request_in_transaction(
+                    db, workspace_id, int(row["request_id"]), "booked", actor,
+                    {"appointment_id": appointment_id, "reason": "verified_calendar_event", "google_event_id": event_id},
+                )
+                outcome = "event_found"
+                detail = {"outcome": outcome, "provider": "google_calendar", "whatsapp_sent": False}
+            else:
+                cursor = db.execute(
+                    "UPDATE appointments SET status='failed',error_text=?,updated_at=? "
+                    "WHERE workspace_id=? AND id=? AND status='manual_required'",
+                    ("No matching Google Calendar event was found; an explicit retry is available.", now, workspace_id, appointment_id),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("Appointment changed during calendar reconciliation")
+                self._touch_request_in_transaction(db, workspace_id, int(row["request_id"]))
+                outcome = "event_not_found"
+                detail = {"outcome": outcome, "provider": "google_calendar", "retry_requires_explicit_operator_action": True}
+
+            db.execute(
+                "INSERT INTO audit_events(workspace_id,actor,action,entity_type,entity_id,detail_json,created_at) VALUES(?,?,?,?,?,?,?)",
+                (workspace_id, actor, "appointment.booking_reconciled", "appointment", str(appointment_id), json.dumps(detail, sort_keys=True), now),
             )
-        self.audit(workspace_id, "worker", "bookings.stale_recovered", "appointment", None, {"count": len(rows), "cutoff": cutoff_iso})
-        return len(rows)
+        return outcome
 
     def outbound_allowed(self, workspace_id: str, subject: str, max_per_hour: int) -> bool:
         cutoff = (utc_now() - timedelta(hours=1)).isoformat()
@@ -558,7 +1437,7 @@ class Store:
             total = int(db.execute(f"SELECT COUNT(*) FROM scheduling_requests r JOIN contacts c ON c.id=r.contact_id WHERE {where_sql}", args).fetchone()[0])
             page = min(page, max(1, (total + per_page - 1) // per_page))
             rows = db.execute(
-                f"SELECT r.*,c.sender,c.display_name,c.email,c.consent_status,p.id proposal_id,p.status proposal_status,p.slots_json,p.selected_slot,a.id appointment_id,a.status appointment_status,a.start_at,a.google_event_link "
+                f"SELECT r.*,c.sender,c.display_name,c.email,c.consent_status,p.id proposal_id,p.status proposal_status,p.slots_json,p.selected_slot,a.id appointment_id,a.status appointment_status,a.start_at,a.end_at,a.pending_start_at,a.pending_end_at,a.google_event_link "
                 f"FROM scheduling_requests r JOIN contacts c ON c.id=r.contact_id LEFT JOIN proposals p ON p.request_id=r.id LEFT JOIN appointments a ON a.request_id=r.id "
                 f"WHERE {where_sql} ORDER BY r.updated_at DESC LIMIT ? OFFSET ?",
                 [*args, per_page, (page - 1) * per_page],
@@ -595,9 +1474,9 @@ class Store:
                     (workspace_id, timestamp, timestamp, cursor_id, page_size),
                 ).fetchall()
             else:
-                # HAI's current HTTP feed reader performs a plain GET and does not
-                # send the previously returned cursor. Give it a useful bounded
-                # snapshot instead of repeatedly exposing the oldest first page.
+                # Start with a useful bounded latest snapshot. Clients that
+                # persist the returned nextCursor can continue incrementally;
+                # clients that do not will repeat this bounded snapshot.
                 rows = db.execute(
                     "SELECT r.id,r.title,r.duration_minutes,r.timezone,r.requested_start,r.status,r.confidence,r.created_at,r.updated_at,"
                     "p.status proposal_status,a.status appointment_status,a.start_at,a.end_at "
@@ -638,7 +1517,7 @@ class Store:
     def request_detail(self, workspace_id: str, request_id: int) -> dict[str, Any] | None:
         with self.connect() as db:
             row = db.execute(
-                "SELECT r.*,c.sender,c.display_name,c.email,c.consent_status,p.id proposal_id,p.status proposal_status,p.slots_json,p.selected_slot,a.id appointment_id,a.status appointment_status,a.start_at,a.google_event_link "
+                "SELECT r.*,c.sender,c.display_name,c.email,c.consent_status,p.id proposal_id,p.status proposal_status,p.slots_json,p.selected_slot,p.provider_message_id,a.id appointment_id,a.status appointment_status,a.start_at,a.end_at,a.pending_start_at,a.pending_end_at,a.google_event_link "
                 "FROM scheduling_requests r JOIN contacts c ON c.id=r.contact_id LEFT JOIN proposals p ON p.request_id=r.id LEFT JOIN appointments a ON a.request_id=r.id "
                 "WHERE r.workspace_id=? AND r.id=?",
                 (workspace_id, request_id),
@@ -649,6 +1528,10 @@ class Store:
             contact = db.execute("SELECT * FROM contacts WHERE workspace_id=? AND id=?", (workspace_id, request_data["contact_id"])).fetchone()
             audit_rows = db.execute("SELECT * FROM audit_events WHERE workspace_id=? AND ((entity_type='request' AND entity_id=?) OR (entity_type='proposal' AND entity_id=?) OR (entity_type='appointment' AND entity_id=?)) ORDER BY created_at", (workspace_id, str(request_id), str(request_data.get("proposal_id")), str(request_data.get("appointment_id")))).fetchall()
         request_data["contact"] = dict(contact)
+        request_data["delivery_status"] = (
+            self.latest_whatsapp_delivery_status(workspace_id, request_data["provider_message_id"])
+            if request_data.get("provider_message_id") else None
+        )
         request_data["messages"] = self.recent_messages(workspace_id, request_data["sender"], 8)
         request_data["audit"] = [self._audit_row(row) for row in audit_rows]
         return request_data
@@ -675,9 +1558,42 @@ class Store:
                 return None
             requests = [dict(row) for row in db.execute("SELECT * FROM scheduling_requests WHERE workspace_id=? AND contact_id=?", (workspace_id, contact_id)).fetchall()]
             messages = [dict(row) for row in db.execute("SELECT * FROM inbound_messages WHERE workspace_id=? AND sender=?", (workspace_id, contact["sender"])).fetchall()]
+            proposals: list[dict[str, Any]] = []
+            appointments: list[dict[str, Any]] = []
+            proposal_rows = db.execute(
+                "SELECT p.id,p.request_id,p.reply_ciphertext,p.slots_json,p.status,p.provider_message_id,p.error_text,p.created_at,p.sent_at,p.confirmed_at,p.selected_slot "
+                "FROM proposals p JOIN scheduling_requests r ON r.id=p.request_id "
+                "WHERE p.workspace_id=? AND r.workspace_id=? AND r.contact_id=? ORDER BY p.id",
+                (workspace_id, workspace_id, contact_id),
+            ).fetchall()
+            proposals = [dict(row) for row in proposal_rows]
+            delivery_events = db.execute(
+                "SELECT d.provider_message_id,d.status,d.provider_timestamp,d.error_code,d.received_at "
+                "FROM whatsapp_delivery_events d JOIN proposals p ON p.workspace_id=d.workspace_id AND p.provider_message_id=d.provider_message_id "
+                "JOIN scheduling_requests r ON r.id=p.request_id "
+                "WHERE d.workspace_id=? AND r.workspace_id=? AND r.contact_id=? ORDER BY d.provider_timestamp,d.id",
+                (workspace_id, workspace_id, contact_id),
+            ).fetchall()
+            appointment_rows = db.execute(
+                "SELECT a.id,a.request_id,a.proposal_id,a.start_at,a.end_at,a.pending_start_at,a.pending_end_at,a.timezone,a.status,a.google_event_id,a.google_event_link,a.error_text,a.created_at,a.updated_at "
+                "FROM appointments a JOIN scheduling_requests r ON r.id=a.request_id "
+                "WHERE a.workspace_id=? AND r.workspace_id=? AND r.contact_id=? ORDER BY a.id",
+                (workspace_id, workspace_id, contact_id),
+            ).fetchall()
+            appointments = [dict(row) for row in appointment_rows]
         for message in messages:
             message["body"] = self.crypto.decrypt(message.pop("body_ciphertext"))
-        return {"contact": dict(contact), "messages": messages, "requests": requests, "exported_at": utc_now().isoformat()}
+        for proposal in proposals:
+            proposal["reply"] = self.crypto.decrypt(proposal.pop("reply_ciphertext"))
+        return {
+            "contact": dict(contact),
+            "messages": messages,
+            "requests": requests,
+            "proposals": proposals,
+            "delivery_events": [dict(row) for row in delivery_events],
+            "appointments": appointments,
+            "exported_at": utc_now().isoformat(),
+        }
 
     def delete_contact(self, workspace_id: str, contact_id: int) -> bool:
         with self.connect() as db:
@@ -687,15 +1603,35 @@ class Store:
             request_ids = [row[0] for row in db.execute("SELECT id FROM scheduling_requests WHERE workspace_id=? AND contact_id=?", (workspace_id, contact_id))]
             if request_ids:
                 placeholders = ",".join("?" for _ in request_ids)
+                unresolved = db.execute(
+                    f"SELECT id FROM appointments WHERE workspace_id=? AND request_id IN ({placeholders}) AND status!='cancelled' LIMIT 1",
+                    [workspace_id, *request_ids],
+                ).fetchone()
+                if unresolved:
+                    raise ValueError("Cancel or manually resolve this contact's appointments before deleting the contact")
+                db.execute(
+                    "DELETE FROM whatsapp_delivery_events WHERE workspace_id=? AND provider_message_id IN ("
+                    "SELECT p.provider_message_id FROM proposals p JOIN scheduling_requests r ON r.id=p.request_id "
+                    "WHERE p.workspace_id=? AND r.workspace_id=? AND r.contact_id=? AND p.provider_message_id IS NOT NULL)",
+                    (workspace_id, workspace_id, workspace_id, contact_id),
+                )
+                db.execute(
+                    "DELETE FROM audit_events WHERE workspace_id=? AND action='whatsapp.delivery_status' "
+                    "AND entity_type='provider_message' AND entity_id IN ("
+                    "SELECT p.provider_message_id FROM proposals p JOIN scheduling_requests r ON r.id=p.request_id "
+                    "WHERE p.workspace_id=? AND r.workspace_id=? AND r.contact_id=? AND p.provider_message_id IS NOT NULL)",
+                    (workspace_id, workspace_id, workspace_id, contact_id),
+                )
                 appointment_ids = [row[0] for row in db.execute(f"SELECT id FROM appointments WHERE request_id IN ({placeholders})", request_ids)]
                 for appointment_id in appointment_ids:
-                    db.execute("DELETE FROM background_jobs WHERE workspace_id=? AND payload_json LIKE ?", (workspace_id, f'%"appointment_id": {appointment_id}%'))
+                    job_ids = self._background_job_ids_for_appointment(db, workspace_id, appointment_id)
+                    db.executemany("DELETE FROM background_jobs WHERE workspace_id=? AND id=?", [(workspace_id, job_id) for job_id in job_ids])
                 db.execute(f"DELETE FROM appointments WHERE request_id IN ({placeholders})", request_ids)
                 db.execute(f"DELETE FROM proposals WHERE request_id IN ({placeholders})", request_ids)
                 db.execute(f"DELETE FROM scheduling_requests WHERE id IN ({placeholders})", request_ids)
             db.execute("DELETE FROM inbound_messages WHERE workspace_id=? AND sender=?", (workspace_id, contact["sender"]))
             db.execute("DELETE FROM contacts WHERE workspace_id=? AND id=?", (workspace_id, contact_id))
-        self.audit(workspace_id, "operator", "privacy.contact_deleted", "contact", contact_id, {})
+            self._audit_in_transaction(db, workspace_id, "operator", "privacy.contact_deleted", "contact", contact_id, {})
         return True
 
     def purge_expired(self, workspace_id: str, retention_days: int) -> int:
@@ -703,18 +1639,162 @@ class Store:
         with self.connect() as db:
             cursor = db.execute("DELETE FROM inbound_messages WHERE workspace_id=? AND received_at<?", (workspace_id, cutoff))
             rate_cursor = db.execute("DELETE FROM rate_events WHERE workspace_id=? AND created_at<?", (workspace_id, cutoff))
-        count = cursor.rowcount
-        rate_count = rate_cursor.rowcount
-        if count or rate_count:
-            self.audit(
-                workspace_id,
-                "worker",
-                "privacy.retention_purge",
-                "workspace",
-                workspace_id,
-                {"messages_deleted": count, "rate_events_deleted": rate_count, "cutoff": cutoff},
+            delivery_cursor = db.execute("DELETE FROM whatsapp_delivery_events WHERE workspace_id=? AND received_at<?", (workspace_id, cutoff))
+            delivery_audit_cursor = db.execute(
+                "DELETE FROM audit_events WHERE workspace_id=? AND action='whatsapp.delivery_status' AND created_at<?",
+                (workspace_id, cutoff),
             )
+            count = cursor.rowcount
+            rate_count = rate_cursor.rowcount
+            delivery_count = delivery_cursor.rowcount
+            delivery_audit_count = delivery_audit_cursor.rowcount
+            if count or rate_count or delivery_count or delivery_audit_count:
+                self._audit_in_transaction(
+                    db,
+                    workspace_id,
+                    "worker",
+                    "privacy.retention_purge",
+                    "workspace",
+                    workspace_id,
+                    {
+                        "messages_deleted": count, "rate_events_deleted": rate_count,
+                        "delivery_events_deleted": delivery_count,
+                        "delivery_audit_events_deleted": delivery_audit_count, "cutoff": cutoff,
+                    },
+                )
         return count
+
+    def purge_terminal_scheduling_records(
+        self, workspace_id: str, retention_days: int, proposal_ttl_hours: int,
+    ) -> dict[str, int]:
+        """Purge aged resolved scheduling records while preserving recovery work and audit history."""
+        now = utc_now()
+        cutoff_at = now - timedelta(days=retention_days)
+        cutoff = cutoff_at.isoformat()
+        expired_proposal_cutoff = (
+            now - timedelta(days=retention_days, hours=proposal_ttl_hours)
+        ).isoformat()
+        purge_batch_limit = 500
+        counts = {
+            "requests_deleted": 0,
+            "request_proposals_deleted": 0,
+            "expired_proposals_deleted": 0,
+            "expired_requests_deleted": 0,
+            "appointments_deleted": 0,
+            "appointment_proposals_deleted": 0,
+            "appointment_requests_deleted": 0,
+            "background_jobs_deleted": 0,
+        }
+        with self.connect() as db:
+            terminal_requests = db.execute(
+                "SELECT r.id FROM scheduling_requests r WHERE r.workspace_id=? "
+                "AND r.status IN ('cancelled','failed') AND r.updated_at<? "
+                "AND NOT EXISTS (SELECT 1 FROM appointments a WHERE a.workspace_id=r.workspace_id "
+                "AND a.request_id=r.id) ORDER BY r.id LIMIT ?",
+                (workspace_id, cutoff, purge_batch_limit),
+            ).fetchall()
+            terminal_request_ids = [int(row["id"]) for row in terminal_requests]
+            if terminal_request_ids:
+                placeholders = ",".join("?" for _ in terminal_request_ids)
+                counts["request_proposals_deleted"] = db.execute(
+                    f"DELETE FROM proposals WHERE workspace_id=? AND request_id IN ({placeholders})",
+                    (workspace_id, *terminal_request_ids),
+                ).rowcount
+                counts["requests_deleted"] = db.execute(
+                    f"DELETE FROM scheduling_requests WHERE workspace_id=? AND id IN ({placeholders})",
+                    (workspace_id, *terminal_request_ids),
+                ).rowcount
+
+            expired_proposals = db.execute(
+                "SELECT p.id,p.request_id FROM proposals p JOIN scheduling_requests r "
+                "ON r.workspace_id=p.workspace_id AND r.id=p.request_id "
+                "WHERE p.workspace_id=? AND p.status='expired' "
+                "AND COALESCE(p.sent_at,p.created_at)<? "
+                "AND r.status IN ('needs_clarification','cancelled','failed') "
+                "AND NOT EXISTS (SELECT 1 FROM appointments a WHERE a.workspace_id=p.workspace_id "
+                "AND a.proposal_id=p.id) ORDER BY p.id LIMIT ?",
+                (workspace_id, expired_proposal_cutoff, purge_batch_limit),
+            ).fetchall()
+            for row in expired_proposals:
+                cursor = db.execute(
+                    "DELETE FROM proposals WHERE workspace_id=? AND id=? AND status='expired'",
+                    (workspace_id, int(row["id"])),
+                )
+                counts["expired_proposals_deleted"] += cursor.rowcount
+                if cursor.rowcount and not db.execute(
+                    "SELECT 1 FROM proposals WHERE workspace_id=? AND request_id=? LIMIT 1",
+                    (workspace_id, int(row["request_id"])),
+                ).fetchone() and not db.execute(
+                    "SELECT 1 FROM appointments WHERE workspace_id=? AND request_id=? LIMIT 1",
+                    (workspace_id, int(row["request_id"])),
+                ).fetchone():
+                    counts["expired_requests_deleted"] += db.execute(
+                        "DELETE FROM scheduling_requests WHERE workspace_id=? AND id=? "
+                        "AND status IN ('needs_clarification','cancelled','failed')",
+                        (workspace_id, int(row["request_id"])),
+                    ).rowcount
+
+            # A booking is resolved only after its scheduled end has passed the
+            # retention window. Failed/in-flight/manual-required bookings remain
+            # available for operator recovery; upcoming appointments are retained.
+            # SQLite's julianday normalizes ISO offsets, and Python validates the
+            # persisted timestamp before deletion to fail-close malformed values.
+            appointment_rows = db.execute(
+                "SELECT id,request_id,status,end_at,updated_at FROM appointments "
+                "WHERE workspace_id=? AND ("
+                "(status='cancelled' AND updated_at<?) OR "
+                "(status='booked' AND julianday(end_at)<julianday(?))"
+                ") ORDER BY id LIMIT ?",
+                (workspace_id, cutoff, cutoff, purge_batch_limit),
+            ).fetchall()
+            for row in appointment_rows:
+                try:
+                    age_reference = datetime.fromisoformat(
+                        row["end_at"] if row["status"] == "booked" else row["updated_at"]
+                    )
+                    if age_reference.tzinfo is None or age_reference.astimezone(UTC) >= cutoff_at:
+                        continue
+                except (TypeError, ValueError, OverflowError):
+                    # Malformed timestamps fail closed: never purge uncertain records.
+                    continue
+
+                expected_request_status = "booked" if row["status"] == "booked" else "cancelled"
+                request = db.execute(
+                    "SELECT status FROM scheduling_requests WHERE workspace_id=? AND id=?",
+                    (workspace_id, int(row["request_id"])),
+                ).fetchone()
+                if not request or request["status"] != expected_request_status:
+                    continue
+
+                job_ids = self._background_job_ids_for_appointment(db, workspace_id, int(row["id"]))
+                for job_id in job_ids:
+                    counts["background_jobs_deleted"] += db.execute(
+                        "DELETE FROM background_jobs WHERE workspace_id=? AND id=?",
+                        (workspace_id, job_id),
+                    ).rowcount
+                appointment_deleted = db.execute(
+                    "DELETE FROM appointments WHERE workspace_id=? AND id=? AND status=?",
+                    (workspace_id, int(row["id"]), row["status"]),
+                ).rowcount
+                counts["appointments_deleted"] += appointment_deleted
+                if appointment_deleted and not db.execute(
+                    "SELECT 1 FROM appointments WHERE workspace_id=? AND request_id=? LIMIT 1",
+                    (workspace_id, int(row["request_id"])),
+                ).fetchone():
+                    counts["appointment_proposals_deleted"] += db.execute(
+                        "DELETE FROM proposals WHERE workspace_id=? AND request_id=?",
+                        (workspace_id, int(row["request_id"])),
+                    ).rowcount
+                    counts["appointment_requests_deleted"] += db.execute(
+                        "DELETE FROM scheduling_requests WHERE workspace_id=? AND id=? AND status=?",
+                        (workspace_id, int(row["request_id"]), expected_request_status),
+                    ).rowcount
+            if any(counts.values()):
+                self._audit_in_transaction(
+                    db, workspace_id, "worker", "privacy.scheduling_retention_purge", "workspace", workspace_id,
+                    {**counts, "cutoff": cutoff, "google_events_deleted": 0, "audit_history_deleted": 0},
+                )
+        return counts
 
     @staticmethod
     def _request_row(row: sqlite3.Row) -> dict[str, Any]:
@@ -735,3 +1815,4 @@ class Store:
         data = dict(row)
         data["detail"] = json.loads(data.pop("detail_json"))
         return data
+

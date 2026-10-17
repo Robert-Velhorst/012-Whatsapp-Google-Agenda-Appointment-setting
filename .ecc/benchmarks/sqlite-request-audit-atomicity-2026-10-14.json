@@ -1,0 +1,37 @@
+{
+  "benchmark": "sqlite-dashboard-and-hai-feed",
+  "measurement_date": "2026-10-14",
+  "change": "Write the request.detected audit row in the same SQLite transaction as its scheduling request",
+  "command": ".venv\\Scripts\\python.exe -m scripts.benchmark --records 1000 --reads 500",
+  "environment": {
+    "platform": "Windows 11 Pro 10.0.26300",
+    "python": "3.13.14"
+  },
+  "dataset": "Three serial runs before and after on temporary databases; each run inserted and verified 1000 contacts/requests and measured 500 dashboard reads plus a 500-item HAI feed",
+  "before": {
+    "write_records_per_second": [143.9, 198.3, 164.4],
+    "dashboard_read_median_ms": [1.117, 1.108, 1.176],
+    "dashboard_read_p95_ms": [1.271, 1.4, 1.419],
+    "hai_feed_500_ms": [6.017, 7.777, 7.422],
+    "python_peak_memory_mib": [0.49, 0.49, 0.49]
+  },
+  "after": {
+    "write_records_per_second": [849.8, 452.5, 684.0],
+    "dashboard_read_median_ms": [0.657, 0.702, 0.933],
+    "dashboard_read_p95_ms": [1.227, 1.253, 1.531],
+    "hai_feed_500_ms": [5.061, 5.699, 5.419],
+    "python_peak_memory_mib": [0.49, 0.49, 0.49]
+  },
+  "profiled_commit_calls": {
+    "command_shape": "cProfile of scripts.benchmark with 500 records and 100 reads; includes the timed workload and separate allocation pass",
+    "before": 3222,
+    "after": 2222,
+    "reduction_percent": 31.0
+  },
+  "limitations": [
+    "Synthetic local data and temporary SQLite databases only; no configured operator database or provider calls.",
+    "Throughput remains variable on this host. The three-run median rose from 164.4 to 684.0 records/second, but this small sample is not a production capacity guarantee.",
+    "The profile establishes one fewer commit per request in the benchmark path; cProfile timings are not comparable because host load varied between runs.",
+    "The Python allocation figure excludes native SQLite allocations and process working set."
+  ]
+}

@@ -1,7 +1,7 @@
 [project]
 name = "agenda-relay"
 version = "1.0.0"
-description = "Approval-first WhatsApp Cloud API to Google Calendar scheduling assistant"
+description = "Privacy-conscious WhatsApp-assisted scheduling with Google Calendar; optional WhatsApp Business Cloud API integration"
 requires-python = ">=3.11,<3.16"
 license = { text = "Proprietary" }
 

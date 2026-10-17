@@ -17,6 +17,8 @@ For WhatsApp Business Cloud API:
 7. Agenda Relay sends the confirmation and queues a reminder. Outside WhatsApp's permitted conversation window, reminders require an approved template; otherwise they remain visibly `manual_required`.
 8. Every state change and external action is recorded in the audit trail.
 
+For an already-booked appointment, the operator can also prepare and review a replacement time. Availability is rechecked before the proposal is saved; the current event remains active until the operator explicitly confirms the reschedule. Ambiguous Calendar responses require read-only reconciliation before another change. This is an operator action, not an automatic message or self-service rescheduling link.
+
 For personal WhatsApp, open **Personal WhatsApp**, paste only the relevant message, review the locally detected request and suggested times, then open WhatsApp with a prepared draft. You choose the recipient and send it yourself. After confirming that you shared it, activate its private booking link. The recipient selects a time and consents on that link; Google Calendar booking then follows the configured approval or auto-book setting. Personal-account confirmations and reminders remain manual. The app does not read your personal inbox or send personal WhatsApp messages.
 
 ## Local installation (Windows PowerShell)
@@ -46,7 +48,7 @@ python run.py
 
 The source setup command performs the same password and key initialization as the executable. `python run.py` runs only the web app: start the worker in another terminal using `python -m scheduler.cli worker`. Alternatively use the Windows start script below, which launches both processes.
 
-The included Windows launchers install, start, stop, package, and smoke-test the application. See [Windows 11 and ngrok](docs/WINDOWS_AND_NGROK.md).
+The included Windows launchers install, start, stop, package, and smoke-test the application. See [Windows 11 standalone setup](docs/WINDOWS.md). For cloud hosting, follow the [Hetzner deployment guide](docs/HETZNER_DEPLOYMENT.md).
 
 Development mode is visibly labelled and may start with incomplete provider settings. `APP_ENV=production` fails closed unless HTTPS, strong secrets, encryption, and Google client credentials are configured. Meta credentials are required only when `WHATSAPP_CLOUD_API_ENABLED=true`; the assisted personal workflow does not require them.
 
@@ -80,6 +82,7 @@ python -m scheduler.cli migrate
 python -m scheduler.cli worker --once
 python -m scheduler.cli worker --interval 30
 python -m scheduler.cli backup
+python -m scheduler.cli rotate-encryption-key --output-dir C:\secure\agenda-relay-rotated
 python -m scheduler.cli support-bundle
 python -m pytest -q --basetemp=.pytest-run
 ```
@@ -90,12 +93,16 @@ Restore is deliberately explicit and first preserves the previous database:
 python -m scheduler.cli restore C:\safe\agenda-relay-backup.sqlite3 --confirm RESTORE
 ```
 
+Encryption-key rotation is an offline operation. Stop every web/worker process, set `DATA_ENCRYPTION_KEY` to the current key and `NEW_DATA_ENCRYPTION_KEY` to a newly generated random secret of at least 64 characters, then choose a new, non-existing output directory. The command creates a verified replacement database and (when present) OAuth token file there without modifying the originals. Test the staged files with the new key before changing `DATABASE_PATH`, `GOOGLE_TOKEN_FILE`, and `DATA_ENCRYPTION_KEY` in `.env`; keep the original files as rollback copies until the rotated installation has been verified. Do not put either key on a command line or in shell history.
+
+For a packaged Windows installation, use `AgendaRelay.exe doctor`, `AgendaRelay.exe backup`, and `AgendaRelay.exe rotate-encryption-key --output-dir <new-empty-directory>` from the package folder instead of `python -m scheduler.cli ...`; the packaged executable dispatches the same operator commands without requiring a separate Python installation.
+
 ## Docker
 
 Create `.env`, point `GOOGLE_CLIENT_SECRETS_FILE_HOST` at the host credential JSON, then run:
 
 ```powershell
-docker compose config
+docker compose config --quiet
 docker compose build
 docker compose up -d
 ```
@@ -108,7 +115,7 @@ The optional HAI integration is a local-network-only, read-only JSON feed contai
 
 ## Performance
 
-The current 1,000-record Windows benchmark reports 874–1,171 writes/second, 0.554–1.113 ms median dashboard reads, and 4.551–7.680 ms for a 500-item HAI page across three repeated runs. These are local observations, not production guarantees; the benchmark separates performance timing from Python allocation tracing. See [performance and resource profile](docs/PERFORMANCE.md).
+Two serial three-run samples on this Windows 11 host (six runs total) measured 230.6–782.2 records/second, 0.660–1.344 ms median dashboard reads, 1.154–2.039 ms dashboard p95, and 4.339–10.514 ms for a 500-item HAI page. The wide spread is not a capacity guarantee and does not yet justify a write-path optimization. These local runs use a temporary database; the benchmark separates timing from Python allocation tracing. See [performance and resource profile](docs/PERFORMANCE.md).
 
 ## Administrative API
 
@@ -124,11 +131,11 @@ Operator APIs accept `Authorization: Bearer <ADMIN_API_TOKEN>`. Browser sessions
 
 ## Documentation
 
-Start with [critical path](docs/CRITICAL_PATH.md), [security](docs/SECURITY.md), [operator runbook](docs/OPERATOR_RUNBOOK.md), [Windows/ngrok](docs/WINDOWS_AND_NGROK.md), [acceptance tests](docs/ACCEPTANCE_TESTS.md), and the honest [goal completion matrix](docs/GOAL_COMPLETION_MATRIX.md).
+Start with [critical path](docs/CRITICAL_PATH.md), [security](docs/SECURITY.md), [operator runbook](docs/OPERATOR_RUNBOOK.md), [Windows setup](docs/WINDOWS.md), [Hetzner deployment](docs/HETZNER_DEPLOYMENT.md), [acceptance tests](docs/ACCEPTANCE_TESTS.md), and the honest [goal completion matrix](docs/GOAL_COMPLETION_MATRIX.md).
 
 ## Current external gates
 
-For the optional Business API path, real-provider verification requires Meta business/phone approval, WhatsApp credentials, public HTTPS webhook reachability, Google OAuth, a consented Google account, and an approved reminder template where required. Personal assisted mode does not require Meta; it still requires real Google Calendar OAuth and a publicly reachable HTTPS booking URL (ngrok in the documented Windows setup). Local tests use provider fakes confined to `tests/`; they are never selected by production configuration.
+For the optional Business API path, real-provider verification requires Meta business/phone approval, WhatsApp credentials, public HTTPS webhook reachability, Google OAuth, a consented Google account, and an approved reminder template where required. Personal assisted mode does not require Meta; it still requires real Google Calendar OAuth and a publicly reachable HTTPS booking URL from the Hetzner deployment. Local tests use provider fakes confined to `tests/`; they are never selected by production configuration.
 
 ## Who this tool is for
 
@@ -143,9 +150,9 @@ The frontend is server-rendered Flask/Jinja with local CSS and JavaScript assets
 | Source | Responsibility |
 |---|---|
 | `scheduler/app.py` | Browser pages, authentication, CSRF, webhook and operator APIs |
-| `scheduler/service.py` | Message analysis, assisted personal proposals, confirmation, calendar booking, reminders and recovery |
+| `scheduler/service.py` | Message analysis, assisted personal proposals, confirmation, calendar booking/rescheduling, reminders and recovery |
 | `scheduler/intent.py` | Local English/Dutch rules and the replaceable `IntentProvider` interface |
-| `scheduler/calendar.py` | Google OAuth, FreeBusy, event creation and cancellation |
+| `scheduler/calendar.py` | Google OAuth, FreeBusy, event creation, time-only reschedule updates and cancellation |
 | `scheduler/whatsapp.py` | Meta signatures, replies, templates and ambiguous-delivery errors |
 | `scheduler/store.py` | SQLite queries, ownership filters, atomic claims and audit history |
 | `scheduler/migrations.py` | Forward schema migration ledger |
@@ -155,11 +162,11 @@ The frontend is server-rendered Flask/Jinja with local CSS and JavaScript assets
 | `scheduler/standalone.py` | Packaged server with embedded worker |
 | `scheduler/templates/`, `scheduler/static/` | Operator, assisted personal WhatsApp, and public booking interfaces |
 | `tests/` | Isolated regression and workflow tests with test-only provider adapters |
-| `windows/` | Source installation, start/stop, ngrok and package scripts |
+| `windows/` | Windows source installation, start/stop, package and smoke-test scripts |
 
 The database holds workspaces, contacts, inbound messages, scheduling requests, proposals, appointments, background jobs, audit events, rate events, system state and schema versions. Migrations run during application initialization; `python -m scheduler.cli migrate` explicitly initializes/applies them. Back up before upgrading. There are no automatic downgrade migrations.
 
-The main request lifecycle is `detected → proposal_pending → awaiting_confirmation → slot_confirmed → booking_pending → booked`. Failure, clarification and cancellation states describe exceptions. Proposal sends and appointment writes have separate atomic claims. A deterministic Google event ID supports recovery from duplicate insertion attempts; it does not reserve a proposed time against unrelated calendar edits.
+The main request lifecycle is `detected → proposal_pending → awaiting_confirmation → slot_confirmed → booking_pending → booked`. Failure, clarification and cancellation states describe exceptions. Calendar-backed appointments also support a two-step, operator-reviewed reschedule: a new timezone-aware time is availability-checked and held separately, then an explicit confirmation updates Google Calendar before the local booking and queued reminder are changed. Ambiguous event updates remain in manual review until a read-only check confirms the old or new time. Proposal sends and appointment writes have separate atomic claims. A persisted booking-attempt counter gives each deliberate retry a deterministic Google event ID while preserving the first-attempt ID for crash recovery. A same-attempt duplicate insert can safely recover the existing event; a new attempt is used only after an operator-triggered, read-only reconciliation finds no matching event. Event IDs do not reserve a proposed time against unrelated calendar edits.
 
 ## Configuration reference
 
@@ -170,7 +177,7 @@ Start from [.env.example](.env.example). Set values locally; do not commit `.env
 | `APP_ENV` | `development`, `test`, or `production`; default development |
 | `PUBLIC_BASE_URL` | Base URL used in booking links and OAuth callbacks; local default `http://127.0.0.1:5000` |
 | `WORKSPACE_ID`, `WORKSPACE_NAME`, `OPERATOR_NAME` | Single configured workspace identity and operator display label |
-| `DATABASE_PATH` | SQLite file; default `./data/scheduler.sqlite3` |
+| `DATABASE_PATH` | SQLite file; default `./data/scheduler.sqlite3`, relative paths resolve from the application/package folder |
 | `FLASK_SECRET_KEY` | Session-signing secret; generated by setup |
 | `ADMIN_API_TOKEN` | Bearer credential for operator APIs; generated by setup |
 | `ADMIN_PASSWORD_HASH` | Hashed browser-login password; generated by setup |
@@ -180,8 +187,8 @@ Start from [.env.example](.env.example). Set values locally; do not commit `.env
 | `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` | Meta account credentials required for sending |
 | `WHATSAPP_GRAPH_API_VERSION` | Adapter version setting; example uses `v23.0`; check support before deployment |
 | `WHATSAPP_REMINDER_TEMPLATE` | Approved template name; reminders become manual when absent |
-| `GOOGLE_CLIENT_SECRETS_FILE` | Path to OAuth web-client JSON outside the repository |
-| `GOOGLE_TOKEN_FILE` | Encrypted OAuth token file; default `./data/google-token.json` |
+| `GOOGLE_CLIENT_SECRETS_FILE` | Path to OAuth web-client JSON outside the repository; relative paths resolve from the application/package folder |
+| `GOOGLE_TOKEN_FILE` | Encrypted OAuth token file; default `./data/google-token.json`, relative paths resolve from the application/package folder |
 | `GOOGLE_CALENDAR_ID` | Calendar to inspect and write; default `primary` |
 | `TIMEZONE` | Business-hours timezone; default `Europe/Amsterdam` |
 | `AUTO_SEND_SUGGESTIONS` | Automatically send generated proposals; default false |
@@ -191,16 +198,21 @@ Start from [.env.example](.env.example). Set values locally; do not commit `.env
 | `SLOT_INTERVAL_MINUTES` | Candidate spacing: 5, 10, 15, 20, 30 or 60; default 30 |
 | `DEFAULT_DURATION_MINUTES` | Fallback meeting duration; default 30 |
 | `REMINDER_MINUTES_BEFORE` | Reminder offset; default 1440 (one day) |
-| `DATA_RETENTION_DAYS` | Worker purge age for inbound messages and rate-event history; default 30 |
+| `DATA_RETENTION_DAYS` | Worker purge age for inbound messages, rate-event history, and delivery receipts; default 30 |
+| `SCHEDULING_RETENTION_DAYS` | Worker purge age for terminal scheduling records, expired proposals, completed bookings, and old cancellations; default 90 days |
 | `BOOKING_LINK_TTL_HOURS` | Proposal lifetime after sending; default 168 (seven days) |
 | `MAX_OUTBOUND_PER_CONTACT_PER_HOUR` | Atomic per-contact send-attempt allowance; default 10 |
+| `MAX_INBOUND_PER_CONTACT_PER_HOUR` | Atomic inbound-message allowance per sender; default 10 |
+| `MAX_INBOUND_TOTAL_PER_HOUR` | Atomic inbound-message allowance across the workspace; default 60 |
+| `MAX_INBOUND_MESSAGES_PER_WEBHOOK` | Maximum text messages processed across one callback; 1–200, default 20 |
+| `MAX_INBOUND_MESSAGE_CHARS` | Maximum stored/analyzed text length; 1–20,000, default 5,000 |
+| `TRUSTED_PROXY_NETWORKS` | CIDRs allowed to supply `X-Forwarded-For` for login and contact-deletion rate limits; defaults to loopback for a same-host reverse proxy. Set only addresses of proxies that cannot be bypassed; HAI access always uses the direct peer address. |
 | `HAI_CONNECTOR_ENABLED` | Enables the metadata feed; default false |
 | `HAI_ALLOWED_NETWORKS` | Allowed client CIDRs; defaults to IPv4/IPv6 loopback |
 | `HAI_FEED_PAGE_SIZE` | Recent HAI snapshot size, 1–500; default 100 |
+
+Inbound quotas apply only to the optional WhatsApp Business Cloud API webhook. Duplicate provider message IDs do not consume quota. Messages over the callback or text-size limits are acknowledged but ignored. `DATA_RETENTION_DAYS` controls inbound-message, rate-event, and provider-delivery receipt cleanup. Separately, `SCHEDULING_RETENTION_DAYS` defaults to 90 days and removes old cancelled/failed requests, expired booking proposals after their expiry plus the retention period, cancelled appointments, and booked appointments only after their scheduled end is older than the retention period. Linked request/proposal rows and appointment reminder jobs are removed together. Upcoming appointments and booking failures that still need operator recovery are retained. Google Calendar events and the general audit history are not deleted. Contact and conversation data follow their separate retention and contact-deletion controls.
 | `HAI_PROJECT_KEY` | HAI project mapping label |
-| `NGROK_DOMAIN` | Assigned hostname for the guarded public tunnel |
-| `NGROK_CONFIG_FILE` | Optional ngrok authentication-config path |
-| `NGROK_INSPECTOR_PORT` | Dedicated local inspector port; default 4042 |
 | `PORT` | Local web port; default 5000 |
 | `WORKER_INTERVAL_SECONDS` | Standalone/source-launcher polling interval; default 30 |
 | `WAITRESS_THREADS`, `WAITRESS_CONNECTION_LIMIT` | Packaged server limits; defaults 4 and 100 |
@@ -219,24 +231,22 @@ Pause from the dashboard before investigating an incident. Signed incoming messa
 
 If delivery times out, inspect Meta before resending. Stale claims older than 15 minutes move into manual review. The scheduling desk has a delivery-reconciliation action for ambiguous Business API proposals: after checking provider state, the operator can record verified delivery or non-delivery. The action never contacts WhatsApp; a verified non-delivery only enables a separate explicit retry. Other ambiguous jobs still require manual reconciliation outside the UI. Do not change database status directly to force a retry.
 
-For backups use `python -m scheduler.cli backup --output C:\safe\agenda.sqlite3`. Backups are made with SQLite's online backup API, validated, and atomically published; the output must not be the live database file. Store the encryption key and OAuth configuration securely alongside the backup policy: a database copy alone cannot recover encrypted content. Stop all web/worker processes before restoring, use the explicit `restore ... --confirm RESTORE` command, then restart. Restore validates both SQLite integrity and the app migration schema, stages the replacement, and writes a timestamped `.pre-restore-*` safety backup of the current database. It fails closed if a non-empty WAL remains active. Database restoration does not undo provider events or sent messages. Support bundles omit conversation bodies and credentials; inspect diagnostic output before sharing.
+For backups use `python -m scheduler.cli backup --output C:\safe\agenda.sqlite3`. Backups are made with SQLite's online backup API, validated, and atomically published; the output must not be the live database file. Store the encryption key and OAuth configuration securely alongside the backup policy: a database copy alone cannot recover encrypted content. Stop all web/worker processes before restoring, use the explicit `restore ... --confirm RESTORE` command, then restart. Restore validates both SQLite integrity and the app migration schema, stages the replacement, and preserves the prior database as a timestamped `.pre-restore-*` safety copy (an unreadable database is preserved byte-for-byte). The CLI can restore without first booting the application, which allows recovery when the live database is corrupt. It fails closed while either SQLite WAL/SHM sidecar remains, including a zero-byte WAL held open by an idle connection. Database restoration does not undo provider events or sent messages. Support bundles omit conversation bodies and credentials; inspect diagnostic output before sharing.
 
 ## Public access and HAI operation
 
-ngrok forwards public HTTPS requests to the application on your Windows computer. It does not move the application or database into hosted cloud infrastructure. The computer, network connection, web process, worker and tunnel must remain available. Match `PUBLIC_BASE_URL` to `https://<NGROK_DOMAIN>` and use the dedicated `windows/Start-Ngrok.ps1` script after production configuration is valid. The script refuses development exposure, checks protected public-ingress readiness locally, and verifies the assigned URL. Resolve any existing endpoint conflict without pooling traffic with another application.
+Production runs on Hetzner behind a host-managed HTTPS reverse proxy; the application container binds only to loopback. Set `PUBLIC_BASE_URL` to the final HTTPS hostname and register `${PUBLIC_BASE_URL}/api/google/callback` in Google OAuth. Configure DNS, firewall, TLS, secrets, backups and monitoring before cutover; follow [Hetzner deployment](docs/HETZNER_DEPLOYMENT.md). Keep automation paused during Google OAuth bootstrap, run the real-provider acceptance checks, and resume only after operator review. The Windows package is a standalone/local deployment and does not expose itself publicly.
 
-Google OAuth bootstrap requires the public callback to be reachable before Calendar can report connected. The ngrok launcher checks protected production-ingress readiness: valid production configuration and signed WhatsApp webhook credentials, with automation paused if Google is not connected. Keep automation paused during bootstrap, complete Google consent, run the real-provider acceptance checks, and only then resume automation. See [Windows/ngrok](docs/WINDOWS_AND_NGROK.md) and [operator runbook](docs/OPERATOR_RUNBOOK.md).
-
-For HAI, enable the feed and configure an owner-scoped `json-feed` source using `http://127.0.0.1:5000/api/integrations/hai/feed`. The envelope and required item fields match HAI's generic-feed parser. HAI currently performs a plain GET, so the endpoint returns the most recently updated bounded snapshot (100 items by default, up to 500), not a paged historical export; see [HAI integration](docs/HAI_INTEGRATION.md). The feed contains request state, duration, timezone and timestamps, not contact names, messages, tokens or calendar URLs. Network allowlisting protects this endpoint; it has no separate bearer authentication. HAI must enforce source ownership and access control. Docker-to-host networking requires specific observed gateway allowlisting.
+For HAI, enable the feed and configure an owner-scoped `json-feed` source using `http://127.0.0.1:5000/api/integrations/hai/feed` for a same-host setup. The item shape matches HAI's generic-feed parser, but the current HAI HTTP reader performs a plain GET and does not persist or send the parsed cursor on later syncs. The initial GET returns a bounded snapshot of the most recently updated requests (100 items by default, up to 500); treat HAI ingestion as a repeatable snapshot, not incremental synchronization. HAI's safe fetcher rejects Docker Desktop's `host.docker.internal` private-network target, so the earlier Docker-to-host recipe is not supported. See [HAI integration](docs/HAI_INTEGRATION.md) for the current boundary and open HAI-side work. The feed contains request state, duration, timezone and timestamps, not contact names, messages, tokens or calendar URLs. Network allowlisting protects this endpoint; it has no separate bearer authentication. HAI must enforce source ownership and access control.
 
 ## Limits and release evidence
 
-- Intent analysis uses local English/Dutch rules, not a general language model. It recognizes scheduling keywords, some dates, weekdays and bounded durations; it does not reliably understand arbitrary negotiation, negation, time-of-day preferences, complex recurrence or travel constraints.
+- Intent analysis uses local English/Dutch rules, not a general language model. It recognizes scheduling keywords, some dates and weekdays, bounded durations, explicit clock times, and common morning/afternoon/evening phrases. When a time preference is found, available slots on the requested date are ordered by closeness to it; if that time is busy, nearby business-hour alternatives are offered. It does not reliably understand arbitrary negotiation, negation, complex recurrence or travel constraints.
 - WhatsApp confirmation accepts a single explicit selection or supported affirmative phrase. Questions, multiple choices, refusals and incidental numbers are not confirmations. The public choice form is available for other phrasing.
 - Availability is queried during proposal generation, checked again when a contact submits a public booking choice, and rechecked immediately before event insertion. If a selected slot has become busy, the public proposal stays open so the contact can choose another offered time. Missing or invalid calendar data stops booking. Google does not hold the slot between the final check and insertion, so another calendar writer can still create a conflict in that small interval.
 - The public booking and completion pages reflect whether automatic booking is enabled, paused, completed, or awaiting operator action. A WhatsApp confirmation warning is not reported as a sent confirmation.
 - Only one configured calendar/workspace/operator is supported. There is no team authorization, multi-calendar intersection, billing, SSO, general import, or end-user rescheduling flow.
-- Reminders always use the configured template in the current worker. There is no delivery/read-status tracking, and provider API acceptance is not proof that a contact read a message.
+- For Business API messages, signed WhatsApp status callbacks are stored idempotently and the latest provider-reported sent/delivered/read/failed/deleted state appears in the request detail. Receipt records omit recipient IDs and raw payloads, follow the configured retention window, and are included in contact export/deletion. Absence of a callback is not proof of delivery; status receipts do not automatically retry, confirm bookings, or affect the personal assisted flow.
 - Contact metadata and scheduling timestamps are not all field-encrypted. Use protected local storage and backups. Retention purging is not a complete deletion policy for every domain table; use explicit privacy operations as appropriate.
 - Source declarations identify the project license as Proprietary. Repository visibility alone is not permission to redistribute it.
 

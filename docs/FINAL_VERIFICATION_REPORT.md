@@ -2,6 +2,8 @@
 
 Date: 2026-08-09
 
+This report preserves evidence from its dated verification period; its ngrok experiments and account-specific limitation are historical, not current deployment instructions. Hetzner is now the target production host; use [the current deployment guide](HETZNER_DEPLOYMENT.md). No Hetzner deployment has been verified by this report.
+
 ## Passed locally
 
 - Python compilation and dependency consistency: passed.
@@ -21,7 +23,7 @@ Date: 2026-08-09
 
 ## Provider/account gate
 
-No real WhatsApp message or Google Calendar event was created during release verification. A temporary isolated ngrok agent reached the cloud service, but the account's free endpoint was already online elsewhere and ngrok returned `ERR_NGROK_334`. Agenda Relay did not enable endpoint pooling or disturb that existing tunnel. Live production acceptance therefore still requires authorized Meta and Google credentials/approvals plus an assigned available ngrok domain/session.
+No real WhatsApp message or Google Calendar event was created during release verification. A temporary isolated ngrok agent reached the cloud service, but the account's free endpoint was already online elsewhere and ngrok returned `ERR_NGROK_334`. Agenda Relay did not enable endpoint pooling or disturb that existing tunnel. That tunnel experiment is historical and is not a current deployment requirement. Live production acceptance now requires an authorized Hetzner deployment with verified DNS/TLS, secure ingress, backups and rollback, plus authorized Google credentials/consent and the applicable WhatsApp workflow; see [the current Hetzner deployment guide](HETZNER_DEPLOYMENT.md).
 
 This distinction is intentional: local build/test/package readiness is verified; real-provider production operation is not claimed without owner-authorized accounts and cleanup.
 
@@ -94,4 +96,39 @@ This later update supersedes the pending publication/CI statements above for the
 - Authenticated `GET /api/requests?page=<1000 digits>` previously reached SQLite with an out-of-range `OFFSET` and raised `OverflowError`. The store now clamps requested pages to the filtered result set before computing the offset.
 - An API-level regression reproduces the overflow before the fix and confirms an oversized page now resolves safely. The full local suite passes 81 tests; compilation, dependency consistency, and dependency audit pass.
 - Windows 11 standalone package rebuilt from the combined source: ZIP SHA-256 `0AA5E9500066ACCB7D5FF86C117DCD1C23A9A8D20EF78DB6C30335C73465EE4B`. `windows/Test-Package.ps1` passed: health true, development mode, branded login HTTP 200, and 67.3 MiB working set. Build output/work, test database, and logs were isolated under temporary directories; no provider credentials were used.
-- GitHub CI for this combined source is pending and will be checked against the pushed commit.
+- GitHub CI for that earlier source revision is historical and is not evidence for the current branch tip.
+## Personal WhatsApp assisted flow — 2026-10-13
+
+- Confirmed the personal-account path is assisted-only: the operator pastes the relevant text, the app analyzes it locally and checks Google Calendar, and the operator manually sends the prepared private booking link from WhatsApp. The app does not read the personal inbox or send personal WhatsApp messages. Existing `tests/test_assisted_personal.py` and `tests/test_frontend.py` passed: 11 tests.
+- Real Google OAuth/Calendar, personal WhatsApp use, public ngrok reachability, HAI runtime, and target-PC acceptance remain unverified.
+
+## HAI json-feed contract recheck — 2026-10-14
+
+- Rechecked the current `018-HAI` `main` source at [`accountfeed/generic_feed.go`](https://github.com/Robert-Velhorst/018-HAI/blob/12246bd28820f892a48e04b528ff8e28b102b7d4/backend/internal/accountfeed/generic_feed.go), [`accountfeed/fetcher.go`](https://github.com/Robert-Velhorst/018-HAI/blob/12246bd28820f892a48e04b528ff8e28b102b7d4/backend/internal/accountfeed/fetcher.go), and [`accountfeed/registry_service.go`](https://github.com/Robert-Velhorst/018-HAI/blob/12246bd28820f892a48e04b528ff8e28b102b7d4/backend/internal/accountfeed/registry_service.go). The parser accepts `cursor`, the HTTP fetcher requests the configured URL with a plain GET, and sync records the parsed cursor in its report but does not persist it for the next request.
+- Agenda Relay emits both `cursor` and `nextCursor`, but the current HAI parser has no `nextCursor` field and ignores it. HAI does not send a `cursor` query parameter on the following read, so this remains a bounded latest-record snapshot—not incremental synchronization. The earlier claim that current HAI advances the cursor and that this integration is incremental was incorrect.
+- Agenda Relay's local feed tests can verify pages when a cursor is explicitly supplied, but they do not establish that HAI supplies one. The local HAI cursor-continuation patch remains local to that separate repository and is not included or published by this Agenda Relay change. Live HAI source creation/sync and loss-free historical backfill remain unverified.
+
+## Current Windows 11 package and launcher verification — 2026-10-14
+
+- Built the standalone x64 package locally on Windows 11 Pro (build 26300). ZIP SHA-256: `94AF076E7330E003E34544A2432C80DA29629AD02A368F163C1CDAEF930A9ACE`; archive size 32.23 MiB.
+- `windows/Test-Package.ps1` passed against the built executable with an isolated temporary database and provider credentials absent: health true, development mode, branded login HTTP 200, and 66.0 MiB working set.
+- The source launcher now validates exact executable/command identity before treating recorded PIDs as Agenda Relay, checks health, recovers a missing worker without launching a duplicate web server, and avoids stopping recycled/unrelated PIDs. Its shutdown path retains state if process exit cannot be confirmed.
+- The ngrok launcher and stop path now apply the same ownership discipline: process identity must match the saved ngrok executable, assigned domain, config files, and loopback destination. Failure cleanup and stop leave a mismatched/recycled PID untouched, and runtime state is retained if shutdown cannot be confirmed. Both Windows PowerShell versions passed the identity self-check; no public tunnel was opened.
+
+## Windows package key-rotation regression — 2026-10-14
+
+- Strengthened `windows/Test-Package.ps1` so the packaged key-rotation command must rotate three seeded synthetic encrypted values (an inbound message, proposal reply, and booking token); an empty database can no longer pass this check trivially.
+- Built the standalone package on Windows 11 (host build 26300). ZIP SHA-256: `15AB567E108F036F192F232F7E44CC11CC04024A444975AF47B5AD68FC62993C`; size: 33,825,470 bytes.
+- The package smoke test passed using an isolated temporary database and no provider credentials: migration succeeded, three synthetic encrypted values were seeded and rotated, health was true, and the branded login returned HTTP 200. This is local package evidence only; it does not establish live Google, WhatsApp, ngrok, or HAI acceptance.
+- The process-identity/recovery self-check passed under PowerShell 7 and Windows PowerShell 5.1; all `windows/*.ps1` files parsed under PowerShell 7. The full Python suite passed (112 tests), `compileall` passed, and `pip check` reported no broken requirements. These checks do not replace real Google OAuth, ngrok exposure, or HAI runtime acceptance.
+- This checkout has no `.env`, so no Google OAuth or application provider credentials were used. The ngrok executable and agent configuration are present, but no tunnel was opened.
+- Exact SHA `01b45886928844b9c92087abad5ca6bf5407d9f9` passed the push CI run `38478527287`, PR CI run `38478532204`, Windows package run `38478532233`, and both CodeQL analyses in run `38478527776`. This includes the new Windows launcher self-check in the package workflow. GitHub emitted a Node.js 20 action deprecation advisory; it did not fail the run.
+
+## WhatsApp delivery-status webhook follow-up — 2026-10-14
+
+Signed Cloud API status receipts are now stored idempotently, displayed on the corresponding request, and included in privacy export/deletion and retention purge. The local test evidence covers phone-number scoping, malformed callback rejection, duplicate/out-of-order receipt handling, and absence of recipient IDs/raw payload fields. No live Meta webhook was configured or exercised.
+
+- Full local suite: `115 passed`; `compileall`, `pip check`, and `git diff --check` passed. Ruff is not installed in the local venv; hosted CI and analysis gates passed for source commit `5374b1b786575173998a8dacf131f5ccd17fbe46`.
+- Windows 11 standalone package rebuilt and smoke-tested: health `true`, development mode, branded login HTTP 200, working set 66.1 MiB. ZIP SHA-256: `365E3258E1E258550012B297936B7420810B2CF81CFC1AFA67350A34CBFEDF92`.
+- Build used no application/Google/Meta credentials. No live webhook subscription, ngrok tunnel, Google OAuth, or HAI runtime was exercised.
+- Exact source SHA `5374b1b786575173998a8dacf131f5ccd17fbe46` passed PR verification `38483821835`, push verification `38483815562`, Windows package `38483821965`, Actions/Python analysis `38483817822`, and CodeQL run `115592808146`.

@@ -2,17 +2,89 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
-load_dotenv()
+
+def _runtime_root() -> Path:
+    """Return the stable config/data root for source and frozen executions."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[1]
+
+
+APP_ROOT = _runtime_root()
+
+
+def _load_runtime_environment(app_root: Path) -> None:
+    load_dotenv(app_root / ".env", encoding="utf-8-sig")
+
+
+def _resolve_app_path(value: str | Path) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else APP_ROOT / path
+
+
+_load_runtime_environment(APP_ROOT)
 
 
 def _bool(name: str, default: bool = False) -> bool:
     return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def validate_bind_host(host: str, is_production: bool) -> str:
+    """Keep development/test servers loopback-only; public binds require production checks."""
+    normalized = host.strip().lower()
+    if not normalized:
+        raise ValueError("BIND_HOST must not be empty")
+    if is_production:
+        return host
+    if normalized == "localhost":
+        return host
+    try:
+        address = ipaddress.ip_address(normalized)
+    except ValueError as exc:
+        raise ValueError("Non-production BIND_HOST must be a loopback address") from exc
+    if not address.is_loopback:
+        raise ValueError("Non-production BIND_HOST must be a loopback address")
+    return host
+
+
+def rate_limit_client_ip(peer_address: str | None, forwarded_for: str | None, trusted_proxy_networks: str) -> str:
+    """Use forwarded client identity only when the immediate peer is a configured proxy."""
+    peer = (peer_address or "").strip()
+    if not peer:
+        return "unknown"
+    try:
+        peer_ip = ipaddress.ip_address(peer)
+        networks = [
+            ipaddress.ip_network(value.strip(), strict=False)
+            for value in trusted_proxy_networks.split(",")
+            if value.strip()
+        ]
+    except ValueError:
+        return peer
+    if not any(peer_ip in network for network in networks) or not forwarded_for:
+        return peer
+
+    try:
+        forwarded_ips = [ipaddress.ip_address(value.strip()) for value in forwarded_for.split(",")]
+    except ValueError:
+        return peer
+    if not forwarded_ips:
+        return peer
+
+    # Walk from the app toward the client, skipping known proxies. This uses the
+    # last untrusted hop, not a client-controlled leftmost X-Forwarded-For value.
+    for address in reversed([*forwarded_ips, peer_ip]):
+        if any(address in network for network in networks):
+            continue
+        return str(address)
+    return str(forwarded_ips[0])
 
 
 @dataclass(frozen=True)
@@ -47,10 +119,16 @@ class Settings:
     default_duration_minutes: int
     reminder_minutes_before: int
     data_retention_days: int
+    scheduling_retention_days: int
     booking_link_ttl_hours: int
     max_outbound_per_contact_per_hour: int
+    max_inbound_per_contact_per_hour: int
+    max_inbound_total_per_hour: int
+    max_inbound_messages_per_webhook: int
+    max_inbound_message_chars: int
     hai_connector_enabled: bool
     hai_allowed_networks: str
+    trusted_proxy_networks: str
     hai_feed_page_size: int
     hai_project_key: str
 
@@ -95,17 +173,25 @@ class Settings:
             "default_duration_minutes": int(os.getenv("DEFAULT_DURATION_MINUTES", "30")),
             "reminder_minutes_before": int(os.getenv("REMINDER_MINUTES_BEFORE", "1440")),
             "data_retention_days": int(os.getenv("DATA_RETENTION_DAYS", "30")),
+            "scheduling_retention_days": int(os.getenv("SCHEDULING_RETENTION_DAYS", "90")),
             "booking_link_ttl_hours": int(os.getenv("BOOKING_LINK_TTL_HOURS", "168")),
             "max_outbound_per_contact_per_hour": int(os.getenv("MAX_OUTBOUND_PER_CONTACT_PER_HOUR", "10")),
+            "max_inbound_per_contact_per_hour": int(os.getenv("MAX_INBOUND_PER_CONTACT_PER_HOUR", "10")),
+            "max_inbound_total_per_hour": int(os.getenv("MAX_INBOUND_TOTAL_PER_HOUR", "60")),
+            "max_inbound_messages_per_webhook": int(os.getenv("MAX_INBOUND_MESSAGES_PER_WEBHOOK", "20")),
+            "max_inbound_message_chars": int(os.getenv("MAX_INBOUND_MESSAGE_CHARS", "5000")),
             "hai_connector_enabled": _bool("HAI_CONNECTOR_ENABLED"),
             "hai_allowed_networks": os.getenv("HAI_ALLOWED_NETWORKS", "127.0.0.1/32,::1/128"),
+            "trusted_proxy_networks": os.getenv("TRUSTED_PROXY_NETWORKS", "127.0.0.1/32,::1/128"),
             "hai_feed_page_size": int(os.getenv("HAI_FEED_PAGE_SIZE", "100")),
             "hai_project_key": os.getenv("HAI_PROJECT_KEY", "012-Whatsapp-Google-Agenda-Appointment-setting"),
         }
         if overrides:
             values.update(overrides)
-        if isinstance(values["database_path"], str):
-            values["database_path"] = Path(values["database_path"])
+        values["database_path"] = _resolve_app_path(values["database_path"])
+        values["google_token_file"] = str(_resolve_app_path(values["google_token_file"]))
+        if values["google_client_secrets_file"]:
+            values["google_client_secrets_file"] = str(_resolve_app_path(values["google_client_secrets_file"]))
         return cls(**values)
 
     @property
@@ -129,6 +215,16 @@ class Settings:
             errors.append("DEFAULT_DURATION_MINUTES must be between 15 and 480")
         if self.booking_link_ttl_hours < 1 or self.booking_link_ttl_hours > 720:
             errors.append("BOOKING_LINK_TTL_HOURS must be between 1 and 720")
+        if self.scheduling_retention_days < 1 or self.scheduling_retention_days > 3650:
+            errors.append("SCHEDULING_RETENTION_DAYS must be between 1 and 3650")
+        if self.max_inbound_per_contact_per_hour < 1 or self.max_inbound_per_contact_per_hour > 10_000:
+            errors.append("MAX_INBOUND_PER_CONTACT_PER_HOUR must be between 1 and 10000")
+        if self.max_inbound_total_per_hour < 1 or self.max_inbound_total_per_hour > 100_000:
+            errors.append("MAX_INBOUND_TOTAL_PER_HOUR must be between 1 and 100000")
+        if self.max_inbound_messages_per_webhook < 1 or self.max_inbound_messages_per_webhook > 200:
+            errors.append("MAX_INBOUND_MESSAGES_PER_WEBHOOK must be between 1 and 200")
+        if self.max_inbound_message_chars < 1 or self.max_inbound_message_chars > 20_000:
+            errors.append("MAX_INBOUND_MESSAGE_CHARS must be between 1 and 20000")
         if self.hai_feed_page_size < 1 or self.hai_feed_page_size > 500:
             errors.append("HAI_FEED_PAGE_SIZE must be between 1 and 500")
         try:
@@ -137,6 +233,10 @@ class Settings:
                 errors.append("HAI_ALLOWED_NETWORKS must contain at least one CIDR when the connector is enabled")
         except ValueError:
             errors.append("HAI_ALLOWED_NETWORKS contains an invalid CIDR")
+        try:
+            [ipaddress.ip_network(value.strip(), strict=False) for value in self.trusted_proxy_networks.split(",") if value.strip()]
+        except ValueError:
+            errors.append("TRUSTED_PROXY_NETWORKS contains an invalid CIDR")
         parsed = urlparse(self.public_base_url)
         if not parsed.scheme or not parsed.netloc:
             errors.append("PUBLIC_BASE_URL must be an absolute URL")

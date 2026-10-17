@@ -37,3 +37,15 @@ def test_setup_mismatch_does_not_write(tmp_path, monkeypatch):
     monkeypatch.setattr("scheduler.setup.getpass.getpass", lambda _: next(answers))
     assert interactive_setup(tmp_path) == 1
     assert not (tmp_path / ".env").exists()
+
+
+def test_setup_explains_personal_whatsapp_does_not_need_meta_credentials(tmp_path, monkeypatch, capsys):
+    (tmp_path / ".env.example").write_text(Path(".env.example").read_text())
+    answers = iter(["a private operator password", "a private operator password"])
+    monkeypatch.setattr("scheduler.setup.getpass.getpass", lambda _: next(answers))
+
+    assert interactive_setup(tmp_path) == 0
+    output = capsys.readouterr().out
+    assert "Connect Google Calendar" in output
+    assert "Personal WhatsApp stays manual-assisted" in output
+    assert "Meta credentials are only needed" in output

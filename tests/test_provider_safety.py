@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -10,15 +11,34 @@ from scheduler.whatsapp import WhatsAppUnavailable
 from .conftest import post_webhook, webhook
 
 
+def _prepare_appointment(app):
+    client = app.test_client()
+    post_webhook(client, webhook())
+    store = app.extensions["store"]
+    proposal_id = store.dashboard("default")["items"][0]["proposal_id"]
+    scheduling = app.extensions["scheduling"]
+    scheduling.send_proposal(proposal_id)
+    post_webhook(client, webhook("wamid.confirm", body="The second one works for me"))
+    appointment_id = store.dashboard("default")["items"][0]["appointment_id"]
+    return store, scheduling, appointment_id
+
+
+def _book_appointment(app):
+    store, scheduling, appointment_id = _prepare_appointment(app)
+    scheduling.book_appointment(appointment_id)
+    return store, scheduling, appointment_id
+
+
 class FailingWhatsApp:
-    def __init__(self, retry_safe: bool):
+    def __init__(self, retry_safe: bool, message: str = "simulated provider failure"):
         self.retry_safe = retry_safe
+        self.message = message
 
     def configured(self):
         return True
 
     def send_reply(self, recipient, message, reply_to=None):
-        raise WhatsAppUnavailable("simulated provider failure", retry_safe=self.retry_safe)
+        raise WhatsAppUnavailable(self.message, retry_safe=self.retry_safe)
 
 
 @pytest.mark.parametrize(("retry_safe", "expected_status"), [(False, "manual_required"), (True, "send_failed")])
@@ -33,6 +53,171 @@ def test_proposal_send_distinguishes_ambiguous_delivery(app_bundle, retry_safe, 
         app.extensions["scheduling"].send_proposal(proposal_id)
 
     assert store.get_proposal("default", proposal_id)["status"] == expected_status
+
+
+@pytest.mark.parametrize(
+    ("retry_safe", "expected_status", "error_code", "retryable"),
+    [
+        (True, "send_failed", "whatsapp_send_failed", True),
+        (False, "manual_required", "whatsapp_delivery_unverified", False),
+    ],
+)
+def test_proposal_send_api_maps_delivery_certainty_and_redacts_provider_details(
+    app_bundle, auth_headers, retry_safe, expected_status, error_code, retryable,
+):
+    app, _, _ = app_bundle
+    client = app.test_client()
+    post_webhook(client, webhook())
+    store = app.extensions["store"]
+    proposal_id = store.dashboard("default")["items"][0]["proposal_id"]
+    secret_provider_detail = "PRIVATE_PROVIDER_RESPONSE_DO_NOT_DISCLOSE"
+    app.extensions["scheduling"].whatsapp = FailingWhatsApp(retry_safe, secret_provider_detail)
+
+    response = client.post(f"/api/proposals/{proposal_id}/send", headers=auth_headers)
+
+    expected_message = (
+        "WhatsApp confirmed that the message was not delivered. An explicit retry is available."
+        if retry_safe
+        else "WhatsApp delivery could not be verified. Check provider status before retrying."
+    )
+    assert response.status_code == 502
+    assert response.get_json()["error"] == {
+        "code": error_code,
+        "message": expected_message,
+        "retryable": retryable,
+    }
+    assert secret_provider_detail not in response.get_data(as_text=True)
+    proposal = store.get_proposal("default", proposal_id)
+    assert proposal["status"] == expected_status
+    assert secret_provider_detail not in proposal["error_text"]
+    assert secret_provider_detail not in str(store.recent_audit("default", 10))
+
+
+def test_unexpected_proposal_provider_error_is_non_retryable_and_redacted(app_bundle, auth_headers):
+    app, _, _ = app_bundle
+    client = app.test_client()
+    post_webhook(client, webhook())
+    store = app.extensions["store"]
+    proposal_id = store.dashboard("default")["items"][0]["proposal_id"]
+    secret_provider_detail = "PRIVATE_UNEXPECTED_PROVIDER_RESPONSE"
+
+    class UnexpectedFailingWhatsApp(FailingWhatsApp):
+        def send_reply(self, recipient, message, reply_to=None):
+            raise RuntimeError(secret_provider_detail)
+
+    app.extensions["scheduling"].whatsapp = UnexpectedFailingWhatsApp(False)
+    response = client.post(f"/api/proposals/{proposal_id}/send", headers=auth_headers)
+
+    assert response.status_code == 502
+    assert response.get_json()["error"] == {
+        "code": "whatsapp_delivery_unverified",
+        "message": "WhatsApp delivery could not be verified. Check provider status before retrying.",
+        "retryable": False,
+    }
+    assert secret_provider_detail not in response.get_data(as_text=True)
+    proposal = store.get_proposal("default", proposal_id)
+    assert proposal["status"] == "manual_required"
+    assert secret_provider_detail not in proposal["error_text"]
+    assert secret_provider_detail not in str(store.recent_audit("default", 10))
+
+
+def test_calendar_availability_exception_details_are_not_persisted(app_bundle, monkeypatch):
+    app, calendar, _ = app_bundle
+    secret_provider_detail = "PRIVATE_GOOGLE_RESPONSE_TOKEN"
+
+    def fail_free_slots(*args, **kwargs):
+        raise RuntimeError(secret_provider_detail)
+
+    monkeypatch.setattr(calendar, "free_slots", fail_free_slots)
+    post_webhook(app.test_client(), webhook())
+    store = app.extensions["store"]
+    with store.connect() as db:
+        request_id = db.execute("SELECT id FROM scheduling_requests ORDER BY id DESC LIMIT 1").fetchone()["id"]
+    request = store.request_detail("default", request_id)
+    transition = next(event for event in request["audit"] if event["action"] == "request.transition" and event["detail"].get("to") == "failed")
+
+    assert transition["detail"]["error_class"] == "RuntimeError"
+    assert secret_provider_detail not in str(request)
+
+
+def test_booking_confirmation_exception_details_are_not_audited(app_bundle, monkeypatch):
+    app, _, whatsapp = app_bundle
+    store, scheduling, appointment_id = _prepare_appointment(app)
+    secret_provider_detail = "PRIVATE_WHATSAPP_RESPONSE_TOKEN"
+
+    def fail_send(*args, **kwargs):
+        raise RuntimeError(secret_provider_detail)
+
+    monkeypatch.setattr(whatsapp, "send_reply", fail_send)
+    scheduling.book_appointment(appointment_id)
+
+    with store.connect() as db:
+        audit = db.execute("SELECT detail_json FROM audit_events WHERE action='confirmation.send_failed' AND entity_id=?", (str(appointment_id),)).fetchone()
+    assert audit is not None
+    assert '"error_class": "RuntimeError"' in audit["detail_json"]
+    assert secret_provider_detail not in audit["detail_json"]
+
+
+def test_reminder_provider_exception_details_are_not_persisted(app_bundle, monkeypatch):
+    app, _, whatsapp = app_bundle
+    store, scheduling, appointment_id = _book_appointment(app)
+    scheduling.settings = replace(scheduling.settings, whatsapp_reminder_template="appointment_reminder")
+    secret_provider_detail = "PRIVATE_REMINDER_PROVIDER_TOKEN"
+
+    def fail_template(*args, **kwargs):
+        raise RuntimeError(secret_provider_detail)
+
+    monkeypatch.setattr(whatsapp, "send_template", fail_template)
+    reminder_key = f"reminder:{appointment_id}:provider-failure-test"
+    with store.connect() as db:
+        db.execute(
+            "UPDATE background_jobs SET status='cancelled' WHERE workspace_id=? AND job_type=? AND dedupe_key LIKE ? AND status='queued'",
+            ("default", "appointment_reminder", f"reminder:{appointment_id}:%"),
+        )
+    store.schedule_job(
+        "default", "appointment_reminder", reminder_key,
+        (utc_now() - timedelta(minutes=1)).isoformat(), {"appointment_id": appointment_id},
+    )
+
+    result = app.extensions["scheduling"].run_due_jobs()
+
+    assert result["claimed"] == 1, repr(result)
+    assert result["manual_required"] == 1
+    with store.connect() as db:
+        job = db.execute("SELECT status,last_error FROM background_jobs WHERE dedupe_key=?", (reminder_key,)).fetchone()
+    assert job["status"] == "manual_required"
+    assert "unverified" in job["last_error"]
+    assert secret_provider_detail not in job["last_error"]
+    assert secret_provider_detail not in str(store.recent_audit("default", 10))
+
+
+def test_operator_proposal_send_hides_unexpected_provider_details(app_bundle):
+    app, _, _ = app_bundle
+    client = app.test_client()
+    post_webhook(client, webhook())
+    store = app.extensions["store"]
+    proposal_id = store.dashboard("default")["items"][0]["proposal_id"]
+    secret_provider_detail = "PRIVATE_UNEXPECTED_OPERATOR_PROVIDER_RESPONSE"
+
+    class UnexpectedFailingWhatsApp(FailingWhatsApp):
+        def send_reply(self, recipient, message, reply_to=None):
+            raise RuntimeError(secret_provider_detail)
+
+    app.extensions["scheduling"].whatsapp = UnexpectedFailingWhatsApp(False)
+    with client.session_transaction() as current:
+        current["operator_authenticated"] = True
+        current["csrf_token"] = "provider-error-csrf"
+
+    response = client.post(
+        f"/actions/proposals/{proposal_id}/send",
+        data={"csrf_token": "provider-error-csrf"},
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert secret_provider_detail not in response.get_data(as_text=True)
+    assert b"WhatsApp delivery could not be verified" in response.data
+    assert secret_provider_detail not in store.get_proposal("default", proposal_id)["error_text"]
 
 
 def test_operator_can_reconcile_verified_delivery_without_resending(app_bundle):
@@ -101,7 +286,10 @@ def test_rate_limit_reservation_is_atomic(app_bundle):
     store = app.extensions["store"]
 
     def reserve(_):
-        return store.reserve_rate_event("default", "same-contact", "whatsapp.outbound", 5, 60)
+        try:
+            return store.reserve_rate_event("default", "same-contact", "whatsapp.outbound", 5, 60)
+        finally:
+            store.close()
 
     with ThreadPoolExecutor(max_workers=12) as pool:
         results = list(pool.map(reserve, range(24)))
@@ -120,6 +308,8 @@ def test_concurrent_proposal_send_reaches_provider_only_once(app_bundle):
             return "sent"
         except ValueError:
             return "rejected"
+        finally:
+            store.close()
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(send, range(2)))
@@ -135,7 +325,10 @@ def test_concurrent_confirmation_creates_one_appointment(app_bundle):
     app.extensions["scheduling"].send_proposal(proposal_id)
 
     def confirm(_):
-        return store.confirm_proposal("default", proposal_id, 0, "contact")
+        try:
+            return store.confirm_proposal("default", proposal_id, 0, "contact")
+        finally:
+            store.close()
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         futures = [pool.submit(confirm, index) for index in range(2)]
@@ -196,7 +389,8 @@ def test_expired_whatsapp_proposal_cannot_be_confirmed(app_bundle):
     proposal_id = store.dashboard("default")["items"][0]["proposal_id"]
     app.extensions["scheduling"].send_proposal(proposal_id)
     with store.connect() as db:
-        db.execute("UPDATE proposals SET sent_at='2020-01-01T00:00:00+00:00' WHERE id=?", (proposal_id,))
+        sent_at = (utc_now() - timedelta(days=8)).isoformat()
+        db.execute("UPDATE proposals SET sent_at=? WHERE id=?", (sent_at, proposal_id))
 
     result = post_webhook(client, webhook("wamid.expired", body="1")).get_json()
     assert result["confirmations"] == 0

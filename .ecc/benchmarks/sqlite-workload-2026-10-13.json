@@ -1,0 +1,50 @@
+{
+  "benchmark": "sqlite-dashboard-and-hai-feed",
+  "measurement_date": "2026-10-13",
+  "baseline_commit": "6eb14af2b06a67148f873a57a47da32812352348",
+  "command": ".venv/Scripts/python.exe -m scripts.benchmark --records 1000 --reads 500",
+  "environment": {
+    "python": "3.13.14",
+    "sqlite": "3.53.1",
+    "platform": "Windows 11 10.0.26300"
+  },
+  "dataset": "Three repeated runs with 1000 synthetic contacts/requests in temporary SQLite databases, 500 dashboard reads, and a 500-item HAI feed; no production database or provider calls",
+  "runs": [
+    {
+      "write_records_per_second": 992.9,
+      "dashboard_read_median_ms": 0.572,
+      "dashboard_read_p95_ms": 0.638,
+      "dashboard_read_max_ms": 0.986,
+      "hai_feed_500_ms": 3.752,
+      "python_peak_memory_mib": 0.48
+    },
+    {
+      "write_records_per_second": 1148.6,
+      "dashboard_read_median_ms": 0.584,
+      "dashboard_read_p95_ms": 0.806,
+      "dashboard_read_max_ms": 1.13,
+      "hai_feed_500_ms": 4.852,
+      "python_peak_memory_mib": 0.48
+    },
+    {
+      "write_records_per_second": 1065.7,
+      "dashboard_read_median_ms": 0.551,
+      "dashboard_read_p95_ms": 0.647,
+      "dashboard_read_max_ms": 1.002,
+      "hai_feed_500_ms": 3.655,
+      "python_peak_memory_mib": 0.48
+    }
+  ],
+  "observed_range": {
+    "write_records_per_second": [992.9, 1148.6],
+    "dashboard_read_median_ms": [0.551, 0.584],
+    "dashboard_read_p95_ms": [0.638, 0.806],
+    "hai_feed_500_ms": [3.655, 4.852],
+    "python_peak_memory_mib": [0.48, 0.48]
+  },
+  "limitations": [
+    "Synthetic data on one development host; not a production capacity guarantee.",
+    "No concurrent request load, cold filesystem cache, ngrok, or real Google latency was measured.",
+    "Python tracemalloc excludes native SQLite allocation and process working set."
+  ]
+}

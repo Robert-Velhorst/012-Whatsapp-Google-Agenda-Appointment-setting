@@ -82,6 +82,36 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX IF NOT EXISTS idx_messages_retention ON inbound_messages(workspace_id, received_at);
         CREATE INDEX IF NOT EXISTS idx_rate_retention ON rate_events(workspace_id, created_at);
     """),
+    (6, """
+        CREATE TABLE IF NOT EXISTS whatsapp_delivery_events(
+          id INTEGER PRIMARY KEY AUTOINCREMENT, workspace_id TEXT NOT NULL,
+          provider_message_id TEXT NOT NULL, status TEXT NOT NULL,
+          provider_timestamp TEXT NOT NULL, error_code TEXT, received_at TEXT NOT NULL,
+          UNIQUE(workspace_id, provider_message_id, status, provider_timestamp),
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_whatsapp_delivery_message
+          ON whatsapp_delivery_events(workspace_id, provider_message_id, provider_timestamp DESC);
+        CREATE INDEX IF NOT EXISTS idx_whatsapp_delivery_retention
+          ON whatsapp_delivery_events(workspace_id, received_at);
+    """),
+    (7, """
+        ALTER TABLE appointments ADD COLUMN booking_attempt INTEGER NOT NULL DEFAULT 0;
+    """),
+    (8, """
+        UPDATE appointments SET booking_attempt=1
+        WHERE status IN ('booking','booked','manual_required','failed') AND booking_attempt=0;
+    """),
+    (9, """
+        ALTER TABLE inbound_messages ADD COLUMN processing_status TEXT NOT NULL DEFAULT 'processed'
+          CHECK(processing_status IN ('processing','pending','processed'));
+        ALTER TABLE inbound_messages ADD COLUMN processing_started_at TEXT;
+    """),
+    (10, """
+        ALTER TABLE appointments ADD COLUMN pending_start_at TEXT;
+        ALTER TABLE appointments ADD COLUMN pending_end_at TEXT;
+        ALTER TABLE appointments ADD COLUMN reschedule_attempt INTEGER NOT NULL DEFAULT 0;
+    """),
 ]
 
 
