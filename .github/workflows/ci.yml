@@ -1,7 +1,10 @@
 name: CI
 on:
   push:
+    branches: [main]
+    tags: ["**"]
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
@@ -15,6 +18,10 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt pip-audit==2.10.1
       - run: pip-audit
+      - run: pip-audit -r requirements-runtime.lock
       - run: python -m compileall -q scheduler run.py
       - run: pytest -q
+      - run: touch .env
+      - run: docker compose config --no-env-resolution --quiet
+      - run: docker compose config --no-env-resolution --format json | python -c "import json,sys; assert json.load(sys.stdin)['services']['worker']['healthcheck']['disable'] is True"
       - run: docker build -t agenda-relay:test .

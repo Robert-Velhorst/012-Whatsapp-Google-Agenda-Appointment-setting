@@ -11,13 +11,11 @@
 1. SQLite and one worker fit a small single-operator deployment, not horizontally scaled SaaS.
 2. Browser UI is English; intent and contact replies support Dutch/English.
 3. Team roles, SSO, per-user sessions, and per-workspace credentials are not implemented.
-4. WhatsApp delivery/read status webhooks are not stored.
-5. Rescheduling an already-booked event is available at provider-adapter level but not exposed as a reviewed UI state machine.
-6. Contact deletion is API-only and should gain a re-authenticated confirmation UI.
-7. PostgreSQL/distributed locks are required before multi-instance worker deployment.
+4. Rescheduling is a single-operator reviewed UI workflow; automated customer notification and multi-operator conflict resolution are not implemented.
+5. PostgreSQL/distributed locks are required before multi-instance worker deployment.
 
 ## Roadmap
 
-P1: real-provider rehearsal, delivery-status webhooks, token expiry, reschedule review flow, re-authenticated privacy UI.
+P1: real-provider rehearsal (including a revoked/expired Google refresh token) and reschedule provider rehearsal. Re-authenticated contact deletion is implemented with CSRF, recent-password confirmation, rate limiting, and UI coverage. Locally, expired-token refresh failures are handled as actionable reconnect or retry errors and covered by provider-fake tests; live Google token expiry/revocation remains unverified.
 P2: Postgres, durable distributed queue/rate limits, organization SSO/RBAC, per-workspace provider vault.
 P3: optional privacy-reviewed AI intent provider, travel-time provider, analytics and localization beyond EN/NL.

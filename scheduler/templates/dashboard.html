@@ -83,7 +83,7 @@
               {% for item in data['items'] %}
                 <tr class="{{ 'selected' if selected and selected.id == item.id }}">
                   <td><a class="contact-link" href="{{ url_for('dashboard', view='scheduling', request=item.id, q=query, status=status) }}"><strong>{{ item.display_name or 'WhatsApp contact' }}</strong><small>•••• {{ item.sender[-4:] }}</small></a></td>
-                  <td>{% if item.proposal_status == 'manual_required' %}Verify WhatsApp delivery{% elif item.status == 'proposal_pending' %}Review proposal{% elif item.status in ['slot_confirmed','booking_pending'] %}Book confirmed slot{% elif item.status == 'awaiting_confirmation' %}Awaiting contact reply{% elif item.status == 'failed' %}Provider attention{% else %}View details{% endif %}</td>
+                  <td>{% if item.proposal_status == 'manual_required' %}Verify WhatsApp delivery{% elif item.appointment_status == 'manual_required' %}Verify Google Calendar booking{% elif item.appointment_status == 'cancel_manual_required' %}Verify Calendar cancellation{% elif item.appointment_status == 'cancelling' %}Calendar cancellation in progress{% elif item.appointment_status == 'reschedule_manual_required' %}Verify Calendar reschedule{% elif item.appointment_status == 'rescheduling' %}Calendar reschedule in progress{% elif item.appointment_status == 'reschedule_pending' %}Review new appointment time{% elif item.status == 'proposal_pending' %}Review proposal{% elif item.status in ['slot_confirmed','booking_pending'] %}Book confirmed slot{% elif item.status == 'awaiting_confirmation' %}Awaiting contact reply{% elif item.status == 'failed' %}Provider attention{% else %}View details{% endif %}</td>
                   <td>{{ item.requested_start }}<small>{{ item.duration_minutes }} minutes · {{ item.timezone }}</small></td>
                   <td><span class="state {{ item.status }}">{{ item.status.replace('_',' ') }}</span></td>
                   <td>{{ (item.confidence * 100)|round|int }}%</td>
@@ -94,14 +94,16 @@
                     <a class="row-action" href="{{ url_for('dashboard', view='scheduling', request=item.id) }}">Reconcile delivery</a>
                     {% elif item.proposal_id and item.proposal_status in ['pending_approval','send_failed'] %}
                     <form method="post" action="{{ url_for('action_send_proposal', proposal_id=item.proposal_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="row-action" type="submit">Review proposal</button></form>
+                    {% elif item.appointment_id and item.appointment_status == 'manual_required' %}
+                    <form method="post" action="{{ url_for('action_reconcile_booking', appointment_id=item.appointment_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="row-action" type="submit">Check Google Calendar</button></form>
                     {% elif item.appointment_id and item.appointment_status in ['pending_approval','failed'] %}
-                    <form method="post" action="{{ url_for('action_book', appointment_id=item.appointment_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="row-action" type="submit">Book confirmed slot</button></form>
+                    <form method="post" action="{{ url_for('action_book', appointment_id=item.appointment_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="row-action" type="submit">{{ 'Retry booking' if item.appointment_status == 'failed' else 'Book confirmed slot' }}</button></form>
                     {% elif item.google_event_link %}<a class="row-action" href="{{ item.google_event_link }}" rel="noreferrer">Open calendar</a>
                     {% else %}<a class="row-action" href="{{ url_for('dashboard', view='scheduling', request=item.id) }}">View details</a>{% endif %}
                   </td>
                 </tr>
               {% else %}
-                <tr><td class="empty-row" colspan="6">No scheduling requests match this view. New verified WhatsApp messages will appear here.</td></tr>
+                <tr><td class="empty-row" colspan="6">{% if not readiness.providers.whatsapp.enabled %}For personal WhatsApp, paste a scheduling message in <a href="{{ url_for('dashboard', view='assisted') }}">Personal WhatsApp</a> to check availability and prepare a draft.{% else %}No scheduling requests match this view. New verified WhatsApp messages will appear here.{% endif %}</td></tr>
               {% endfor %}
               </tbody>
             </table>
@@ -114,7 +116,8 @@
           <div class="detail-heading"><div><h2>{{ selected.display_name or 'WhatsApp contact' }}</h2><span>•••• {{ selected.sender[-4:] }}</span></div><span class="state {{ selected.status }}">{{ selected.status.replace('_',' ') }}</span></div>
           <div class="detail-section"><h3>Conversation excerpt</h3><div class="conversation">{% for message in selected.messages %}<div class="message">{{ message.body }}<small>{{ message.received_at[:16].replace('T',' ') }}</small></div>{% endfor %}</div></div>
           <div class="detail-section"><h3>Proposed time slots</h3><ol class="slot-list">{% for slot in selected.slots %}<li class="{{ 'chosen' if selected.selected_slot == loop.index0 }}"><span>{{ slot[:10] }}</span><strong>{{ slot[11:16] }}</strong></li>{% else %}<li>No slots available for this request.</li>{% endfor %}</ol></div>
-          {% if personal_confirmation_text %}<div class="detail-section"><h3>Personal WhatsApp confirmation draft</h3><textarea rows="3" readonly aria-label="WhatsApp confirmation draft">{{ personal_confirmation_text }}</textarea><a class="secondary-button" href="{{ personal_confirmation_url }}" target="_blank" rel="noopener noreferrer">Open WhatsApp with confirmation</a><small>Not sent or delivery-verified by Agenda Relay.</small></div>{% endif %}
+          {% if selected.delivery_status %}<div class="detail-section"><h3>WhatsApp delivery status</h3><p>Provider reports <strong>{{ selected.delivery_status.status }}</strong> at {{ selected.delivery_status.provider_timestamp[:19].replace('T',' ') }} UTC.</p>{% if selected.delivery_status.error_code %}<small>Provider error code: {{ selected.delivery_status.error_code }}</small>{% endif %}</div>{% endif %}
+          {% if personal_confirmation_text %}<div class="detail-section"><h3 id="personal-confirmation-heading">Personal WhatsApp confirmation draft</h3><textarea id="personal-confirmation-draft" name="personal_confirmation_draft" rows="3" readonly aria-labelledby="personal-confirmation-heading">{{ personal_confirmation_text }}</textarea><a class="secondary-button" href="{{ personal_confirmation_url }}" target="_blank" rel="noopener noreferrer">Open WhatsApp with confirmation</a><small>Not sent or delivery-verified by Agenda Relay.</small></div>{% endif %}
           <div class="detail-section consent"><h3>Consent &amp; timezone</h3><p><span class="check">✓</span>{{ selected.contact.consent_status.replace('_',' ')|title }}</p><p>Timezone: <strong>{{ selected.timezone }}</strong></p></div>
           <div class="detail-section"><h3>Audit trail</h3><ol class="timeline">{% for event in selected.audit %}<li><time>{{ event.created_at[11:16] }}</time><span>{{ event.action.replace('.',' ') }}</span></li>{% else %}<li><span>No audit events recorded.</span></li>{% endfor %}</ol></div>
           {% if selected.proposal_id and selected.proposal_status == 'manual_required' and not selected.sender.startswith('assisted:') %}
@@ -122,6 +125,34 @@
             <form method="post" action="{{ url_for('action_reconcile_proposal_delivery', proposal_id=selected.proposal_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="outcome" value="delivered"><button class="secondary-button" type="submit">I verified it was delivered</button></form>
             <form method="post" action="{{ url_for('action_reconcile_proposal_delivery', proposal_id=selected.proposal_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="outcome" value="not_delivered"><button class="secondary-button" type="submit">I verified it was not delivered</button></form>
             <small>Marking non-delivery only enables a separate explicit retry; it does not resend automatically. Your attestation is added to the audit trail.</small>
+          </section>
+          {% endif %}
+          {% if selected.appointment_id and selected.appointment_status == 'manual_required' %}
+          <section class="detail-section assist-warning"><h3>Calendar booking needs verification</h3><p>A process stopped during event creation. Check the deterministic event in Google Calendar; if it exists, Agenda Relay will restore the booked state. If it does not, an explicit retry becomes available. This check does not send a WhatsApp message.</p>
+            <form method="post" action="{{ url_for('action_reconcile_booking', appointment_id=selected.appointment_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="secondary-button" type="submit">Check Google Calendar</button></form>
+          </section>
+          {% endif %}
+          {% if selected.appointment_id and selected.appointment_status == 'cancel_manual_required' %}
+          <section class="detail-section assist-warning"><h3>Calendar cancellation needs verification</h3><p>A cancellation response was interrupted or ambiguous. Check whether the event still exists. Agenda Relay will mark it cancelled only when Calendar confirms it is absent; if it remains active, the appointment stays booked and a separate cancellation retry is available.</p>
+            <form method="post" action="{{ url_for('action_reconcile_cancellation', appointment_id=selected.appointment_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="secondary-button" type="submit">Check cancellation in Google Calendar</button></form>
+          </section>
+          {% elif selected.appointment_id and selected.appointment_status == 'cancelling' %}
+          <section class="detail-section assist-warning"><h3>Calendar cancellation is in progress</h3><p>Agenda Relay is recording an external Calendar change. Do not retry until it completes or the worker marks the result for review.</p></section>
+          {% endif %}
+          {% if selected.appointment_id and selected.appointment_status == 'booked' %}
+          <section class="detail-section"><h3>Reschedule appointment</h3><p>Choose a new time. Availability is checked first; the original booking stays active until you review and confirm the Calendar change.</p>
+            <form method="post" action="{{ url_for('action_prepare_reschedule', appointment_id=selected.appointment_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label for="reschedule-start">New date and time ({{ selected.timezone }})</label><input id="reschedule-start" name="start_at" type="datetime-local" required><button class="secondary-button" type="submit">Check and review new time</button></form>
+          </section>
+          {% elif selected.appointment_id and selected.appointment_status == 'reschedule_pending' %}
+          <section class="detail-section assist-warning"><h3>Review time change</h3><p>Original: {{ selected.start_at }}. Proposed: <strong>{{ selected.pending_start_at }} – {{ selected.pending_end_at }}</strong>. The original Calendar booking is still active.</p>
+            <form method="post" action="{{ url_for('action_confirm_reschedule', appointment_id=selected.appointment_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="secondary-button" type="submit">Confirm and update Google Calendar</button></form>
+            <form method="post" action="{{ url_for('action_discard_reschedule', appointment_id=selected.appointment_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="secondary-button" type="submit">Discard time change</button></form>
+          </section>
+          {% elif selected.appointment_id and selected.appointment_status == 'rescheduling' %}
+          <section class="detail-section assist-warning"><h3>Calendar reschedule is in progress</h3><p>The original booking remains the locally recorded time until Google Calendar confirms the update. Do not retry while the operation is in progress.</p></section>
+          {% elif selected.appointment_id and selected.appointment_status == 'reschedule_manual_required' %}
+          <section class="detail-section assist-warning"><h3>Calendar reschedule needs verification</h3><p>The Calendar update may or may not have completed. Read-only verification will accept only the original or proposed time; any other result remains in manual review.</p>
+            <form method="post" action="{{ url_for('action_reconcile_reschedule', appointment_id=selected.appointment_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="secondary-button" type="submit">Verify reschedule in Google Calendar</button></form>
           </section>
           {% endif %}
           {% if selected.appointment_id and selected.appointment_status == 'booked' %}<form method="post" action="{{ url_for('action_cancel', appointment_id=selected.appointment_id) }}" class="danger-zone"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="danger-button" type="submit">Cancel appointment</button></form>{% endif %}
@@ -147,7 +178,7 @@
             <small>Up to 5,000 characters. Avoid pasting unrelated conversation or sensitive information.</small>
             <button class="primary-button" type="submit" {{ 'disabled' if not readiness.providers.google_calendar.ready }}>Check Google Calendar</button>
           </form>
-          {% if not readiness.providers.google_calendar.ready %}<p class="assist-warning">Google Calendar is not connected. Connect it in Settings before checking availability.</p>{% endif %}
+          {% if not readiness.providers.google_calendar.ready %}<p class="assist-warning">Google Calendar is not connected. <a href="{{ url_for('dashboard', view='settings') }}">Connect Google Calendar in Settings</a> before checking availability.</p>{% endif %}
         </div>
         <aside class="safety-note"><h2>Personal account safeguards</h2><p>This does not read your WhatsApp inbox or send messages. You choose the recipient and press send in WhatsApp. Agenda Relay cannot verify delivery from a personal account.</p><p>Detected dates and duration are a local English/Dutch rules-based estimate. Review the times and wording before sharing.</p></aside>
       </section>
@@ -170,8 +201,18 @@
       {% endif %}
 
       {% elif view == 'contacts' %}
-      <div class="page-heading"><div><h1>Contacts</h1><p>Maintain verified email, timezone, language, and consent before external calendar actions.</p></div></div>
-      <section class="wide-panel"><table class="queue-table"><thead><tr><th>WhatsApp contact</th><th>Name</th><th>Email</th><th>Timezone</th><th>Language</th><th>Consent</th><th>Save</th></tr></thead><tbody>{% for contact in contacts %}<tr><form method="post" action="{{ url_for('action_contact_update', contact_id=contact.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><td>•••• {{ contact.sender[-4:] }}</td><td><input name="display_name" value="{{ contact.display_name or '' }}" aria-label="Display name"></td><td><input name="email" value="{{ contact.email or '' }}" type="email" aria-label="Email"></td><td><input name="timezone" value="{{ contact.timezone }}" aria-label="Timezone"></td><td><select name="language" aria-label="Language"><option value="en" {{ 'selected' if contact.language == 'en' }}>English</option><option value="nl" {{ 'selected' if contact.language == 'nl' }}>Dutch</option></select></td><td><select name="consent_status" aria-label="Consent"><option value="implicit_inbound" {{ 'selected' if contact.consent_status == 'implicit_inbound' }}>Inbound consent</option><option value="confirmed" {{ 'selected' if contact.consent_status == 'confirmed' }}>Confirmed</option><option value="revoked" {{ 'selected' if contact.consent_status == 'revoked' }}>Revoked</option></select></td><td><button class="row-action" type="submit">Save</button></td></form></tr>{% else %}<tr><td class="empty-row" colspan="7">No contacts yet.</td></tr>{% endfor %}</tbody></table></section>
+      <div class="page-heading"><div><h1>Contacts</h1><p>Maintain verified email, timezone, language, and consent before external calendar actions.</p><p class="assist-warning">Deletion permanently removes this contact's stored records. Cancel or resolve any active appointment first; deletion requires your current password.</p></div></div>
+      <section class="wide-panel contacts-panel">{% for contact in contacts %}<form id="contact-update-{{ contact.id }}" method="post" action="{{ url_for('action_contact_update', contact_id=contact.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"></form><form id="contact-delete-{{ contact.id }}" method="post" action="{{ url_for('action_contact_delete', contact_id=contact.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"></form>{% endfor %}<table class="queue-table contacts-table"><thead><tr><th>WhatsApp contact</th><th>Name</th><th>Email</th><th>Timezone</th><th>Language</th><th>Consent</th><th>Save</th><th>Export</th><th>Delete</th></tr></thead><tbody>{% for contact in contacts %}<tr>
+        <td>•••• {{ contact.sender[-4:] }}</td>
+        <td><input form="contact-update-{{ contact.id }}" name="display_name" value="{{ contact.display_name or '' }}" aria-label="Display name"></td>
+        <td><input form="contact-update-{{ contact.id }}" name="email" value="{{ contact.email or '' }}" type="email" aria-label="Email"></td>
+        <td><input form="contact-update-{{ contact.id }}" name="timezone" value="{{ contact.timezone }}" aria-label="Timezone"></td>
+        <td><select form="contact-update-{{ contact.id }}" name="language" aria-label="Language"><option value="en" {{ 'selected' if contact.language == 'en' }}>English</option><option value="nl" {{ 'selected' if contact.language == 'nl' }}>Dutch</option></select></td>
+        <td><select form="contact-update-{{ contact.id }}" name="consent_status" aria-label="Consent"><option value="implicit_inbound" {{ 'selected' if contact.consent_status == 'implicit_inbound' }}>Inbound consent</option><option value="confirmed" {{ 'selected' if contact.consent_status == 'confirmed' }}>Confirmed</option><option value="revoked" {{ 'selected' if contact.consent_status == 'revoked' }}>Revoked</option></select></td>
+        <td><button class="row-action" form="contact-update-{{ contact.id }}" type="submit">Save</button></td>
+        <td><a class="row-action" href="{{ url_for('api_contact_export', contact_id=contact.id) }}">Download JSON</a></td>
+        <td><label class="sr-only" for="contact-delete-password-{{ contact.id }}">Current password to delete contact ending {{ contact.sender[-4:] }}</label><input id="contact-delete-password-{{ contact.id }}" form="contact-delete-{{ contact.id }}" name="password" type="password" autocomplete="current-password" required><button class="danger-button" form="contact-delete-{{ contact.id }}" type="submit">Delete</button></td>
+      </tr>{% else %}<tr><td class="empty-row" colspan="9">No contacts yet.</td></tr>{% endfor %}</tbody></table></section>
 
       {% elif view == 'audit' %}
       <div class="page-heading"><div><h1>Audit trail</h1><p>Immutable operator and provider event history for this workspace.</p></div></div>
@@ -179,7 +220,7 @@
 
       {% elif view == 'settings' %}
       <div class="page-heading"><div><h1>Settings &amp; readiness</h1><p>Configuration is environment-owned; this page reports truth without exposing secrets.</p></div></div>
-      <section class="settings-grid"><div class="settings-block"><h2>Runtime mode</h2><dl><dt>Environment</dt><dd>{{ mode }}</dd><dt>Workspace</dt><dd>{{ workspace_name }}</dd><dt>Timezone</dt><dd>{{ timezone_name }}</dd><dt>Storage encryption</dt><dd>{{ 'Enabled' if readiness.storage_encrypted else 'Not configured' }}</dd></dl></div><div class="settings-block"><h2>Readiness issues</h2><ul class="issue-list">{% for error in readiness.errors %}<li class="error">{{ error }}</li>{% endfor %}{% for warning in readiness.warnings %}<li>{{ warning }}</li>{% endfor %}{% if not readiness.errors and not readiness.warnings %}<li>No configuration issues detected.</li>{% endif %}</ul><a class="secondary-button" href="{{ url_for('google_connect') }}">Connect Google Calendar</a></div></section>
+      <section class="settings-grid"><div class="settings-block"><h2>Runtime mode</h2><dl><dt>Environment</dt><dd>{{ mode }}</dd><dt>Workspace</dt><dd>{{ workspace_name }}</dd><dt>Timezone</dt><dd>{{ timezone_name }}</dd><dt>Storage encryption</dt><dd>{{ 'Enabled' if readiness.storage_encrypted else 'Not configured' }}</dd></dl></div><div class="settings-block"><h2>Readiness issues</h2><ul class="issue-list">{% for error in readiness.errors %}<li class="error">{{ error }}</li>{% endfor %}{% for warning in readiness.warnings %}<li>{{ warning }}</li>{% endfor %}{% if not readiness.errors and not readiness.warnings %}<li>No configuration issues detected.</li>{% endif %}</ul>{% if google_oauth_configured %}<a class="secondary-button" href="{{ url_for('google_connect') }}">Connect Google Calendar</a>{% else %}<p>Configure <code>GOOGLE_CLIENT_SECRETS_FILE</code> with the OAuth client file stored outside the repository before connecting Google Calendar.</p>{% endif %}</div></section>
 
       {% else %}
       <div class="page-heading"><div><h1>Operator help</h1><p>The safe path from message to calendar event.</p></div></div>
@@ -189,3 +230,4 @@
   </div>
 </div>
 {% endblock %}
+

@@ -64,7 +64,10 @@ class WhatsAppClient:
                 retry_safe=False,
             ) from exc
         except requests.RequestException as exc:
-            raise WhatsAppUnavailable(f"WhatsApp request failed before a verified response: {exc}", retry_safe=False) from exc
+            raise WhatsAppUnavailable(
+                "WhatsApp request failed before a verified response; delivery may be ambiguous.",
+                retry_safe=False,
+            ) from exc
         try:
             response.raise_for_status()
         except requests.HTTPError as exc:
@@ -80,7 +83,10 @@ class WhatsAppClient:
                 "WhatsApp returned an unreadable success response; verify delivery before any manual resend.",
                 retry_safe=False,
             ) from exc
-        if not data.get("messages"):
+        messages = data.get("messages") if isinstance(data, dict) else None
+        first_message = messages[0] if isinstance(messages, list) and messages else None
+        message_id = first_message.get("id") if isinstance(first_message, dict) else None
+        if not isinstance(message_id, str) or not message_id.strip():
             raise WhatsAppUnavailable(
                 "WhatsApp returned no message identifier; verify delivery before any manual resend.",
                 retry_safe=False,

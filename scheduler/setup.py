@@ -47,6 +47,7 @@ def interactive_setup(directory: Path | None = None) -> int:
     except (OSError, ValueError, EOFError) as exc:
         print(f"Setup could not finish: {exc}")
         return 1
-    print("Local login and encryption are configured. Add your Meta and Google settings in .env, then start Agenda Relay.")
+    print("Local login and encryption are configured. Connect Google Calendar in Agenda Relay before scheduling.")
+    print("Personal WhatsApp stays manual-assisted; Meta credentials are only needed if you separately enable the Business Cloud API.")
     print("The app starts in development mode. Complete provider setup before enabling public access.")
     return 0

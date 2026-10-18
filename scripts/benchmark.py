@@ -19,14 +19,15 @@ def percentile(values: list[float], fraction: float) -> float:
 
 def populate(store: Store, records: int) -> None:
     for index in range(records):
-        contact_id = store.upsert_contact("benchmark", f"316000{index:05d}", "Europe/Amsterdam")
-        store.create_request(
+        store.create_contact_request(
             "benchmark",
-            contact_id,
+            f"316000{index:05d}",
+            "Europe/Amsterdam",
+            "en",
+            None,
             f"benchmark-{index}",
             "Benchmark scheduling request",
             30,
-            "Europe/Amsterdam",
             "2026-08-10T09:00:00+02:00",
             0.95,
         )

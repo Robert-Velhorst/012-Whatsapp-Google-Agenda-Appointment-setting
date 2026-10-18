@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sqlite3
 import sys
 import tempfile
@@ -15,7 +16,9 @@ from pathlib import Path
 from werkzeug.security import generate_password_hash
 
 from .app import create_app
-from .migrations import MIGRATIONS
+from .config import Settings
+from .crypto_rotation import rotate_encryption_bundle
+from .database_validation import validate_app_database
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -32,10 +35,11 @@ def build_parser() -> argparse.ArgumentParser:
     restore = sub.add_parser("restore", help="Restore a validated SQLite backup")
     restore.add_argument("backup", type=Path)
     restore.add_argument("--confirm", required=True, help="Must equal RESTORE")
+    rotate = sub.add_parser("rotate-encryption-key", help="Create a verified, non-overwriting encrypted-data rotation bundle")
+    rotate.add_argument("--output-dir", type=Path, required=True, help="New directory for rotated database, token file, and manifest")
     bundle = sub.add_parser("support-bundle", help="Create a redacted diagnostic bundle")
     bundle.add_argument("--output", type=Path)
-    password = sub.add_parser("hash-password", help="Generate ADMIN_PASSWORD_HASH without storing the password")
-    password.add_argument("password", nargs="?")
+    sub.add_parser("hash-password", help="Generate ADMIN_PASSWORD_HASH without storing the password")
     return parser
 
 
@@ -53,20 +57,11 @@ def _database_is_healthy_and_writable(path: Path) -> bool:
 
 
 def _validate_app_database(connection: sqlite3.Connection) -> bool:
-    if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
-        return False
-    try:
-        versions = {
-            row[0]
-            for row in connection.execute("SELECT version FROM schema_migrations").fetchall()
-        }
-    except sqlite3.Error:
-        return False
-    return bool(versions) and max(versions) == max(version for version, _ in MIGRATIONS)
+    return validate_app_database(connection)
 
 
 def _online_backup(source_path: Path, destination: Path) -> None:
-    """Create a consistent SQLite backup and atomically publish it at destination."""
+    """Create a consistent SQLite backup and atomically publish it without overwriting."""
     source = source_path.resolve()
     output = destination.resolve()
     if source == output:
@@ -80,12 +75,37 @@ def _online_backup(source_path: Path, destination: Path) -> None:
             source_db.backup(target_db)
             if not _validate_app_database(target_db):
                 raise ValueError("Source database failed integrity or schema validation")
-        os.replace(temporary, output)
+        # A same-directory hard link is an atomic no-replace publication on
+        # Windows and POSIX filesystems. os.replace would silently destroy an
+        # existing backup if the caller reused an output path.
+        os.link(temporary, output)
     finally:
         temporary.unlink(missing_ok=True)
 
 
-def _restore_database(backup_path: Path, database_path: Path, store) -> Path | None:
+def _write_support_bundle(output_path: Path, readiness: dict, audit: list[dict], runtime: dict) -> Path:
+    """Publish a redacted support bundle atomically without replacing an existing file."""
+    output = output_path.resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{output.name}.", suffix=".tmp", dir=output.parent)
+    os.close(fd)
+    temporary = Path(temporary_name)
+    try:
+        with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("readiness.json", json.dumps(readiness, indent=2))
+            archive.writestr("recent-actions.json", json.dumps(audit, indent=2))
+            archive.writestr("runtime.json", json.dumps(runtime, indent=2))
+        # Publish with a same-directory hard link to ensure an existing bundle is never replaced.
+        try:
+            os.link(temporary, output)
+        except FileExistsError as exc:
+            raise FileExistsError(f"Support bundle already exists: {output}") from exc
+        return output
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _restore_database(backup_path: Path, database_path: Path, store=None) -> Path | None:
     """Stage a validated restore, snapshot the current DB, then atomically replace it."""
     backup = backup_path.resolve()
     database = database_path.resolve()
@@ -106,17 +126,26 @@ def _restore_database(backup_path: Path, database_path: Path, store) -> Path | N
             if not _validate_app_database(staged_db):
                 raise ValueError("Staged backup failed SQLite integrity or application schema validation")
         if database.exists():
-            with closing(sqlite3.connect(database)) as current_db, closing(sqlite3.connect(safety)) as safety_db:
-                current_db.backup(safety_db)
-            with closing(sqlite3.connect(safety)) as safety_db:
-                if not _validate_app_database(safety_db):
-                    raise ValueError("Could not verify the pre-restore safety backup")
-        store.close()
-        # A non-empty WAL means another process may still have the database open. Replacing
-        # the main file in that state could lose committed data, so fail closed.
+            try:
+                with closing(sqlite3.connect(database)) as current_db, closing(sqlite3.connect(safety)) as safety_db:
+                    current_db.backup(safety_db)
+                with closing(sqlite3.connect(safety)) as safety_db:
+                    if not _validate_app_database(safety_db):
+                        raise ValueError("Current database is not a valid Agenda Relay database")
+            except (sqlite3.DatabaseError, ValueError):
+                # Preserve an unreadable or incompatible live file byte-for-byte
+                # so a validated backup can still recover the configured path.
+                safety.unlink(missing_ok=True)
+                shutil.copy2(database, safety)
+        if store is not None:
+            store.close()
+        # SQLite keeps a WAL/SHM pair while another connection is using the database,
+        # even when the WAL is currently empty. Replacing the main file in that state
+        # can fail on Windows or split readers from the database they opened, so fail closed.
         wal_path = Path(f"{database}-wal")
-        if wal_path.exists() and wal_path.stat().st_size:
-            raise RuntimeError("Database WAL is still active; stop all web and worker processes before restoring")
+        shm_path = Path(f"{database}-shm")
+        if wal_path.exists() or shm_path.exists():
+            raise RuntimeError("Database WAL sidecars are still present; stop all web and worker processes before restoring")
         os.replace(temporary, database)
         return safety if safety.exists() else None
     finally:
@@ -124,17 +153,59 @@ def _restore_database(backup_path: Path, database_path: Path, store) -> Path | N
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    arguments = sys.argv[1:] if argv is None else argv
+    if (
+        len(arguments) > 1
+        and arguments[0] == "hash-password"
+        and arguments[1:] not in (["-h"], ["--help"])
+    ):
+        parser.print_usage(sys.stderr)
+        parser.exit(
+            2,
+            "agenda-relay: error: hash-password does not accept password arguments; "
+            "run it without arguments to use the secure prompt\n",
+        )
+    args = parser.parse_args(arguments)
     if args.command == "setup":
         from .setup import interactive_setup
         return interactive_setup()
     if args.command == "hash-password":
         import getpass
-        password = args.password or getpass.getpass("Operator password: ")
+        password = getpass.getpass("Operator password: ")
         if len(password) < 12:
             print("Password must be at least 12 characters", file=sys.stderr)
             return 2
         print(generate_password_hash(password))
+        return 0
+
+    if args.command == "rotate-encryption-key":
+        settings = Settings.from_env()
+        try:
+            result = rotate_encryption_bundle(
+                settings.database_path,
+                Path(settings.google_token_file),
+                args.output_dir,
+                settings.data_encryption_key,
+                os.getenv("NEW_DATA_ENCRYPTION_KEY", ""),
+            )
+        except (OSError, sqlite3.Error, ValueError) as exc:
+            print(f"Encryption-key rotation failed: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps(result, indent=2))
+        return 0
+
+    if args.command == "restore":
+        settings = Settings.from_env()
+        if args.confirm != "RESTORE":
+            print("Refusing restore: --confirm must equal RESTORE", file=sys.stderr)
+            return 2
+        try:
+            safety = _restore_database(args.backup, settings.database_path)
+        except (OSError, sqlite3.Error, RuntimeError, ValueError) as exc:
+            print(f"Restore failed: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps({"restored": str(args.backup.resolve()), "previous_database": str(safety) if safety else None}))
         return 0
 
     app = create_app()
@@ -149,7 +220,7 @@ def main(argv: list[str] | None = None) -> int:
             "writable": _database_is_healthy_and_writable(settings.database_path),
         }
         print(json.dumps(result, indent=2))
-        return 0 if result["ready"] else 1
+        return 0 if result["ready"] and result["database"]["writable"] else 1
     if args.command == "migrate":
         print(json.dumps({"ok": True, "database": str(settings.database_path.resolve())}))
         return 0
@@ -160,7 +231,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             time.sleep(max(args.interval, 5))
     if args.command == "backup":
-        output = args.output or Path("backups") / f"agenda-relay-{datetime.now(UTC):%Y%m%d-%H%M%S}.sqlite3"
+        output = args.output or settings.database_path.parent / "backups" / f"agenda-relay-{datetime.now(UTC):%Y%m%d-%H%M%S}.sqlite3"
         try:
             _online_backup(settings.database_path, output)
         except (OSError, sqlite3.Error, ValueError) as exc:
@@ -168,27 +239,16 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         print(output.resolve())
         return 0
-    if args.command == "restore":
-        if args.confirm != "RESTORE":
-            print("Refusing restore: --confirm must equal RESTORE", file=sys.stderr)
-            return 2
-        try:
-            safety = _restore_database(args.backup, settings.database_path, store)
-        except (OSError, sqlite3.Error, RuntimeError, ValueError) as exc:
-            print(f"Restore failed: {exc}", file=sys.stderr)
-            return 2
-        print(json.dumps({"restored": str(args.backup.resolve()), "previous_database": str(safety) if safety else None}))
-        return 0
     if args.command == "support-bundle":
         output = args.output or Path("support-bundles") / f"agenda-relay-support-{datetime.now(UTC):%Y%m%d-%H%M%S}.zip"
-        output.parent.mkdir(parents=True, exist_ok=True)
         readiness = service.readiness()
         audit = [{"action": row["action"], "entity_type": row["entity_type"], "created_at": row["created_at"]} for row in store.recent_audit(settings.workspace_id, 100)]
-        with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr("readiness.json", json.dumps(readiness, indent=2))
-            archive.writestr("recent-actions.json", json.dumps(audit, indent=2))
-            archive.writestr("runtime.json", json.dumps({"app_env": settings.app_env, "timezone": settings.timezone, "database_exists": settings.database_path.exists()}, indent=2))
-        print(output.resolve())
+        runtime = {"app_env": settings.app_env, "timezone": settings.timezone, "database_exists": settings.database_path.exists()}
+        try:
+            print(_write_support_bundle(output, readiness, audit, runtime))
+        except (OSError, ValueError) as exc:
+            print(f"Support bundle failed: {exc}", file=sys.stderr)
+            return 2
         return 0
     return 2
 

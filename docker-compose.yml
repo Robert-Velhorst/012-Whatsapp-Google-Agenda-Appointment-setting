@@ -20,6 +20,10 @@ services:
     build: .
     restart: unless-stopped
     command: ["python", "-m", "scheduler.cli", "worker", "--interval", "30"]
+    # The image healthcheck probes the web server on port 5000; this worker
+    # does not serve HTTP, so inheriting that probe would mark it unhealthy.
+    healthcheck:
+      disable: true
     env_file: .env
     volumes:
       - ./data:/app/data

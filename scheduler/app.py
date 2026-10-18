@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import ipaddress
 import os
 import secrets
 from datetime import datetime
 from functools import wraps
-from urllib.parse import quote, urlsplit
+from pathlib import Path
+from urllib.parse import quote, unquote, urlsplit
 from zoneinfo import ZoneInfo
 
 from flask import (
@@ -23,17 +25,19 @@ from flask import (
 )
 from werkzeug.security import check_password_hash
 
-from .calendar import GoogleCalendar
-from .config import Settings
+from .calendar import CalendarBookingOutcomeUnknown, CalendarSlotUnavailable, CalendarUnavailable, GoogleCalendar
+from .config import Settings, rate_limit_client_ip
 from .crypto import CryptoBox
-from .service import SchedulingService
+from .service import AssistedRequestError, AutomationPaused, SchedulingService
 from .store import Store
-from .whatsapp import WhatsAppClient, signature_is_valid
+from .whatsapp import WhatsAppClient, WhatsAppUnavailable, signature_is_valid
 
 
 def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, intent_provider=None) -> Flask:
     settings = Settings.from_env(overrides)
     errors, _ = settings.validation()
+    if settings.app_env not in {"development", "test", "production"}:
+        raise RuntimeError("Unsafe configuration: APP_ENV must be development, test, or production")
     if settings.is_production and errors:
         raise RuntimeError("Unsafe production configuration: " + "; ".join(errors))
 
@@ -46,6 +50,14 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
         PERMANENT_SESSION_LIFETIME=3600,
         MAX_CONTENT_LENGTH=1_000_000,
     )
+    static_asset_versions: dict[str, str] = {}
+    for asset_name in ("app.css", "favicon.svg"):
+        try:
+            asset_bytes = (Path(app.static_folder) / asset_name).read_bytes()
+        except OSError:
+            continue
+        static_asset_versions[asset_name] = hashlib.sha256(asset_bytes).hexdigest()[:16]
+    app.jinja_env.globals["static_asset_versions"] = static_asset_versions
     crypto = CryptoBox(settings.data_encryption_key)
     store = Store(settings.database_path, crypto)
     store.ensure_workspace(settings.workspace_id, settings.workspace_name, settings.timezone)
@@ -67,11 +79,20 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
         return bool(supplied and expected and secrets.compare_digest(supplied, expected))
 
     def safe_next_url(candidate: str | None) -> str:
-        if candidate and candidate.startswith("/") and not candidate.startswith("//"):
-            return candidate
+        def safe_path(path: str) -> bool:
+            return (
+                path.startswith("/")
+                and not path.startswith("//")
+                and "\\" not in path
+                and not any(ord(char) < 0x20 or ord(char) == 0x7F for char in path)
+            )
+
+        if candidate and "\\" not in candidate and not any(ord(char) < 0x20 or ord(char) == 0x7F for char in candidate):
+            if candidate.startswith("/") and not candidate.startswith("//"):
+                return candidate
         if candidate:
             parsed = urlsplit(candidate)
-            if parsed.scheme in {"http", "https"} and parsed.netloc == request.host:
+            if parsed.scheme in {"http", "https"} and parsed.netloc == request.host and safe_path(parsed.path):
                 return parsed.path + (f"?{parsed.query}" if parsed.query else "")
         return url_for("dashboard")
 
@@ -94,7 +115,7 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             remote = ipaddress.ip_address(request.remote_addr or "")
             # The application does not authenticate a reverse proxy, so forwarded
             # headers cannot safely grant access to a loopback-only feed. In
-            # particular, keep this endpoint unavailable through the ngrok tunnel.
+            # particular, keep this endpoint unavailable through public ingress.
             if remote.is_loopback and request.headers.get("X-Forwarded-For"):
                 return False
             networks = [ipaddress.ip_network(value.strip(), strict=False) for value in settings.hai_allowed_networks.split(",") if value.strip()]
@@ -129,7 +150,17 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         response.headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
-        response.headers["Cache-Control"] = "public, max-age=86400, immutable" if request.endpoint == "static" else "no-store"
+        if request.endpoint == "static":
+            filename = (request.view_args or {}).get("filename", "")
+            expected_version = static_asset_versions.get(filename)
+            is_content_versioned = bool(expected_version and request.args.get("v") == expected_version)
+            response.headers["Cache-Control"] = (
+                "public, max-age=31536000, immutable"
+                if is_content_versioned
+                else "public, max-age=0, must-revalidate"
+            )
+        else:
+            response.headers["Cache-Control"] = "no-store"
         if settings.is_production:
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response
@@ -142,7 +173,7 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
     def login_post():
         if not valid_csrf():
             abort(403)
-        login_subject = request.remote_addr or "unknown"
+        login_subject = rate_limit_client_ip(request.remote_addr, request.headers.get("X-Forwarded-For"), settings.trusted_proxy_networks)
         if not store.rate_allowed(settings.workspace_id, login_subject, "auth.login_failed", 5, 15):
             store.audit(settings.workspace_id, "anonymous", "auth.login_throttled", "operator", None, {"remote": login_subject})
             return render_template("login.html", login_enabled=bool(settings.admin_password_hash), mode=settings.app_env, error="Too many failed sign-in attempts. Try again in 15 minutes."), 429
@@ -203,6 +234,7 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             audit=store.recent_audit(settings.workspace_id, 200) if view == "audit" else [],
             mode=settings.app_env, workspace_name=settings.workspace_name, operator_name=settings.operator_name,
             timezone_name=settings.timezone, query=query, status=status,
+            google_oauth_configured=bool(settings.google_client_secrets_file and os.path.exists(settings.google_client_secrets_file)),
         )
 
     @app.post("/actions/assisted/analyze")
@@ -214,9 +246,12 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             proposal_id = scheduling.create_assisted_proposal(request.form.get("message", ""))
             flash("Times checked. The pasted message was not retained; review the draft before sharing it.", "success")
             return redirect(url_for("dashboard", view="assisted", proposal=proposal_id))
-        except Exception as exc:  # noqa: BLE001 - convert provider/config failures into an operator-visible safe error.
+        except (AssistedRequestError, CalendarUnavailable) as exc:
             flash(f"No proposal was prepared: {exc}", "error")
-            return redirect(url_for("dashboard", view="assisted"))
+        except Exception as exc:  # noqa: BLE001 - convert provider/config failures into an operator-visible safe error.
+            app.logger.warning("Assisted request analysis failed (%s)", type(exc).__name__)
+            flash("No proposal was prepared because the message could not be analyzed. Review it and retry.", "error")
+        return redirect(url_for("dashboard", view="assisted"))
 
     @app.post("/actions/assisted/<int:proposal_id>/shared")
     @operator_required
@@ -241,11 +276,11 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
                 blockers = list(readiness["errors"])
                 blockers.extend(provider["detail"] for provider in readiness["providers"].values() if not provider["ready"])
                 flash("Automation cannot resume until setup issues are resolved: " + "; ".join(blockers), "error")
-                return redirect(safe_next_url(request.referrer))
+                return redirect(url_for("dashboard"))
         value = "false" if scheduling.is_paused() else "true"
         store.set_state(settings.workspace_id, "automation_paused", value, settings.operator_name)
         flash("Automation resumed." if value == "false" else "Automation paused. Incoming messages will still be recorded.", "success")
-        return redirect(safe_next_url(request.referrer))
+        return redirect(url_for("dashboard"))
 
     @app.post("/actions/proposals/<int:proposal_id>/send")
     @operator_required
@@ -255,9 +290,19 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
         try:
             scheduling.send_proposal(proposal_id, settings.operator_name)
             flash("The proposal was sent through WhatsApp Cloud API.", "success")
-        except Exception as exc:  # noqa: BLE001 - provider SDK errors are not a stable shared exception type; preserve the review state.
+        except (KeyError, ValueError) as exc:
             flash(f"Proposal not sent: {exc}", "error")
-        return redirect(safe_next_url(request.referrer))
+        except AutomationPaused:
+            flash("Proposal not sent: WhatsApp sending is disabled while automation is paused.", "error")
+        except WhatsAppUnavailable as exc:
+            if exc.retry_safe:
+                flash("WhatsApp confirmed that the message was not delivered. An explicit retry is available.", "error")
+            else:
+                flash("WhatsApp delivery could not be verified. Check provider status before retrying.", "error")
+        except Exception as exc:  # noqa: BLE001 - provider details must not be reflected into the operator page.
+            app.logger.warning("WhatsApp proposal send failed (%s)", type(exc).__name__)
+            flash("WhatsApp delivery could not be verified. Check provider status before retrying.", "error")
+        return redirect(url_for("dashboard"))
 
     @app.post("/actions/proposals/<int:proposal_id>/reconcile")
     @operator_required
@@ -275,7 +320,7 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             flash(f"Delivery could not be reconciled: {exc}", "error")
         except ValueError as exc:
             flash(f"Delivery could not be reconciled: {exc}", "error")
-        return redirect(safe_next_url(request.referrer))
+        return redirect(url_for("dashboard"))
 
     @app.post("/actions/appointments/<int:appointment_id>/book")
     @operator_required
@@ -287,7 +332,38 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             flash(result.get("warning") or "The confirmed slot was booked in Google Calendar.", "success")
         except Exception as exc:  # noqa: BLE001 - report provider failures without converting them into a success state.
             flash(f"Calendar booking failed safely: {exc}", "error")
-        return redirect(safe_next_url(request.referrer))
+        return redirect(url_for("dashboard"))
+
+    @app.post("/actions/appointments/<int:appointment_id>/reconcile")
+    @operator_required
+    def action_reconcile_booking(appointment_id: int):
+        if not valid_csrf():
+            abort(403)
+        try:
+            result = scheduling.reconcile_stale_booking(appointment_id, settings.operator_name)
+            message = result["warning"]
+            flash(message, "success" if result["status"] == "booked" else "error")
+        except (KeyError, ValueError) as exc:
+            flash(f"Calendar reconciliation not completed: {exc}", "error")
+        except Exception as exc:  # noqa: BLE001 - provider errors must not be reflected to the operator page.
+            app.logger.warning("Calendar reconciliation failed (%s)", type(exc).__name__)
+            flash("Google Calendar could not verify this booking. No booking state was changed; try again or inspect the calendar manually.", "error")
+        return redirect(url_for("dashboard"))
+
+    @app.post("/actions/appointments/<int:appointment_id>/reconcile-cancel")
+    @operator_required
+    def action_reconcile_cancellation(appointment_id: int):
+        if not valid_csrf():
+            abort(403)
+        try:
+            result = scheduling.reconcile_cancellation(appointment_id, settings.operator_name)
+            flash(result["warning"], "success" if result["status"] == "cancelled" else "error")
+        except (KeyError, ValueError) as exc:
+            flash(f"Calendar cancellation could not be reconciled: {exc}", "error")
+        except Exception as exc:  # noqa: BLE001 - provider errors must not be reflected to the operator page.
+            app.logger.warning("Calendar cancellation reconciliation failed (%s)", type(exc).__name__)
+            flash("Google Calendar could not verify the cancellation. No local booking state was changed; try again or inspect the calendar manually.", "error")
+        return redirect(url_for("dashboard"))
 
     @app.post("/actions/appointments/<int:appointment_id>/cancel")
     @operator_required
@@ -299,7 +375,71 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             flash("The appointment was cancelled and queued reminders were stopped.", "success")
         except Exception as exc:  # noqa: BLE001 - provider cancellation failures must remain visible to the operator.
             flash(f"Cancellation failed safely: {exc}", "error")
-        return redirect(safe_next_url(request.referrer))
+        return redirect(url_for("dashboard"))
+
+    @app.post("/actions/appointments/<int:appointment_id>/reschedule")
+    @operator_required
+    def action_prepare_reschedule(appointment_id: int):
+        if not valid_csrf():
+            abort(403)
+        try:
+            result = scheduling.prepare_reschedule(appointment_id, request.form.get("start_at", ""), settings.operator_name)
+            local_time = datetime.fromisoformat(result["start_at"]).strftime("%A, %d %B %Y at %H:%M")
+            flash(f"New time checked and saved for review: {local_time}. Confirm the change below to update Google Calendar.", "success")
+        except (KeyError, ValueError) as exc:
+            flash(f"Reschedule not prepared: {exc}", "error")
+        except CalendarUnavailable:
+            flash("Google Calendar could not confirm availability. No reschedule was saved; try again or check Calendar manually.", "error")
+        except RuntimeError:
+            flash("Calendar changes are disabled while automation is paused.", "error")
+        appointment = store.get_appointment(settings.workspace_id, appointment_id)
+        return redirect(url_for("dashboard", request=appointment["request_id"] if appointment else None))
+
+    @app.post("/actions/appointments/<int:appointment_id>/reschedule/confirm")
+    @operator_required
+    def action_confirm_reschedule(appointment_id: int):
+        if not valid_csrf():
+            abort(403)
+        try:
+            scheduling.confirm_reschedule(appointment_id, settings.operator_name)
+            flash("Google Calendar and the local booking now show the rescheduled time.", "success")
+        except ValueError as exc:
+            flash(f"Reschedule not confirmed: {exc}", "error")
+        except CalendarUnavailable:
+            flash("Google Calendar may have changed. The old local time has been preserved until you verify the event.", "error")
+        except RuntimeError:
+            flash("Calendar changes are disabled while automation is paused.", "error")
+        appointment = store.get_appointment(settings.workspace_id, appointment_id)
+        return redirect(url_for("dashboard", request=appointment["request_id"] if appointment else None))
+
+    @app.post("/actions/appointments/<int:appointment_id>/reschedule/discard")
+    @operator_required
+    def action_discard_reschedule(appointment_id: int):
+        if not valid_csrf():
+            abort(403)
+        appointment = store.get_appointment(settings.workspace_id, appointment_id)
+        try:
+            scheduling.discard_reschedule(appointment_id, settings.operator_name)
+            flash("The unconfirmed time change was discarded; the original booking remains active.", "success")
+        except ValueError as exc:
+            flash(f"Reschedule review could not be discarded: {exc}", "error")
+        return redirect(url_for("dashboard", request=appointment["request_id"] if appointment else None))
+
+    @app.post("/actions/appointments/<int:appointment_id>/reschedule/reconcile")
+    @operator_required
+    def action_reconcile_reschedule(appointment_id: int):
+        if not valid_csrf():
+            abort(403)
+        appointment = store.get_appointment(settings.workspace_id, appointment_id)
+        try:
+            result = scheduling.reconcile_reschedule(appointment_id, settings.operator_name)
+            flash(result["warning"], "success" if result["status"] in {"booked", "unchanged"} else "error")
+        except (KeyError, ValueError):
+            flash("This appointment is not awaiting reschedule reconciliation.", "error")
+        except Exception as exc:  # noqa: BLE001 - Calendar lookup errors may carry private provider details.
+            app.logger.warning("Calendar reschedule reconciliation failed (%s)", type(exc).__name__)
+            flash("Google Calendar could not safely verify either saved time. The appointment remains in manual review.", "error")
+        return redirect(url_for("dashboard", request=appointment["request_id"] if appointment else None))
 
     @app.post("/actions/contacts/<int:contact_id>/update")
     @operator_required
@@ -318,6 +458,34 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             flash("Contact settings saved.", "success")
         except Exception as exc:  # noqa: BLE001 - validation and database failures are returned as an operator-visible form error.
             flash(f"Contact not updated: {exc}", "error")
+        return redirect(url_for("dashboard", view="contacts"))
+
+    @app.post("/actions/contacts/<int:contact_id>/delete")
+    @operator_required
+    def action_contact_delete(contact_id: int):
+        if not valid_csrf():
+            abort(403)
+
+        login_subject = rate_limit_client_ip(request.remote_addr, request.headers.get("X-Forwarded-For"), settings.trusted_proxy_networks)
+        if not store.reserve_rate_event(settings.workspace_id, login_subject, "auth.contact_delete_attempt", 5, 15):
+            store.audit(settings.workspace_id, "operator", "auth.contact_delete_throttled", "contact", contact_id, {"remote": login_subject})
+            flash("Too many deletion attempts. Try again in 15 minutes.", "error")
+            return redirect(url_for("dashboard", view="contacts"))
+
+        password = request.form.get("password", "")
+        if not settings.admin_password_hash or not check_password_hash(settings.admin_password_hash, password):
+            store.audit(settings.workspace_id, "operator", "auth.contact_delete_reauth_failed", "contact", contact_id, {"remote": login_subject})
+            flash("Contact was not deleted: enter the current operator password to confirm.", "error")
+            return redirect(url_for("dashboard", view="contacts"))
+
+        try:
+            deleted = store.delete_contact(settings.workspace_id, contact_id)
+            if deleted:
+                flash("Contact data deleted.", "success")
+            else:
+                flash("Contact was not found or was already deleted.", "error")
+        except ValueError as exc:
+            flash(f"Contact was not deleted: {exc}", "error")
         return redirect(url_for("dashboard", view="contacts"))
 
     @app.get("/book/<token>")
@@ -341,10 +509,20 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             return render_template("booking_complete.html", appointment_id=result["appointment_id"], booked=result["booked"], warning=result["warning"])
         except KeyError:
             abort(404)
-        except Exception as exc:  # noqa: BLE001 - provider SDK failures return the still-reviewable booking page.
+        except Exception as exc:  # noqa: BLE001 - provider SDK errors must never be reflected to bearer-link holders.
             proposal = store.get_proposal_by_token(token)
             timezone_name = (proposal or {}).get("contact_timezone") or settings.timezone
-            return render_template("booking.html", proposal=proposal, token=token, timezone_name=timezone_name, display_slots=booking_slots(proposal), error=str(exc), auto_book_confirmed=settings.auto_book_confirmed and not scheduling.is_paused()), 400
+            safe_messages = {
+                "Consent is required before confirming a slot": "Please agree to the scheduling consent before choosing a time.",
+                "Selected slot is outside proposal": "Choose one of the times listed on this page.",
+                "That time has just become unavailable. Please choose another of the proposed times.": "That time has just become unavailable. Please choose another proposed time.",
+                "This booking link has expired; ask for new time suggestions": "This booking link has expired. Please ask the sender for new time suggestions.",
+                "This contact has revoked consent": "This booking link is no longer active. Please contact the sender.",
+            }
+            safe_error = safe_messages.get(str(exc), "We couldn't confirm this selection. It may not be booked yet; please contact the sender.")
+            if not isinstance(exc, (ValueError, CalendarUnavailable)):
+                app.logger.warning("Public booking confirmation failed (%s)", type(exc).__name__)
+            return render_template("booking.html", proposal=proposal, token=token, timezone_name=timezone_name, display_slots=booking_slots(proposal), error=safe_error, auto_book_confirmed=settings.auto_book_confirmed and not scheduling.is_paused()), 400
 
     @app.get("/webhook/whatsapp")
     def verify_webhook():
@@ -361,7 +539,7 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
             abort(403)
         payload = request.get_json(silent=True) or {}
         result = scheduling.process_payload(payload)
-        return jsonify(result), 200
+        return jsonify(result), 503 if result.get("retry_later") else 200
 
     @app.get("/api/health")
     def health():
@@ -393,8 +571,8 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
                 cursor[:500] if cursor is not None else None,
                 settings.hai_feed_page_size,
             )
-        except ValueError as exc:
-            return _error("invalid_cursor", str(exc), 400)
+        except ValueError:
+            return _error("invalid_cursor", "The HAI feed cursor is invalid.", 400)
         items = []
         for row in rows:
             metadata = {
@@ -422,7 +600,10 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
                 "receivedAt": row["updated_at"],
                 "metadata": metadata,
             })
-        return jsonify({"items": items, "cursor": next_cursor})
+        # Clients may persist `nextCursor` and send it on a later request as
+        # the `cursor` query parameter. Keep `cursor` as a backwards-compatible
+        # alias for existing Agenda Relay feed clients.
+        return jsonify({"items": items, "nextCursor": next_cursor, "cursor": next_cursor})
 
     @app.get("/api/google/connect")
     @admin_required
@@ -436,9 +617,19 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
 
     @app.get("/api/google/callback")
     def google_callback():
-        if request.args.get("state") != session.pop("google_oauth_state", None):
+        supplied_state = request.args.get("state")
+        expected_state = session.pop("google_oauth_state", None)
+        if not supplied_state or not expected_state or not secrets.compare_digest(supplied_state, expected_state):
             return _error("invalid_oauth_state", "Invalid Google OAuth state", 400)
-        calendar.exchange_code(request.url, settings.public_base_url + "/api/google/callback")
+        if request.args.get("error"):
+            flash("Google Calendar authorization was cancelled. Your calendar connection was not changed.", "error")
+            return redirect(url_for("dashboard"))
+        try:
+            calendar.exchange_code(request.url, settings.public_base_url + "/api/google/callback")
+        except Exception as exc:  # noqa: BLE001 - provider OAuth libraries expose several unrelated error types.
+            app.logger.warning("Google Calendar authorization callback failed (%s)", type(exc).__name__)
+            flash("Google Calendar connection could not be completed. Please try again.", "error")
+            return redirect(url_for("dashboard"))
         store.audit(settings.workspace_id, settings.operator_name, "provider.google_connected", "provider", "google_calendar")
         return redirect(url_for("dashboard"))
 
@@ -459,24 +650,103 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
     def api_send_proposal(proposal_id: int):
         try:
             return jsonify(scheduling.send_proposal(proposal_id, settings.operator_name))
-        except (KeyError, ValueError) as exc:
-            return _error("proposal_not_sendable", str(exc), 409)
+        except (KeyError, ValueError):
+            return _error("proposal_not_sendable", "The proposal cannot be sent in its current state.", 409)
+        except AutomationPaused:
+            return _error("automation_paused", "WhatsApp sending is disabled while automation is paused.", 409)
+        except WhatsAppUnavailable as exc:
+            if exc.retry_safe:
+                return _error(
+                    "whatsapp_send_failed",
+                    "WhatsApp confirmed that the message was not delivered. An explicit retry is available.",
+                    502,
+                    retryable=True,
+                )
+            return _error(
+                "whatsapp_delivery_unverified",
+                "WhatsApp delivery could not be verified. Check provider status before retrying.",
+                502,
+                retryable=False,
+            )
+        except Exception as exc:  # noqa: BLE001 - provider details must not escape this mutation API.
+            app.logger.warning("WhatsApp proposal API failed (%s)", type(exc).__name__)
+            return _error(
+                "whatsapp_delivery_unverified",
+                "WhatsApp delivery could not be verified. Check provider status before retrying.",
+                502,
+                retryable=False,
+            )
 
     @app.post("/api/appointments/<int:appointment_id>/book")
     @admin_required
     def api_book(appointment_id: int):
         try:
             return jsonify(scheduling.book_appointment(appointment_id, settings.operator_name))
-        except (KeyError, ValueError) as exc:
-            return _error("appointment_not_bookable", str(exc), 409)
+        except (KeyError, ValueError):
+            return _error("appointment_not_bookable", "The appointment cannot be booked in its current state.", 409)
+        except CalendarSlotUnavailable as exc:
+            return _error("calendar_slot_unavailable", str(exc), 409)
+        except CalendarBookingOutcomeUnknown:
+            return _error(
+                "calendar_booking_unverified",
+                "Google Calendar may have accepted this event. Verify Calendar before retrying the booking.",
+                502,
+                retryable=False,
+            )
+        except CalendarUnavailable:
+            return _error(
+                "calendar_booking_unverified",
+                "Google Calendar availability could not be verified. No event was created; review Calendar before retrying.",
+                502,
+            )
+        except AutomationPaused:
+            return _error("automation_paused", "Calendar changes are disabled while automation is paused.", 409)
+        except Exception as exc:  # noqa: BLE001 - provider/storage errors must not escape the JSON API.
+            app.logger.warning("Calendar booking API failed (%s)", type(exc).__name__)
+            return _error("booking_failed", "Calendar booking could not be completed. Verify the appointment state before retrying.", 500, retryable=False)
 
     @app.post("/api/appointments/<int:appointment_id>/cancel")
     @admin_required
     def api_cancel(appointment_id: int):
         try:
             return jsonify(scheduling.cancel_appointment(appointment_id, settings.operator_name))
-        except KeyError as exc:
-            return _error("not_found", str(exc), 404)
+        except KeyError:
+            return _error("not_found", "Appointment not found", 404)
+        except ValueError:
+            return _error("appointment_not_cancellable", "The appointment is not safely cancellable in its current state.", 409)
+        except CalendarUnavailable:
+            return _error("calendar_cancellation_unverified", "Google Calendar cancellation could not be confirmed. Reconcile the event before retrying.", 502, retryable=False)
+        except AutomationPaused:
+            return _error("automation_paused", "Calendar changes are disabled while automation is paused.", 409)
+        except Exception as exc:  # noqa: BLE001 - provider errors may include private Calendar details.
+            app.logger.warning("Calendar cancellation failed (%s)", type(exc).__name__)
+            return _error("calendar_cancellation_unverified", "Google Calendar cancellation could not be confirmed. Reconcile the event before retrying.", 502, retryable=False)
+
+    @app.post("/api/appointments/<int:appointment_id>/reconcile-cancel")
+    @admin_required
+    def api_reconcile_cancellation(appointment_id: int):
+        try:
+            return jsonify(scheduling.reconcile_cancellation(appointment_id, settings.operator_name))
+        except KeyError:
+            return _error("not_found", "Appointment not found", 404)
+        except ValueError:
+            return _error("appointment_not_reconcilable", "The appointment is not awaiting cancellation reconciliation.", 409)
+        except Exception as exc:  # noqa: BLE001 - provider errors may include private Calendar details.
+            app.logger.warning("Calendar cancellation reconciliation API failed (%s)", type(exc).__name__)
+            return _error("calendar_verification_failed", "Google Calendar could not verify the cancellation. No local state was changed.", 502)
+
+    @app.post("/api/appointments/<int:appointment_id>/reconcile")
+    @admin_required
+    def api_reconcile_booking(appointment_id: int):
+        try:
+            return jsonify(scheduling.reconcile_stale_booking(appointment_id, settings.operator_name))
+        except KeyError:
+            return _error("not_found", "Appointment not found", 404)
+        except ValueError:
+            return _error("appointment_not_reconcilable", "The appointment is not awaiting calendar reconciliation.", 409)
+        except Exception as exc:  # noqa: BLE001 - provider errors may contain private calendar details.
+            app.logger.warning("Calendar reconciliation API failed (%s)", type(exc).__name__)
+            return _error("calendar_verification_failed", "Google Calendar could not verify this booking. No booking state was changed.", 502)
 
     @app.get("/api/audit")
     @admin_required
@@ -487,12 +757,20 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
     @admin_required
     def api_contact_export(contact_id: int):
         data = store.export_contact(settings.workspace_id, contact_id)
-        return jsonify(data) if data else _error("not_found", "Contact not found", 404)
+        if not data:
+            return _error("not_found", "Contact not found", 404)
+        store.audit(settings.workspace_id, "operator", "privacy.contact_exported", "contact", contact_id, {})
+        response = jsonify(data)
+        response.headers["Content-Disposition"] = f'attachment; filename="contact-{contact_id}-export.json"'
+        return response
 
     @app.delete("/api/contacts/<int:contact_id>")
     @admin_required
     def api_contact_delete(contact_id: int):
-        return jsonify({"deleted": store.delete_contact(settings.workspace_id, contact_id)})
+        try:
+            return jsonify({"deleted": store.delete_contact(settings.workspace_id, contact_id)})
+        except ValueError:
+            return _error("contact_has_unresolved_appointments", "Cancel or resolve this contact's appointments before deleting it.", 409)
 
     @app.get("/api/export/requests.csv")
     @admin_required
@@ -508,11 +786,17 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
     return app
 
 
-def _error(code: str, message: str, status: int):
-    return jsonify({"error": {"code": code, "message": message, "retryable": status >= 500 or status == 429}}), status
+def _error(code: str, message: str, status: int, retryable: bool | None = None):
+    if retryable is None:
+        retryable = status >= 500 or status == 429
+    return jsonify({"error": {"code": code, "message": message, "retryable": retryable}}), status
 
 
 def _csv_safe(value: object) -> object:
-    if isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\t", "\r")):
-        return "'" + value
+    if isinstance(value, str):
+        formula_prefixes = ("=", "+", "-", "@")
+        first_non_whitespace = value.lstrip(" \t\r\n\v\f\ufeff")
+        if value.startswith(("\t", "\r")) or first_non_whitespace.startswith(formula_prefixes):
+            return "'" + value
     return value
+
