@@ -941,11 +941,12 @@ def test_reschedule_cannot_be_discarded_while_reminder_is_running(app_bundle):
     service.prepare_reschedule(appointment_id, target_start.isoformat())
 
     with store.connect() as db:
-        db.execute(
+        running_reminder_count = db.execute(
             "UPDATE background_jobs SET status='running' WHERE job_type='appointment_reminder' "
             "AND payload_json LIKE ?",
             (f'%\"appointment_id\": {appointment_id}%',),
-        )
+        ).rowcount
+    assert running_reminder_count >= 1
 
     with pytest.raises(ValueError, match="reminder is currently being sent"):
         service.discard_reschedule(appointment_id)
@@ -957,7 +958,7 @@ def test_reschedule_cannot_be_discarded_while_reminder_is_running(app_bundle):
             "AND payload_json LIKE ? ORDER BY id",
             (f'%\"appointment_id\": {appointment_id}%',),
         ).fetchall()
-    assert [row["status"] for row in reminders] == ["running"]
+    assert [row["status"] for row in reminders] == ["running"] * running_reminder_count
 
 
 def test_prepare_reschedule_serializes_running_reminder_check(app_bundle, monkeypatch):
