@@ -11,7 +11,7 @@ def test_hetzner_is_the_only_documented_cloud_deployment_path():
     hai = (ROOT / "docs" / "HAI_INTEGRATION.md").read_text(encoding="utf-8").lower()
 
     assert "hetzner" in target
-    assert "do not use vercel or local tunnelling services for production ingress" in target
+    assert "do not use unapproved serverless hosting or public-tunnel services for production" in target
     assert "hetzner deployment guide" in readme
     assert "supported production hosting path" in guide
     assert "ngrok is not required" in hai
