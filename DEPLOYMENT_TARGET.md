@@ -1,6 +1,7 @@
 # Production deployment target
 
-Hetzner is the target for production deployment. New production deployments must be prepared for Hetzner. Do not use Vercel or local tunnelling services for production ingress.
+Hetzner is the target for production deployment. New production deployments must be prepared for Hetzner. Do not use unapproved serverless hosting or public-tunnel services for production.
+
 
 Before deploying or retiring any existing service, verify the running application, database and persistent data, secrets, security controls, backups and restore procedure, rollback path, DNS, TLS, scheduled work, and external integrations. Do not claim migration or cutover until those checks pass.
 
