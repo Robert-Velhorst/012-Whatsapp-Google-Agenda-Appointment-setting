@@ -9,3 +9,7 @@ Security fixes are made against the latest version on the repository's default b
 Use GitHub's **Report a vulnerability** option on the Security and quality tab to send a report privately to the maintainers. Do not open a public issue or disclose exploit details publicly.
 
 Include the affected version or commit, the impact, reproduction steps, and a proof of concept if available. Remove credentials and personal data from all examples.
+
+## Response and disclosure
+
+Reports are reviewed on a best-effort basis. No response or remediation timeframe is guaranteed. Coordinate any public disclosure with the maintainers so users have a reasonable opportunity to receive a fix.
