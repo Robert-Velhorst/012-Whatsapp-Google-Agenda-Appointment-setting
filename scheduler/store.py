@@ -13,6 +13,7 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .crypto import CryptoBox
+from .database_runtime import require_current_sqlite
 from .domain import transition_allowed
 from .migrations import migrate
 
@@ -44,6 +45,7 @@ class _ThreadConnection:
 
 class Store:
     def __init__(self, path: Path, crypto: CryptoBox | None = None):
+        require_current_sqlite()
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
         self.crypto = crypto or CryptoBox("")

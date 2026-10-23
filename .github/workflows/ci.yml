@@ -11,17 +11,29 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.15"
+          python-version: "3.15.1"
           cache: pip
-      - run: pip install -r requirements.txt pip-audit==2.10.1
+      - run: python tools/prepare_sqlite_runtime.py
+      - run: python -c "import json,os,pathlib; d=json.loads(pathlib.Path('.runtime/sqlite-runtime.json').read_text()); open(os.environ['GITHUB_ENV'],'a').write('LD_LIBRARY_PATH='+d['library_directory']+'\n')"
+      - run: pip install --require-hashes -r requirements.lock
+      - run: pip install pip-audit==2.10.1
       - run: pip-audit
-      - run: pip-audit -r requirements-runtime.lock
+      - run: pip-audit -r requirements-runtime.lock --no-deps --disable-pip --strict
       - run: python -m compileall -q scheduler run.py
       - run: pytest -q
       - run: touch .env
       - run: docker compose config --no-env-resolution --quiet
       - run: docker compose config --no-env-resolution --format json | python -c "import json,sys; assert json.load(sys.stdin)['services']['worker']['healthcheck']['disable'] is True"
       - run: docker build -t agenda-relay:test .
+      - run: python tools/check_container.py
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-runtime-and-container
+          include-hidden-files: true
+          path: |
+            .runtime/sqlite-runtime.json
+            artifacts/container-verification.json
+          if-no-files-found: error

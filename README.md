@@ -35,18 +35,14 @@ Choose and repeat an operator password of at least 12 characters. Setup generate
 
 For the assisted personal flow, configure Google Calendar and a reachable HTTPS `PUBLIC_BASE_URL` for booking links; Meta settings are not required. Configure Meta as well only if you want the separate WhatsApp Business webhook/API path. Then run `AgendaRelay.exe` from that same folder. Open [http://127.0.0.1:5000/login](http://127.0.0.1:5000/login) and sign in with your chosen password. The executable runs the web application and reminder worker together. Keep the computer awake and the process running while using the app.
 
-For source installation, Python 3.11–3.15 is supported; Python 3.15 is used by CI and packaging:
+For the current source baseline, use CPython 3.15.1 with the prepared SQLite 3.54.1 engine:
 
 ```powershell
-py -3.15 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.lock
-python -m scheduler.cli setup
-python -m scheduler.cli migrate
-python run.py
+.\windows\Install-AgendaRelay.ps1
+.\windows\Start-AgendaRelay.ps1
 ```
 
-The source setup command performs the same password and key initialization as the executable. `python run.py` runs only the web app: start the worker in another terminal using `python -m scheduler.cli worker`. Alternatively use the Windows start script below, which launches both processes.
+The installer prepares a private runtime copy, installs hash-locked dependencies and retains the secure password/key setup. Use `-PythonExecutable` to select an explicit CPython 3.15.1 installation. Preserve an existing incompatible environment before upgrading. Linux source setup uses `make install` and `make run`; see [the runtime guide](docs/STABLE_DEPENDENCIES_2026-10.md).
 
 The included Windows launchers install, start, stop, package, and smoke-test the application. See [Windows 11 standalone setup](docs/WINDOWS.md). For cloud hosting, follow the [Hetzner deployment guide](docs/HETZNER_DEPLOYMENT.md).
 
@@ -253,3 +249,7 @@ For HAI, enable the feed and configure an owner-scoped `json-feed` source using 
 Historical Windows, Docker, browser and benchmark results are recorded in [final verification](docs/FINAL_VERIFICATION_REPORT.md) and [performance](docs/PERFORMANCE.md). Those measurements are dated evidence, not guarantees for a new deployment. Real Meta/Google acceptance remains a separate operator step. Run the current suite with `python -m pytest -q`; run `python -m scripts.benchmark --records 1000 --reads 500` for a local baseline. Package with `windows/Build-Windows.ps1`, then smoke-test with `windows/Test-Package.ps1`. GitHub CI verifies tests, compilation, dependencies and Docker; the Windows workflow builds and tests the executable.
 
 For maintenance and contributions, inspect [technical audit](docs/TECHNICAL_AUDIT.md), [API audit](docs/API_USAGE_AUDIT.md), [UI audit](docs/UI_ACTION_AUDIT.md), [maintenance](docs/MAINTENANCE.md), [troubleshooting](docs/TROUBLESHOOTING.md), [worklog](docs/CODEX_WORKLOG.md), [checkpoints](docs/CODEX_CHECKPOINTS.md), [task graph](docs/TASK_GRAPH.md), and [changelog](CHANGELOG.md). Add regression coverage for scheduling behavior, keep provider fakes in tests, and update the operational documentation when interfaces or setup change.
+
+## Stable runtime baseline (October 2026)
+
+Use Python 3.15.1 and actual SQLite 3.54.1. Source setup prepares a private runtime; it does not patch the shared interpreter. Exact dependency versions and hashes are recorded in the runtime, development and build locks. See [the stable-upgrade record](docs/STABLE_DEPENDENCIES_2026-10.md) before using an existing environment or migrating real data. Windows CI retains free-threaded Python; the packaged runtime is verified independently of the source build.
