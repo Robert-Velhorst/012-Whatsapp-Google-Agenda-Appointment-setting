@@ -2,7 +2,7 @@
 #    uv pip compile requirements-runtime.txt --universal --python-version 3.11 --output-file requirements-runtime.lock
 blinker==1.9.0
     # via flask
-certifi==2026.7.22
+certifi==2026.10.19
     # via requests
 cffi==2.1.1 ; platform_python_implementation != 'PyPy'
     # via cryptography
