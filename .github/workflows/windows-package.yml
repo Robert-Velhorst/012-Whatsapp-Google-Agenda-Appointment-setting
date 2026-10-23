@@ -48,7 +48,10 @@ jobs:
       - shell: powershell
         run: .\windows\Build-Windows.ps1
       - shell: powershell
-        run: .\windows\Test-Package.ps1 | Set-Content package-verification.json
+        run: |
+          $packageReport = .\windows\Test-Package.ps1 | Select-Object -Last 1 | ConvertFrom-Json
+          if (-not $packageReport.health -or $packageReport.runtime.sqlite -ne '3.54.1') { throw 'Packaged runtime evidence is incomplete.' }
+          $packageReport | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 package-verification.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: AgendaRelay-Windows-x64
