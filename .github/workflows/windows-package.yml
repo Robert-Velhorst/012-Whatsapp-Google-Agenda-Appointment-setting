@@ -8,6 +8,8 @@ on:
       - "agenda-relay.spec"
       - "pyproject.toml"
       - "requirements*.txt"
+      - "requirements*.lock"
+      - "tools/**"
       - "run.py"
       - "scheduler/**"
       - "tests/**"
@@ -23,25 +25,40 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.15"
+          python-version: "3.15.1"
           freethreaded: true
           cache: pip
-      - run: python -m venv .venv
-      - run: .\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-build.txt pip-audit==2.10.1
+      - run: python tools/prepare_sqlite_runtime.py
+      - shell: pwsh
+        run: |
+          $runtime = Get-Content .runtime/sqlite-runtime.json -Raw | ConvertFrom-Json
+          if (-not $runtime.free_threaded_build) { throw 'The Windows CI target must retain free-threaded Python.' }
+          & $runtime.executable -m venv .venv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - run: .\.venv\Scripts\python.exe -m pip install --require-hashes -r requirements-build.lock
+      - run: .\.venv\Scripts\python.exe -m pip install pip-audit==2.10.1
       - run: .\.venv\Scripts\python.exe -m pip_audit
-      - run: .\.venv\Scripts\python.exe -m pip_audit -r requirements-build.txt
+      - run: .\.venv\Scripts\python.exe -m pip_audit -r requirements-build.lock --no-deps --disable-pip --strict
       - run: .\.venv\Scripts\python.exe -m pytest -q
       - shell: powershell
         run: .\windows\Test-AgendaRelay.Runtime.ps1
       - shell: powershell
         run: .\windows\Build-Windows.ps1
       - shell: powershell
-        run: .\windows\Test-Package.ps1
-      - uses: actions/upload-artifact@v7
+        run: .\windows\Test-Package.ps1 | Set-Content package-verification.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: AgendaRelay-Windows-x64
           path: |
             dist/AgendaRelay-Windows-x64.zip
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-runtime-verification
+          include-hidden-files: true
+          path: |
+            .runtime/sqlite-runtime.json
+            package-verification.json
+          if-no-files-found: error

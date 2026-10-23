@@ -27,6 +27,7 @@ from werkzeug.security import check_password_hash
 
 from .calendar import CalendarBookingOutcomeUnknown, CalendarSlotUnavailable, CalendarUnavailable, GoogleCalendar
 from .config import Settings, rate_limit_client_ip
+from .database_runtime import runtime_versions
 from .crypto import CryptoBox
 from .service import AssistedRequestError, AutomationPaused, SchedulingService
 from .store import Store
@@ -543,7 +544,7 @@ def create_app(overrides: dict | None = None, calendar=None, whatsapp=None, inte
 
     @app.get("/api/health")
     def health():
-        return {"ok": True, "service": "agenda-relay", "version": "1.0.0", "mode": settings.app_env}
+        return {"ok": True, "service": "agenda-relay", "version": "1.0.0", "mode": settings.app_env, "runtime": runtime_versions()}
 
     @app.get("/api/readiness")
     def readiness():

@@ -147,11 +147,19 @@ try {
         }
         throw "Packaged executable did not become healthy. Review $stderrPath."
     }
+    if ($health.runtime.python -ne '3.15.1' -or $health.runtime.sqlite -ne '3.54.1') {
+        throw 'The actual packaged Python/SQLite runtime differs from the stable baseline.'
+    }
+    $expectedRuntimeJson = & (Join-Path $Root '.venv\Scripts\python.exe') -c 'import json; from scheduler.database_runtime import runtime_versions; print(json.dumps(runtime_versions()))'
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect the actual build interpreter.' }
+    $expectedRuntime = $expectedRuntimeJson | ConvertFrom-Json
+    if ($health.runtime.free_threaded_build -ne $expectedRuntime.free_threaded_build) { throw 'The packaged interpreter changed its prepared build identity.' }
     $login = Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:$Port/login" -TimeoutSec 5
     $running = Get-Process -Id $process.Id
     [pscustomobject]@{
         health = $health.ok
         mode = $health.mode
+        runtime = $health.runtime
         loginStatus = $login.StatusCode
         loginContainsBrand = $login.Content.Contains("Agenda Relay")
         encryptionRotation = $rotation.encrypted_database_values_rotated
