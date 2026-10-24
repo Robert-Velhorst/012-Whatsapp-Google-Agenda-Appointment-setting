@@ -14,7 +14,7 @@ $BuildWorkPath = if ($WorkPath) {
     Join-Path ([IO.Path]::GetTempPath()) ("AgendaRelay-PyInstaller-" + [guid]::NewGuid().ToString("N"))
 }
 New-Item -ItemType Directory -Force -Path $OutputRoot, $BuildWorkPath | Out-Null
-& .\.venv\Scripts\python.exe -m pip install -r requirements-build.txt
+& .\.venv\Scripts\python.exe -m pip install --require-hashes -r requirements-build.lock
 if ($LASTEXITCODE -ne 0) { throw "Installing Windows build dependencies failed." }
 & .\.venv\Scripts\python.exe -m PyInstaller --noconfirm --workpath $BuildWorkPath --distpath $OutputRoot agenda-relay.spec
 if ($LASTEXITCODE -ne 0) { throw "Windows package build failed." }
