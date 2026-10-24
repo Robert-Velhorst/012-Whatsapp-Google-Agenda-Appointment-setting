@@ -130,3 +130,7 @@ After explicit cutover authorization, set the intended DNS TTL/change, register 
 ## Acceptance before calling production live
 
 The deployment is not production-accepted until an authorized operator verifies DNS/TLS externally, direct-port isolation, secure login, database writeability, backup-and-restore, retention worker, Google OAuth/availability, public booking link from a different device/network, selected-slot recheck, one consented test appointment with cleanup, pause behavior, and the applicable personal-assisted or Business API safeguards. Record exact date, release SHA, test account, and outcomes in a controlled operational record—not this public repository. No real test message, provider send, or Calendar event was created by writing this guide.
+
+## October 2026 runtime migration gate
+
+The reviewed image must report Python 3.15.1 and SQLite 3.54.1 from its actual process. The SQLite library is built from the pinned official amalgamation and checked in a fresh process; the source and packaged Windows runtime use an isolated preparation path. Read [the version and compatibility record](STABLE_DEPENDENCIES_2026-10.md) before cutover. Preserve the complete existing database, matching keys and provider tokens, rehearse restoration on a copy, and retain a matching rollback image/data set. Repository tests do not migrate operator data or establish real Google/Meta acceptance.

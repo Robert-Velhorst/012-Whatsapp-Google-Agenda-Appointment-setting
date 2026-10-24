@@ -25,7 +25,10 @@ try {
     Assert-Equal $env:ADMIN_API_TOKEN 'synthetic=token' 'Quoted dotenv value containing equals'
 } finally {
     foreach ($name in $dotenvNames) { [Environment]::SetEnvironmentVariable($name, $previousDotenv[$name], 'Process') }
-    if (Test-Path -LiteralPath $dotenvRoot) { Remove-Item -LiteralPath $dotenvRoot -Recurse -Force }
+    $resolvedFixture = [IO.Path]::GetFullPath($dotenvRoot)
+    $expectedParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    if ((Split-Path $resolvedFixture -Parent) -ne $expectedParent -or (Split-Path $resolvedFixture -Leaf) -notmatch '^AgendaRelay-dotenv-test-[0-9a-f]{32}$') { throw 'Dotenv fixture cleanup escaped the temporary root.' }
+    if (Test-Path -LiteralPath $resolvedFixture) { Remove-Item -LiteralPath $resolvedFixture -Recurse -Force }
 }
 
 $webExecutable = Join-Path $root '.venv\Scripts\waitress-serve.exe'

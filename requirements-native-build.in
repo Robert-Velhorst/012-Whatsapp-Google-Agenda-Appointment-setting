@@ -1,0 +1,6 @@
+maturin==1.15.0
+setuptools==84.2.1
+wheel==0.48.0
+packaging==26.3
+cffi==2.1.1
+cython==3.3.0
