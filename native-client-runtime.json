@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "openssl": {
+    "version": "4.1.0",
+    "url": "https://github.com/openssl/openssl/releases/download/openssl-4.1.0/openssl-4.1.0.tar.gz",
+    "sha256": "50c17baf54cb008f6ce42d50deb4b28050a1aad711636cabd4b241c7e90cc2fd",
+    "release": "https://github.com/openssl/openssl/releases/tag/openssl-4.1.0"
+  },
+  "cpython": {
+    "version": "3.15.1",
+    "url": "https://www.python.org/ftp/python/3.15.1/Python-3.15.1.tar.xz",
+    "sha256": "673ae7232d84c894729882c8257d300ef2d26523911bfd3917ec8ce7f526f99b"
+  },
+  "prefix": "/opt/agenda-native",
+  "sqlite": {
+    "version": "3.54.1",
+    "url": "https://www.sqlite.org/2026/sqlite-autoconf-3540100.tar.gz",
+    "sha256": "b6ced585c750916b1052667239a12c25a7ff34e7f06e1e6e01ecb0427657d9c4",
+    "digest_algorithm": "sha3_256",
+    "checksum_source": "https://www.sqlite.org/download.html"
+  },
+  "cryptography": {
+    "version": "50.0.2",
+    "url": "https://files.pythonhosted.org/packages/9d/af/182eb91b0df3fe75c4d9f26fe70684569566745f6ba7e5c9c73a862c5252/cryptography-50.0.2.tar.gz",
+    "sha256": "7b46165bb56eb4704e2eaaf86f3c940d19154535d9b0ca7d6d590b04060e00d5"
+  },
+  "rust": {
+    "version": "1.99.1",
+    "image": "rust:1.99.1-alpine3.24@sha256:b1d5dd5a22a09404d3e798c0cf051b689077360374eb505fa5bb93c479693d87",
+    "source": "https://static.rust-lang.org/dist/channel-rust-stable.toml"
+  },
+  "runtime_os": {
+    "family": "alpine",
+    "branch": "3.24",
+    "source": "https://www.alpinelinux.org/releases/"
+  }
+}

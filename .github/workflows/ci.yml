@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.15.1"
           cache: pip
@@ -29,6 +29,40 @@ jobs:
       - run: docker compose config --no-env-resolution --format json | python -c "import json,sys; assert json.load(sys.stdin)['services']['worker']['healthcheck']['disable'] is True"
       - run: docker build -t agenda-relay:test .
       - run: python tools/check_container.py
+      - name: Inspect loaded native libraries in the actual production image
+        run: |
+          docker image inspect agenda-relay:test > image-inspect.json
+          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --entrypoint python agenda-relay:test tools/installed_runtime.py > installed-runtime.json
+      - name: Save exact image identity and scan the full raw package inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .qualification/input .qualification/cache .qualification/reports
+          docker image save agenda-relay:test -o .qualification/input/image.tar
+          python tools/archive_image_identity.py .qualification/input/image.tar image-inspect.json agenda-relay:test image-identity.json .qualification/input/config-id.txt
+          docker run --rm --read-only --user "$(id -u):$(id -g)" --cap-drop ALL --security-opt no-new-privileges \
+            --tmpfs /tmp:rw,noexec,nosuid,size=2g,uid="$(id -u)",gid="$(id -g)",mode=0700 \
+            --mount type=bind,src="$PWD/.qualification/input",dst=/input,readonly \
+            --mount type=bind,src="$PWD/.qualification/cache",dst=/cache \
+            --mount type=bind,src="$PWD/.qualification/reports",dst=/reports \
+            aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c \
+            image --input /input/image.tar --cache-dir /cache --scanners vuln --list-all-pkgs \
+            --ignorefile /dev/null --exit-code 1 --format json --output /reports/image-security.json
+          python tools/verify_image_security.py .qualification/reports/image-security.json image-identity.json installed-runtime.json > verified-image.json
+      - name: Retain complete native image evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-image-evidence
+          path: |
+            image-inspect.json
+            installed-runtime.json
+            image-identity.json
+            verified-image.json
+            .qualification/reports/image-security.json
+          retention-days: 7
+          if-no-files-found: warn
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux-runtime-and-container
